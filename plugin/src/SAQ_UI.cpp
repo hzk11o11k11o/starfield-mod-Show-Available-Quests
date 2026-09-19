@@ -1193,4 +1193,33 @@ namespace SAQ::UI
 		a_report = EscapeForLog(raw, 400);
 		return true;
 	}
+
+	// ★ 第 10 轮：读 AS3 侧一个**无参函数的字符串返回值**（不带 CallAs3NoArg 的
+	//   "路径=" 前缀、不做日志转义）—— 引导请求就是靠它回传的：
+	//     AS3 侧 SaqGuideSeq/SaqGuideQuest 变化 → SAQ_PeekGuide() 返回 "<seq>|<questFormID>"
+	//   为什么不读变量：GetVariable 的虚表槽序号（commonlibsf 标 0x32）在本版本没验证过，
+	//   而 Invoke 槽是我们**已经比对过 RVA**（0x3368DC0）的那条路，宁可用验过的路。
+	//   返回 false = 桥没通 / SWF 旧版 / 返回值不是字符串（调用方静默跳过）。
+	bool ReadUiString(const char* a_path, std::string& a_value)
+	{
+		std::string detail;
+		if (!EnsureResolved(detail)) {
+			return false;
+		}
+		auto& bridge = Cached();
+		auto* root = reinterpret_cast<RE::Scaleform::GFx::ASMovieRootBase*>(bridge.asRoot);
+		if (!root) {
+			return false;
+		}
+		RE::Scaleform::GFx::Value ret;
+		if (!SafeInvoke(root, a_path, &ret, nullptr, 0)) {
+			return false;
+		}
+		char buf[256]{};
+		if (!SafeReadValueString(ret, buf, sizeof(buf))) {
+			return false;
+		}
+		a_value = buf;
+		return true;
+	}
 }

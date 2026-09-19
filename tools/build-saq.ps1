@@ -43,8 +43,10 @@ $papyrusInc  = Join-Path $dataDir 'Scripts\Source\Base'
 function Step($n, $msg) { Write-Host "[$n] $msg" -ForegroundColor Yellow }
 function Ok($msg) { Write-Host "    OK: $msg" -ForegroundColor Green }
 
-# --- 1. 静态表（FormID -> 中/英文名 + 类型） --------------------------------
+# --- 1. 静态表（FormID -> 中/英文名 + 类型 + 引导目标） ----------------------
 if (-not $SkipTable) {
+    Step '1/6' '生成引导目标表（gen_guide_targets.py，扫 Starfield.esm 约 1-2 分钟）'
+    & python (Join-Path $root 'tools\esm\gen_guide_targets.py') | Write-Host
     Step '1/6' '生成静态任务表（gen_quest_table.py）'
     & python (Join-Path $root 'tools\esm\gen_quest_table.py') | Write-Host
     Ok 'plugin\src\SAQ_QuestTable.h'
@@ -71,6 +73,9 @@ if ($RebuildEsm) {
     }
     Ok "复用 $esmStable"
 }
+# ★ 无论走哪条路，都要把「引导别名 + 引导目标」补进去（xEdit 重新生成会把它冲掉）。
+#   幂等，可反复运行；结构与自校验见 tools/esm/patch_saq_esm.py。
+& python (Join-Path $root 'tools\esm\patch_saq_esm.py') | Write-Host
 
 # --- 3. Papyrus --------------------------------------------------------------
 Step '3/6' '编译 Papyrus 脚本'

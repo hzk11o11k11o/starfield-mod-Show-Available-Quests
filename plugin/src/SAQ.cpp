@@ -25,9 +25,10 @@
 #include "PCH.h"
 
 #include "SAQ.h"
+#include "SAQ_Guide.h"       // 引导通道（DLL ↔ ESM 的 GLOB ↔ SAQ_Main.psc）
 #include "SAQ_QuestState.h"  // TESQuest 运行时状态（已开始/已完成/追踪中）
 #include "SAQ_UI.h"          // UI 通道（菜单表 → IMenu → Movie → ASMovieRoot）
-#include "SAQ_QuestTable.h"  // 生成物：FormID -> 中/英文名 + 类型（tools/esm/gen_quest_table.py）
+#include "SAQ_QuestTable.h"  // 生成物：FormID -> 中/英文名 + 类型 + 引导目标（tools/esm/gen_quest_table.py）
 
 #include "RE/B/BSFixedString.h"
 #include "RE/B/BSTEvent.h"
@@ -486,6 +487,167 @@ namespace SAQ
 			REX::INFO("界面状态[{}]：{}", g_poll.logged, report);
 		}
 
+		// ------------------------------------------------------------------
+		// 引导（第 10 轮）：AS3 请求 → 静态表查「引导目标引用」→ 写 ESM 通道
+		//
+		// 数据流（链路每一段都能在日志里自证，见 SAQ_Guide.h 顶部注释）：
+		//   AS3 玩家按键 → _root.SAQ_PeekGuide() 返回 "<序号>|<任务FormID>"
+		//   → 这里按 FormID 在静态表里取引导目标引用（离线从任务发布者/落脚点算出来的）
+		//   → 写 GLOB（SAQ_GuideTargetRef = 目标, SAQ_GuideState = 0）
+		//   → SAQ_Main.psc 轮询到 → ForceRefTo + 显示目标 + 设为追踪 → 引擎画标记
+		// ------------------------------------------------------------------
+		struct GuideRuntime
+		{
+			int           lastSeq{ -1 };   // 见过的最大请求序号（-1 = 没见过请求）
+			std::string   lastPeek;        // 上次读到的原始字符串（变化才算新请求）
+			std::uint64_t lastPollMs{};
+			std::uint32_t questFormID{};   // 当前正在引导的任务（0 = 没有）
+			std::uint32_t guideRef{};      // 写进 GLOB 的目标引用
+			std::string   channelSummary;  // ESM 通道摘要（变化才记一行日志）
+		};
+		GuideRuntime g_guide;
+		constexpr std::uint64_t kGuidePollIntervalMs = 100;
+
+		const StaticQuestInfo* FindStaticQuest(std::uint32_t a_formID)
+		{
+			for (std::size_t i = 0; i < kQuestTableSize; ++i) {
+				if (kQuestTable[i].formID == a_formID) {
+					return &kQuestTable[i];
+				}
+			}
+			return nullptr;
+		}
+
+		// ESM 通道摘要：只在变化时记一行。成功认领与失败原因都会留证。
+		void LogEsmChannel()
+		{
+			const auto ch = Guide::EnsureChannel();
+			if (ch.summary == g_guide.channelSummary) {
+				return;
+			}
+			g_guide.channelSummary = ch.summary;
+			if (ch.resolved) {
+				REX::INFO("ESM 通道：{}", ch.summary);
+			} else {
+				REX::WARN("ESM 通道：{}", ch.summary);
+			}
+		}
+
+		// 当前引导状态一行（菜单一开就记：任务、目标引用、脚本处理结果）。
+		void LogGuideState()
+		{
+			const auto ch = Guide::EnsureChannel();
+			const float scriptState = ch.resolved ? ch.guideState : -1.0f;
+			if (g_guide.questFormID == 0) {
+				REX::INFO("引导状态：无（还没选过引导目标）｜脚本状态={:.0f}", scriptState);
+				return;
+			}
+			const auto* entry = FindStaticQuest(g_guide.questFormID);
+			REX::INFO("引导状态：{}（0x{:08X}）目标引用=0x{:08X} {}｜脚本状态={:.0f}"
+					  "（0 待处理 / 1 已应用 / 2 取不到 / 3 已清除 / 4 别名不存在）",
+				entry ? entry->nameZh : "?", g_guide.questFormID, g_guide.guideRef,
+				entry ? entry->whereZh : "", scriptState);
+		}
+
+		// 应用一次引导请求。a_formID = 0 表示取消引导。
+		void ApplyGuideRequest(std::uint32_t a_formID)
+		{
+			if (a_formID == 0) {
+				std::string detail;
+				if (Guide::SetGuideTarget(0, detail)) {
+					REX::INFO("引导请求：取消｜{}", detail);
+				} else {
+					REX::WARN("引导请求：取消失败｜{}", detail);
+				}
+				g_guide.questFormID = 0;
+				g_guide.guideRef = 0;
+				return;
+			}
+			const auto* entry = FindStaticQuest(a_formID);
+			if (!entry) {
+				REX::WARN("引导请求：静态表里没有 0x{:08X}（是内嵌回退表里的条目？）", a_formID);
+				return;
+			}
+			if (entry->guideRef == 0) {
+				REX::WARN("引导请求：{}（0x{:08X}）没有引导目标（离线没算出「去哪里接」的引用，见 docs/05）",
+					entry->nameZh, a_formID);
+				return;
+			}
+			std::string detail;
+			if (!Guide::SetGuideTarget(entry->guideRef, detail)) {
+				REX::WARN("引导请求：{}（0x{:08X}）写 ESM 通道失败｜{}", entry->nameZh, a_formID, detail);
+				return;
+			}
+			g_guide.questFormID = a_formID;
+			g_guide.guideRef = entry->guideRef;
+			REX::INFO("引导请求：{}（0x{:08X}）→ 引用 0x{:08X}（{}）｜{}",
+				entry->nameZh, a_formID, entry->guideRef, entry->whereZh, detail);
+		}
+
+		// 菜单开着时轮询 AS3 的引导请求（`_root.SAQ_PeekGuide` → "<序号>|<任务FormID>"）。
+		// 序号 0 = 还没有请求；序号变化才算一次新请求（同一个请求不会被重复处理）。
+		void PollGuideRequest()
+		{
+			const auto now = NowMs();
+			if (g_guide.lastPollMs != 0 && now - g_guide.lastPollMs < kGuidePollIntervalMs) {
+				return;
+			}
+			g_guide.lastPollMs = now;
+
+			std::string peek;
+			if (!UI::ReadUiString("_root.SAQ_PeekGuide", peek)) {
+				return;  // 桥没通 / SWF 旧版：静默跳过，不刷屏
+			}
+			if (peek == g_guide.lastPeek) {
+				return;  // 没变化
+			}
+			g_guide.lastPeek = peek;
+
+			const auto bar = peek.find('|');
+			if (bar == std::string::npos) {
+				return;
+			}
+			int seq = 0;
+			unsigned long fid = 0;
+			try {
+				seq = std::stoi(peek.substr(0, bar));
+				fid = std::stoul(peek.substr(bar + 1));
+			} catch (...) {
+				REX::WARN("引导请求：解析失败 {}", peek);
+				return;
+			}
+			if (seq <= 0 || seq == g_guide.lastSeq) {
+				return;
+			}
+			g_guide.lastSeq = seq;
+			ApplyGuideRequest(static_cast<std::uint32_t>(fid));
+		}
+
+		// 菜单打开时的收尾：被引导的任务如果已经「被引擎开始」（玩家接到了），
+		// 就自动取消引导 —— 免得 HUD 上还挂着一条已经没用的指引。
+		void AutoClearGuideIfAccepted()
+		{
+			if (g_guide.questFormID == 0) {
+				return;
+			}
+			auto* form = RE::TESForm::LookupByID(static_cast<RE::TESFormID>(g_guide.questFormID));
+			if (!form) {
+				return;
+			}
+			const auto state = ReadQuestRuntimeState(form);
+			if (!state.vtableKnown || !IsAlreadyEngaged(state)) {
+				return;
+			}
+			std::string detail;
+			const auto* entry = FindStaticQuest(g_guide.questFormID);
+			if (Guide::SetGuideTarget(0, detail)) {
+				REX::INFO("引导自动取消：{}（0x{:08X}）已经被引擎开始（{}）｜{}",
+					entry ? entry->nameZh : "?", g_guide.questFormID, Describe(state), detail);
+			}
+			g_guide.questFormID = 0;
+			g_guide.guideRef = 0;
+		}
+
 		void OnMissionMenuClosed()
 		{
 			if (!g_poll.lastReport.empty()) {
@@ -494,6 +656,12 @@ namespace SAQ
 				REX::INFO("菜单关闭：界面状态一条都没读回来（桥没通 / SWF 是旧版 / 一次都没轮询到）");
 			}
 			ResetReportPoll();
+
+			// 引导请求的「变化检测」状态跟着菜单一起重置：菜单重开时 SWF 新建，
+			// AS3 侧的序号从 0 重新开始（当前引导本身存在 GLOB 里，不受影响）。
+			g_guide.lastPeek.clear();
+			g_guide.lastSeq = -1;
+			g_guide.lastPollMs = 0;
 		}
 
 		void OnMissionMenuOpened()
@@ -512,6 +680,12 @@ namespace SAQ
 			// 语言这一项只是**日志参考**：实际显示语言由 AS3 侧按引擎推来的任务名判定。
 			REX::INFO("菜单打开：静态表={} 引擎里存在={} 待推送={} INI语言={}(仅供参考) 标题=可接任务/Available(中英都推，由 UI 选)",
 				g_pending.total, g_pending.stats.live, g_pending.quests.size(), GetGameLanguage());
+
+			// 引导（第 10 轮）：ESM 通道自证 + 已接取任务的引导自动取消 + 当前引导状态
+			LogEsmChannel();
+			AutoClearGuideIfAccepted();
+			LogGuideState();
+
 			TryPushPending();
 		}
 
@@ -530,8 +704,9 @@ namespace SAQ
 			if (open && !wasOpen) {
 				OnMissionMenuOpened();
 			} else if (open) {
-				TryPushPending();  // 上一轮没成功的话接着重试
-				PollUiReport();    // 界面状态「变化即记」
+				TryPushPending();   // 上一轮没成功的话接着重试
+				PollUiReport();     // 界面状态「变化即记」
+				PollGuideRequest(); // 玩家按了引导键就下发给 ESM 通道（第 10 轮）
 			} else if (wasOpen) {
 				OnMissionMenuClosed();
 			}

@@ -147,6 +147,20 @@ package
 
       private var SaqOurTabMaxList:int = -1;
 
+      // ---- 引导（第 10 轮）------------------------------------------------
+      // 玩家在「可接任务」tab 里选中一条、按 Enter 或 X（SET COURSE）时：
+      //   SaqGuideSeq++ / SaqGuideQuest = 任务 FormID（0 = 取消）
+      //   → C++ 侧（SAQ.cpp::PollGuideRequest）读到序号变化 → 把「引导目标引用」写进 ESM 的
+      //     GLOB → Papyrus（SAQ_Main.psc）在那条代理任务上 ForceRefTo + 显示目标 + 设为追踪
+      //   → 引擎画出任务标记（蓝点）与扫描仪路径线。
+      // 为什么要绕这一圈：未接取的任务引擎根本不追踪，这是「借引擎的标记系统一用」。
+      private var SaqGuideSeq:int = 0;
+
+      private var SaqGuideQuest:Number = 0;
+
+      // 最近一次引导动作（进报告，日志里能看出玩家点了什么）
+      private var SaqGuideNote:String = "-";
+
       private var StoredLastOpenedIds:Array = null;
       
       private var StoredLastCategory:uint = 0;
@@ -659,6 +673,7 @@ package
                _loc1_["SAQ_Probe"] = this.SAQ_Probe;
                _loc1_["SAQ_ApplyPayload"] = this.SAQ_ApplyPayload;
                _loc1_["SAQ_Report"] = this.SAQ_Report;
+               _loc1_["SAQ_PeekGuide"] = this.SAQ_PeekGuide;
             }
          }
          catch(e:Error)
@@ -758,7 +773,50 @@ package
             + " title=" + this.SaqTabTitle()
             + " visible=" + (this.visible ? "1" : "0");
          _loc8_ += " last=" + this.SaqTabProbe + " ourTab=" + this.SaqOurTabProbe + " ourTabMax=" + this.SaqOurTabMaxList;
+         _loc8_ += " guide=" + this.SaqGuideSeq + "|" + this.SaqGuideQuest + "|" + this.SaqGuideNote;
          return _loc8_;
+      }
+      
+      // ==================================================================
+      //  引导（第 10 轮）
+      //
+      //  未接取的任务引擎不给标记（它只在「正在运行 + 有已显示目标」时才画），所以引导
+      //  走我们自己的代理任务：C++ 侧轮询 SAQ_PeekGuide()，把目标引用写进 ESM 的 GLOB，
+      //  Papyrus 那边套到代理任务的别名上。AS3 这一层只负责「玩家想让哪条任务被引导」。
+      // ==================================================================
+      private function SaqIsOurEntry(param1:Object) : Boolean
+      {
+         return param1 != null && param1.bSaqAvailable == true;
+      }
+      
+      // 切换引导：同一条再按一次 = 取消（返回 true 表示现在是「已设为引导」）。
+      private function SaqToggleGuide(param1:Object) : Boolean
+      {
+         if(!SaqIsOurEntry(param1))
+         {
+            return false;
+         }
+         var _loc2_:Number = this.SaqGuideQuest == param1.uID ? 0 : param1.uID;
+         this.SaqGuideSeq = this.SaqGuideSeq + 1;
+         this.SaqGuideQuest = _loc2_;
+         if(_loc2_ != 0)
+         {
+            GlobalFunc.PlayMenuSound(MISSION_TRACKING_TOGGLE_ON_SOUND);
+            this.SaqGuideNote = "已设为引导:" + param1.sName;
+         }
+         else
+         {
+            GlobalFunc.PlayMenuSound(MISSION_TRACKING_TOGGLE_OFF_SOUND);
+            this.SaqGuideNote = "已取消引导";
+         }
+         return _loc2_ != 0;
+      }
+      
+      // C++ 侧入口（无参）："<序号>|<任务FormID>"。序号 0 = 还没有请求；
+      // 序号变化才算一次新请求（C++ 侧据此去重）。
+      public function SAQ_PeekGuide() : String
+      {
+         return this.SaqGuideSeq + "|" + this.SaqGuideQuest;
       }
       
       private function OnQuestDataUpdate(param1:FromClientDataEvent) : void
@@ -951,6 +1009,13 @@ package
             this.UpdateRejectData(_loc1_.bCanBeRejected === true && (_loc3_ == null || _loc3_.uID == 0));
             this.ShowOnMapButton.Enabled = MissionsListEntry.CanShowOnMap(_loc1_) != 0;
             this.PlotToLocationButton.Enabled = MissionsListEntry.CanShowOnMap(_loc1_) != 0;
+            if(this.SaqIsOurEntry(_loc1_))
+            {
+               // 「可接任务」条目：原版没有它的位置数据（Y 显示在地图上不给用），
+               // X（SET COURSE）改用我们自己的引导 —— 见 OnPlotCourseEvent。
+               this.ShowOnMapButton.Enabled = false;
+               this.PlotToLocationButton.Enabled = true;
+            }
             if(_loc2_ || _loc1_.bIsMiscObjective === true)
             {
                this.MissionInfo_mc.UpdateMissionInfo(this.MissionsList_mc.selectedEntry);
@@ -1061,6 +1126,13 @@ package
       
       private function OnPlotCourseEvent() : void
       {
+         // 「可接任务」条目：X 键（SET COURSE）改成我们自己的引导请求，
+         // 不把不存在的任务 ID 丢给原版的数据层（那样只会静默失败）。
+         if(this.SaqIsOurEntry(this.MissionsList_mc.selectedEntry))
+         {
+            this.SaqToggleGuide(this.MissionsList_mc.selectedEntry);
+            return;
+         }
          if(MissionsListEntry.IsMission(this.MissionsList_mc.selectedEntry))
          {
             BSUIDataManager.dispatchEvent(new CustomEvent(MissionMenu_PlotToLocation,{
@@ -1083,6 +1155,13 @@ package
          var _loc1_:* = undefined;
          var _loc2_:Boolean = false;
          var _loc3_:Object = null;
+         // 「可接任务」条目：原版追踪不了（引擎里这条任务还没开始），改走我们的引导。
+         // 注意这一步必须在 CanTrackOrUntrack 判定**之前** —— 我们的条目那个值恒为 false。
+         if(this.SaqIsOurEntry(this.MissionsList_mc.selectedEntry))
+         {
+            this.SaqToggleGuide(this.MissionsList_mc.selectedEntry);
+            return;
+         }
          if(this.CanTrackOrUntrack)
          {
             _loc1_ = this.MissionsList_mc.selectedEntry;

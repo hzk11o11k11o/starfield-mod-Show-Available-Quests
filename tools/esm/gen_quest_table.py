@@ -199,10 +199,20 @@ def c_escape(s: str) -> str:
     return "".join(out)
 
 
+def load_guide_targets(path: Path) -> dict[int, dict]:
+    """引导目标表（tools/esm/gen_guide_targets.py 生成；没有也不影响构建）。"""
+    if not path.exists():
+        print(f"（没有 {path} —— 引导目标为空，先跑 tools/esm/gen_guide_targets.py）")
+        return {}
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    return {int(k): v for k, v in raw.items()}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--quests", default="ref/quests.json")
     ap.add_argument("--strings-dir", default="ref/strings/strings")
+    ap.add_argument("--guide-targets", default="ref/guide_targets.json")
     ap.add_argument("--out-header", default="plugin/src/SAQ_QuestTable.h")
     ap.add_argument("--out-json", default="ref/quest_table_debug.json")
     ap.add_argument("--out-as3", default="ui/missionmenu/saqdata/SaqEmbeddedPayload.inc")
@@ -267,7 +277,33 @@ def main() -> int:
         rows.append(row)
 
     rows.sort(key=lambda r: r["formid"])
-    print(f"table rows: {len(rows)}（无类型 {skipped_no_type}，主线 {skipped_main}）")
+
+    # 引导目标（第 10 轮）：每条任务在世界里的一个「去哪里接」引用。
+    # 没有引导目标的任务照样进表（列表照常显示，只是不能引导）。
+    guides = load_guide_targets(Path(a.guide_targets))
+    n_guide = 0
+    for r in rows:
+        g = guides.get(r["formid"])
+        if g and g.get("refr"):
+            r["guide_ref"] = int(g["refr"])
+            r["guide_kind"] = g.get("kind", "")
+            r["guide_where_en"] = (g.get("whereEn") or "").strip()
+            r["guide_where_zh"] = (g.get("whereZh") or "").strip()
+            n_guide += 1
+        else:
+            r["guide_ref"] = 0
+            r["guide_kind"] = ""
+            r["guide_where_en"] = ""
+            r["guide_where_zh"] = ""
+
+    print(f"table rows: {len(rows)}（无类型 {skipped_no_type}，主线 {skipped_main}）；"
+          f"其中带引导目标 {n_guide} 条（{n_guide * 100 // max(len(rows), 1)}%）")
+    kind_count: dict[str, int] = {}
+    for r in rows:
+        if r["guide_kind"]:
+            kind_count[r["guide_kind"]] = kind_count.get(r["guide_kind"], 0) + 1
+    if kind_count:
+        print("引导目标来源：" + " ".join(f"{k}={v}" for k, v in sorted(kind_count.items())))
     if skipped_reasons:
         print("过滤内部任务:")
         for reason, n in sorted(skipped_reasons.items(), key=lambda kv: -kv[1]):
@@ -293,8 +329,16 @@ def main() -> int:
     lines.append("\t\tstd::uint8_t  type;")
     lines.append("\t\t// QUST DNAM 头 4 字节（uint32，小端）—— 目前**只用于运行时诊断日志**：")
     lines.append("\t\t// 拿它和「引擎已开始的那几条」对一下，看哪一位才是「引擎自动启动」。")
+    lines.append("\t\t// ★ 第 10 轮已从 xEdit 导出里读到 flag 名：位0 = Start Game Enabled。")
     lines.append("\t\t// 布局证据见 tools/esm/gen_quest_table.py::dnam_flags。")
     lines.append("\t\tstd::uint32_t staticFlags;")
+    lines.append("\t\t// 引导目标（第 10 轮）：这条任务「去哪里接」——世界里的一个引用")
+    lines.append("\t\t// （任务发布者 NPC 的放置引用 / 任务自己的落脚点 / 地点地图标记）。")
+    lines.append("\t\t// 0 = 这条任务没有可用的引导目标（列表照常显示，只是引导不可用）。")
+    lines.append("\t\t// 生成器：tools/esm/gen_guide_targets.py（来源与排序规则见该文件头注释）。")
+    lines.append("\t\tstd::uint32_t guideRef;")
+    lines.append("\t\tconst char*   whereEn;  // 目标所在地（城市/飞船），日志与 UI 提示用")
+    lines.append("\t\tconst char*   whereZh;")
     lines.append("\t\tconst char*   nameEn;")
     lines.append("\t\tconst char*   nameZh;")
     lines.append("\t};")
@@ -304,7 +348,9 @@ def main() -> int:
         fid = r["formid"] if isinstance(r["formid"], int) else int(r["formid"], 16)
         flags = int(r.get("dnam_flags", 0))
         lines.append(
-            f'\t\t{{ 0x{fid:08X}u, {r["itype"]}u, 0x{flags:08X}u, "{c_escape(r["name_en"])}", "{c_escape(r["name_zh"])}" }},'
+            f'\t\t{{ 0x{fid:08X}u, {r["itype"]}u, 0x{flags:08X}u, 0x{int(r["guide_ref"]):08X}u,'
+            f' "{c_escape(r["guide_where_en"])}", "{c_escape(r["guide_where_zh"])}",'
+            f' "{c_escape(r["name_en"])}", "{c_escape(r["name_zh"])}" }},'
         )
     lines.append("\t};")
     lines.append(f"\tinline constexpr std::size_t kQuestTableSize = {len(rows)};")

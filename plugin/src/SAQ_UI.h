@@ -49,5 +49,10 @@ namespace SAQ
 		// 用途：菜单开着时轮询，把「切到我们 tab 之后列表到底有几条」这类事实写进日志。
 		// 返回 false = 桥没通 / SWF 是旧版 / 菜单正在换代（调用方静默跳过即可，别刷屏）。
 		bool ReadUiReport(std::string& a_report);
+
+		// ★ 第 10 轮：读 AS3 一个无参函数的字符串返回值（原样，不做日志转义、无前缀）。
+		// 用途：引导请求（`_root.SAQ_PeekGuide` → "<seq>|<questFormID>"）。
+		// 返回 false = 桥没通 / SWF 旧版 / 返回值不是字符串。
+		bool ReadUiString(const char* a_path, std::string& a_value);
 	}
 }
