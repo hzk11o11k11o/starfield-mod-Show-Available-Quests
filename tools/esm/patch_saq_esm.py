@@ -57,7 +57,14 @@ OBJECTIVE_INDEX = 10
 #   morelore_mantislegacy.esm 的 NNAM 也都是「文本长度+1」。
 #   第 11 轮我们没有写 NUL（len=23 = 恰好 23 个可见字符），游戏里 HUD「任务更新」
 #   显示成 "[...]"（文本为空）——补上 NUL 是这一轮的直接修复。
-OBJECTIVE_TEXT = b"<Alias=SAQ_GuideTarget>\x00"
+# ★ 第 13 轮：目标文本从 `<Alias=SAQ_GuideTarget>` 改成**固定文案**。
+#   第 12 轮补了 NUL 后 HUD 仍显示 `[…]` ⇒ 别名替换没生效。实证：
+#     • 扫遍本机所有非本地化第三方 ESM（QUST 内联 NNAM 共 9 条）——**没有一条**用 `<Alias=...>`；
+#     • 原版（Starfield.esm）的 `<Alias=...>` 全部出现在**本地化 strings 表**里
+#       （记录里只存字符串 ID，例如 0x0002D33A = "Collect the bounty on the <Alias=PrimaryRef> …"）。
+#   ⇒「内联文本走别名替换」这条路没有先例，先用固定文案保证能显示。
+#    「去找谁/去哪」由引导的蓝点 + 扫描仪路径线承担（QSTA 仍指向别名 0，不动）。
+OBJECTIVE_TEXT = "前往接取地点".encode("utf-8") + b"\x00"
 # 代理任务的任务名（QUST 记录级 FULL）。同样要 NUL 终止。
 # 为什么要有名字：引擎会把「正在运行 + 有已显示目标」的任务塞进玩家任务日志
 #   （第 11 轮日志实证：qdata 列表里出现「f000800:」——名字为空的那条就是它），

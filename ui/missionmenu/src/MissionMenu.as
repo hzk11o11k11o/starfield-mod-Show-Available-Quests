@@ -594,7 +594,8 @@ package
             "iFaction":FactionUtils.FACTION_NONE,
             "sName":this.SaqUseChinese() ? param1.sNameZh : param1.sNameEn,
             "sDescription":this.SaqDescriptionText(),
-            "bActive":false,
+            // 引导中的那条保持「追踪中」的视觉（左侧竖条）—— 列表重建（SaqRefresh）后不丢状态。
+            "bActive":this.SaqGuideQuest != 0 && param1.uID == this.SaqGuideQuest,
             "bComplete":false,
             "bFailed":false,
             "bCanBeRejected":false,
@@ -850,6 +851,7 @@ package
             return false;
          }
          var _loc2_:Number = this.SaqGuideQuest == param1.uID ? 0 : param1.uID;
+         var _loc3_:Number = this.SaqGuideQuest;
          this.SaqGuideSeq = this.SaqGuideSeq + 1;
          this.SaqGuideQuest = _loc2_;
          if(_loc2_ != 0)
@@ -862,7 +864,43 @@ package
             GlobalFunc.PlayMenuSound(MISSION_TRACKING_TOGGLE_OFF_SOUND);
             this.SaqGuideNote = "已取消引导";
          }
+         // ★ 第 13 轮：把「引导中」映射到条目的 bActive —— 列表左侧那条竖条
+         //   （TrackIndicator）会像原版「追踪中」的任务一样亮起来。玩家反馈：
+         //   我们的条目看起来「永远没被选中」，缺少这个视觉反馈。
+         this.SaqApplyTrackedMarker(_loc3_, _loc2_);
          return _loc2_ != 0;
+      }
+      
+      // 把「当前引导的任务」写进条目的 bActive，并就地刷新受影响的条目。
+      // 刷新用 BSScrollingList.UpdateEntry(下标)：只重渲染指定的那一行，
+      // 不动滚动位置、也不重建列表（比 SaqRefresh 全量重建温和得多）。
+      // 下标 = QuestData.length + 在 AvailableQuests 里的下标 —— 因为列表数据就是
+      // BuildMergedList()（QuestData.concat(AvailableQuests)）。
+      // 用 try 包住：下标万一因为过滤/展开而对不上，最坏是这一行没刷新，不能把界面带崩。
+      private function SaqApplyTrackedMarker(param1:Number, param2:Number) : void
+      {
+         if(this.AvailableQuests == null || this.MissionsList_mc == null)
+         {
+            return;
+         }
+         var _loc3_:int = this.QuestData != null ? int(this.QuestData.length) : 0;
+         var _loc4_:int = 0;
+         while(_loc4_ < this.AvailableQuests.length)
+         {
+            var _loc5_:Object = this.AvailableQuests[_loc4_];
+            if(_loc5_ != null && (_loc5_.uID == param1 || _loc5_.uID == param2))
+            {
+               _loc5_.bActive = param2 != 0 && _loc5_.uID == param2;
+               try
+               {
+                  this.MissionsList_mc.UpdateEntry(_loc3_ + _loc4_);
+               }
+               catch(e:Error)
+               {
+               }
+            }
+            _loc4_++;
+         }
       }
       
       // C++ 侧入口（无参）："<序号>|<任务FormID>"。序号 0 = 还没有请求；
