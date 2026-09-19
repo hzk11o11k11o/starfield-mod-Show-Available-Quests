@@ -621,6 +621,7 @@ package
                _loc1_["SAQ_SetAvailableQuests"] = this.SetAvailableQuests;
                _loc1_["SAQ_Probe"] = this.SAQ_Probe;
                _loc1_["SAQ_ApplyPayload"] = this.SAQ_ApplyPayload;
+               _loc1_["SAQ_Report"] = this.SAQ_Report;
             }
          }
          catch(e:Error)
@@ -676,6 +677,45 @@ package
             return -1;
          }
          return this.SetAvailableQuests(String(_loc1_));
+      }
+      
+      // C++ 诊断入口（**只读**，不改任何状态）：把本实例当前的关键状态回读成一行字符串。
+      //
+      // 为什么需要它：第 7 轮实测日志里「推送成功 + 返回 0」，靠日志**无法判断**
+      // 界面到底有没有按推送的数据渲染（返回 0 其实是 C++ 读 int 的方式错了），
+      // 只能靠肉眼看游戏 —— 这一条把这个缺口补上：日志里直接给出
+      //   「解析到几条 / 过滤后剩几条 / 列表里几条 / 当前掩码 / 选中 tab / 语言 / 标题」。
+      //
+      // 字段含义：
+      //   src       = 数据源（cpp = C++ 推送；embedded = SWF 内嵌回退表）
+      //   raw       = 载荷解析出的条数（-1 = 还没解析过）
+      //   keep      = 滤掉「玩家已知任务」后剩下的条数（-1 = 空）
+      //   questData = 引擎推给 UI 的任务条数（语言判定与已知任务过滤都靠它）
+      //   list      = 列表当前实际条目数（含引擎推的任务 + 我们的条目）
+      //   mask      = 列表当前过滤掩码（我们 tab 应该是 0x40）
+      //   tab       = 当前选中的 tab 序号（我们的是最后一个 = 7）
+      //   lang      = 语言判定结果
+      //   title     = 我们那个 tab 此刻的标题
+      public function SAQ_Report() : String
+      {
+         var _loc1_:int = this.SaqRawQuests != null ? this.SaqRawQuests.length : -1;
+         var _loc2_:int = this.AvailableQuests != null ? this.AvailableQuests.length : -1;
+         var _loc3_:int = this.QuestData != null ? this.QuestData.length : -1;
+         var _loc4_:int = this.MissionsList_mc != null ? int(this.MissionsList_mc.entryCount) : -1;
+         var _loc5_:int = this.MissionsList_mc != null ? int(this.MissionsList_mc.filterMask) : -1;
+         var _loc6_:int = this.TabbedFilterSelection_mc != null ? int(this.TabbedFilterSelection_mc.selectedIndex) : -1;
+         var _loc7_:String = this.SaqLangKnown ? (this.SaqLangZh ? "zh" : "en") : "?";
+         var _loc8_:String = "src=" + (this.SaqSourceIsCpp ? "cpp" : "embedded")
+            + " raw=" + _loc1_
+            + " keep=" + _loc2_
+            + " questData=" + _loc3_
+            + " list=" + _loc4_
+            + " mask=0x" + _loc5_.toString(16);
+         _loc8_ += " tab=" + _loc6_
+            + " lang=" + _loc7_
+            + " title=" + this.SaqTabTitle()
+            + " visible=" + (this.visible ? "1" : "0");
+         return _loc8_;
       }
       
       private function OnQuestDataUpdate(param1:FromClientDataEvent) : void

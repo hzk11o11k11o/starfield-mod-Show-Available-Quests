@@ -725,6 +725,67 @@ namespace SAQ::UI
 			}
 		}
 
+		// ================================================================
+		// ★★ 第 8 轮修正：读 GFx 返回的**数值**必须按类型读，不能一律 GetNumber()。
+		//
+		//   踩坑实录：AS3 侧 `SetAvailableQuests():int` 返回 202，我们却记成
+		//   「返回 0」——因为 GFx 的 Value 是联合体：
+		//     kInt   → 值存在 _value.int32（低 4 字节）
+		//     kNumber→ 值存在 _value.number（整个 8 字节的 double）
+		//   GetNumber() 直接返回 `_value.number`，于是把 int 的位模式**当成 double**：
+		//     202（0x00000000000000CA）→ 1e-321 ⇒ 格式化出来是 "0"
+		//     -1 （0x00000000FFFFFFFF）→ 2.12e-314 ⇒ 打印 "0" 但**仍然 > 0**
+		//   后果不只是日志难看：`reported > 0` 这个成功判据被整数位模式**意外满足**，
+		//   连 AS3 明确报的失败码（-1 载荷没到 / -2 解析失败）都会被当成成功。
+		//   （第 8 轮日志实证：推送成功、胜出的那条 `_root.SAQ_SetAvailableQuests=ok(返回 0)`
+		//     其实是"返回了一个正数" —— 因为循环正是在这一条 break 的。）
+		// ================================================================
+		bool SafeReadValueNumber(const RE::Scaleform::GFx::Value& a_value, double& a_out)
+		{
+			__try {
+				if (a_value.IsInt()) {
+					a_out = static_cast<double>(a_value.GetInt());
+					return true;
+				}
+				if (a_value.IsUInt()) {
+					a_out = static_cast<double>(a_value.GetUInt());
+					return true;
+				}
+				if (a_value.IsNumber()) {
+					a_out = a_value.GetNumber();
+					return true;
+				}
+				if (a_value.IsBoolean()) {
+					a_out = a_value.GetBoolean() ? 1.0 : 0.0;
+					return true;
+				}
+			} __except (EXCEPTION_EXECUTE_HANDLER) {
+			}
+			return false;
+		}
+
+		// 日志转义：探针/回报读回来的字符串里带 \n \t（载荷本身就是多行的），
+		// 原样写进日志会把一行日志劈成好几行（第 7 轮日志就是三行拼一行），
+		// 这里统一转成可见的 \n \r \t。
+		std::string EscapeForLog(std::string_view a_text, std::size_t a_maxLen = 0)
+		{
+			std::string out;
+			out.reserve(a_text.size() + 8);
+			for (const char ch : a_text) {
+				if (a_maxLen && out.size() >= a_maxLen) {
+					out += "…";
+					break;
+				}
+				switch (ch) {
+				case '\n': out += "\\n"; break;
+				case '\r': out += "\\r"; break;
+				case '\t': out += "\\t"; break;
+				default: out += ch; break;
+				}
+			}
+			return out;
+		}
+
 		// 读 GFx 返回值里的字符串（POD 输出，避免 C2712）。
 		bool SafeReadValueString(const RE::Scaleform::GFx::Value& a_value, char* a_out, std::size_t a_outSize)
 		{
@@ -889,21 +950,23 @@ namespace SAQ::UI
 			const char* path;
 		};
 		constexpr Attempt kAttempts[] = {
-			// ★ SWF 侧在 root 上挂的入口放最前（MissionMenu 是舞台子元件、不是 root，
-			//   所以老的三条路径实测全 fail；见 MissionMenu.SaqPublishEntryPoint）。
-			{ 0, true, "SAQ_SetAvailableQuests" },
+			// ★ 实测（第 8 轮日志）：**只有带 `_root.` 前缀的路径能命中**，
+			//   裸名字三条全 fail —— 所以把能命中的放最前，别每次白试。
+			//   （SWF 侧挂在 root 上；见 MissionMenu.SaqPublishEntryPoint。）
 			{ 0, true, "_root.SAQ_SetAvailableQuests" },
-			{ 1, true, "SAQ_ApplyPayload" },
+			// 对照组（都留在表里：一旦哪天 SWF 侧改了挂法，这里能立刻看出来）
+			{ 0, true, "SAQ_SetAvailableQuests" },
 			{ 1, true, "_root.SAQ_ApplyPayload" },
-			{ 0, true, "SetAvailableQuests" },
+			{ 1, true, "SAQ_ApplyPayload" },
 			{ 0, true, "_root.SetAvailableQuests" },
+			{ 0, true, "SetAvailableQuests" },
 			{ 0, true, "_root.root.SetAvailableQuests" },
-			{ 0, false, "SAQ_SetAvailableQuests" },
 			{ 0, false, "_root.SAQ_SetAvailableQuests" },
-			{ 1, false, "SAQ_ApplyPayload" },
+			{ 0, false, "SAQ_SetAvailableQuests" },
 			{ 1, false, "_root.SAQ_ApplyPayload" },
-			{ 0, false, "SetAvailableQuests" },
+			{ 1, false, "SAQ_ApplyPayload" },
 			{ 0, false, "_root.SetAvailableQuests" },
+			{ 0, false, "SetAvailableQuests" },
 			{ 0, false, "_root.root.SetAvailableQuests" },
 		};
 	}
@@ -970,6 +1033,24 @@ namespace SAQ::UI
 		return s;
 	}
 
+	// 无参调用，并把返回值（字符串/数值）读回来 —— 诊断用（SAQ_Report / SAQ_Probe）。
+	std::string CallAs3NoArg(RE::Scaleform::GFx::ASMovieRootBase* a_root, const char* a_path)
+	{
+		RE::Scaleform::GFx::Value ret;
+		if (!SafeInvoke(a_root, a_path, &ret, nullptr, 0)) {
+			return std::string{ a_path } + "=fail(路径不存在或调用失败)";
+		}
+		char buf[512]{};
+		if (SafeReadValueString(ret, buf, sizeof(buf))) {
+			return std::string{ a_path } + "=" + buf;
+		}
+		double num{};
+		if (SafeReadValueNumber(ret, num)) {
+			return std::format("{}=数值 {}", a_path, num);
+		}
+		return std::format("{}=(非字符串/数值: {})", a_path, DescribeValueType(ret));
+	}
+
 	bool PushAvailableQuests(const std::vector<QuestEntry>& a_quests, std::string& a_detail)
 	{
 		if (!EnsureResolved(a_detail)) {
@@ -1004,10 +1085,12 @@ namespace SAQ::UI
 		}
 
 		// ★ 诊断（第 7 轮）：先问 AS3「你收到的字符串长什么样」（见 ProbeAs3String）。
-		//   上一次实测「调用 ok 但返回 0」的谜团靠这条日志定音：
-		//   探针正常 ⇒ 参数没问题，往解析/逻辑侧找；探针为 null/0 ⇒ 参数没送到。
-		const std::string probeW = ProbeAs3String(root, "SAQ_Probe", payloadWide, payloadUtf8, true);
+		//   第 8 轮实测结论：`_root.SAQ_Probe=6743|SAQ1\nT\t可接任务\tAvailable\nQ\t`
+		//   —— 载荷**完整**送到（6743 字符 = 8561 字节 UTF-8 的中文一字一 char），
+		//   且 24 字符前缀与载荷开头逐字相符 ⇒ 参数链路没有问题。
+		//   （裸名字那条 `SAQ_Probe=fail`，与 kAttempts 的实测一致：必须带 `_root.` 前缀。）
 		const std::string probeS = ProbeAs3String(root, "_root.SAQ_Probe", payloadWide, payloadUtf8, false);
+		const std::string probeW = ProbeAs3String(root, "SAQ_Probe", payloadWide, payloadUtf8, true);
 
 		bool ok = false;
 		std::string trail;
@@ -1036,29 +1119,39 @@ namespace SAQ::UI
 				called = SafeInvoke(root, attempt.path, &ret, args, 1);
 			}
 
-			double reported = -1.0;
+			// ★ 按类型读（见 SafeReadValueNumber 的注释：一律 GetNumber() 会把 int 读成 1e-321）。
+			double reported = 0.0;
 			bool hasNumber = false;
-			if (called && (ret.IsNumber() || ret.IsInt() || ret.IsUInt())) {
-				reported = ret.GetNumber();
-				hasNumber = true;
+			if (called) {
+				hasNumber = SafeReadValueNumber(ret, reported);
 			}
 
 			trail += std::string{ trail.empty() ? "" : " | " } + (attempt.kind == 1 ? "V" : "") + (attempt.wide ? "W:" : "S:") + attempt.path;
 			trail += called ? "=ok" : "=fail";
 			if (hasNumber) {
-				trail += std::format("(返回 {:.0f})", reported);
+				trail += std::format("(返回 {:.0f}", reported);
+				if (reported < 0.0) {
+					// AS3 侧的约定（MissionMenu.SetAvailableQuests）：-1 = 参数空/null；
+					// -2 = 参数非空但解析不出条目（此时 AS3 已自动回退内嵌表）。
+					trail += reported == -1.0 ? "：载荷没送到" : (reported == -2.0 ? "：解析失败(已回退内嵌表)" : "：未知错误码");
+				}
+				trail += ")";
 			} else if (called) {
 				trail += std::format("(返回 {})", DescribeValueType(ret));
 			}
 
 			// AS3 侧返回「解析到的条数」：>0 才算成功。
-			// （=ok(返回 -1) ⇒ 参数是空/null；=ok(返回 -2) ⇒ 参数非空但解析不出条目。
-			//   AS3 侧在这两种情况下都会回退内嵌表，所以界面不会空。）
 			if (called && reported > 0.0) {
 				ok = true;
 				break;
 			}
 		}
+
+		// ★ 状态回读（第 8 轮新增）：把界面此刻的真实状态读回来。
+		// 第 7 轮的教训是「日志说成功、却没人能证明界面显示了什么」，只能靠肉眼进游戏核对；
+		// SAQ_Report 一次给出「解析几条/过滤后几条/列表几条/掩码/选中 tab/语言/标题」，
+		// 从此这一层在日志里就能闭环（SWF 还是旧版时会显示 fail，也能一眼看出）。
+		const std::string report = EscapeForLog(CallAs3NoArg(root, "_root.SAQ_Report"), 240);
 
 		// 先把解析信息留一份 —— 失败时下面会 Reset()，缓存里的 detail 会被清掉。
 		const std::string bridgeDetail = bridge.detail;
@@ -1069,8 +1162,11 @@ namespace SAQ::UI
 			Reset();
 		}
 
-		a_detail = bridgeDetail + slotNote + " 探针: " + probeW + " | " + probeS + " 调用: " + trail +
-			std::format(" 载荷={} 字节/{} 条", payloadUtf8.size(), a_quests.size());
+		a_detail = bridgeDetail + slotNote +
+			" 探针: " + EscapeForLog(probeS, 120) + " | " + EscapeForLog(probeW, 120) +
+			" 调用: " + trail +
+			std::format(" 载荷={} 字节/{} 条", payloadUtf8.size(), a_quests.size()) +
+			" 状态: " + report;
 		return ok;
 	}
 }
