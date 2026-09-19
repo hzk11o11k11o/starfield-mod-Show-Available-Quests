@@ -97,14 +97,28 @@ if (-not $SkipPapyrus) {
 
 # --- 4. AS3 patch + SWF ------------------------------------------------------
 Step '4/6' '同步 AS3 patch 并重编译两个 SWF'
-foreach ($pd in @($patchDir, $patchDirLrg)) {
-    New-Item -ItemType Directory -Force -Path (Join-Path $pd 'Shared') | Out-Null
+$saqFrag = Join-Path $root 'ui\missionmenu\saqdata\SaqEmbeddedPayload.inc'
+
+# MissionMenu.as 里留了 /*__SAQ_EMBEDDED__*/ 标记，这里把生成好的内嵌任务数据
+# （SAQ_EMBEDDED_CHUNKS 的数组元素）拼进去 —— 这样源码文件保持手写可读，
+# 而 SWF 里带着一份「C++ 推送失败也能用」的回退数据。
+function Sync-MissionMenuPatch([string]$srcMm, [string]$srcQuestUtils, [string]$dstPatchDir) {
+    if (-not (Test-Path $srcMm)) { throw "缺少 AS3 源码：$srcMm" }
+    if (-not (Test-Path $saqFrag)) { throw "缺少内嵌任务数据：$saqFrag（第 1 步未跑？）" }
+    $text = [System.IO.File]::ReadAllText($srcMm, [System.Text.Encoding]::UTF8)
+    if (-not $text.Contains('/*__SAQ_EMBEDDED__*/')) { throw "$srcMm 里找不到 /*__SAQ_EMBEDDED__*/ 标记" }
+    $frag = [System.IO.File]::ReadAllText($saqFrag, [System.Text.Encoding]::UTF8)
+    $text = $text.Replace('/*__SAQ_EMBEDDED__*/', "`r`n$frag`r`n")
+    New-Item -ItemType Directory -Force -Path $dstPatchDir, (Join-Path $dstPatchDir 'Shared') | Out-Null
+    [System.IO.File]::WriteAllText((Join-Path $dstPatchDir 'MissionMenu.as'), $text, (New-Object System.Text.UTF8Encoding $false))
+    Copy-Item $srcQuestUtils (Join-Path $dstPatchDir 'Shared\QuestUtils.as') -Force
+    Ok "$(Split-Path $dstPatchDir -Leaf)：MissionMenu.as ($($text.Length) 字符，含内嵌任务数据)"
 }
-Copy-Item (Join-Path $root 'ui\missionmenu\src\MissionMenu.as') (Join-Path $patchDir 'MissionMenu.as') -Force
-Copy-Item (Join-Path $root 'ui\missionmenu\src\Shared\QuestUtils.as') (Join-Path $patchDir 'Shared\QuestUtils.as') -Force
+Sync-MissionMenuPatch (Join-Path $root 'ui\missionmenu\src\MissionMenu.as') `
+    (Join-Path $root 'ui\missionmenu\src\Shared\QuestUtils.as') $patchDir
 & python (Join-Path $root 'tools\ui\make_lrg_source.py') | Write-Host
-Copy-Item (Join-Path $root 'ui\missionmenu_lrg\src\MissionMenu.as') (Join-Path $patchDirLrg 'MissionMenu.as') -Force
-Copy-Item (Join-Path $root 'ui\missionmenu_lrg\src\Shared\QuestUtils.as') (Join-Path $patchDirLrg 'Shared\QuestUtils.as') -Force
+Sync-MissionMenuPatch (Join-Path $root 'ui\missionmenu_lrg\src\MissionMenu.as') `
+    (Join-Path $root 'ui\missionmenu_lrg\src\Shared\QuestUtils.as') $patchDirLrg
 
 if (-not $SkipSwf) {
     foreach ($job in @(

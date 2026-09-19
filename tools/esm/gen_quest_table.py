@@ -61,6 +61,67 @@ def clean_name(raw: str, zh: bool) -> str:
     return out
 
 
+def as3_escape(s: str) -> str:
+    out = []
+    for ch in s:
+        if ch == "\\":
+            out.append("\\\\")
+        elif ch == '"':
+            out.append('\\"')
+        elif ch == "\n":
+            out.append("\\n")
+        elif ch == "\t":
+            out.append("\\t")
+        elif ch == "\r":
+            out.append("\\r")
+        elif ord(ch) < 0x20:
+            out.append(" ")
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def sanitize_name(s: str) -> str:
+    """名字里不能有 Tab/换行（会破坏载荷的行/列结构）。"""
+    return s.replace("\t", " ").replace("\r", " ").replace("\n", " ").strip()
+
+
+def build_payload(rows: list[dict], title_zh: str = "可接任务", title_en: str = "Available") -> str:
+    """与 C++ 侧 BuildPayloadUtf8 完全同格式的载荷（AS3 内嵌回退用）。"""
+    lines = ["SAQ1", f"T\t{title_zh}\t{title_en}"]
+    for r in rows:
+        fid = r["formid"] if isinstance(r["formid"], int) else int(r["formid"], 16)
+        lines.append(
+            f'Q\t{fid}\t{r["itype"]}\t{sanitize_name(r["name_zh"])}\t{sanitize_name(r["name_en"])}'
+        )
+    return "\n".join(lines) + "\n"
+
+
+def write_as3_fragment(rows: list[dict], out_path: Path, chunk_chars: int = 6000) -> int:
+    """把载荷切成若干段 AS3 字符串字面量，供 build-saq.ps1 拼进 MissionMenu.as。
+
+    切片只是为了避免单个字符串字面量过大（运行时 join("") 还原，切片位置无所谓，
+    但尽量落在换行处，便于人工看）。
+    """
+    payload = build_payload(rows)
+    chunks: list[str] = []
+    rest = payload
+    while rest:
+        take = min(len(rest), chunk_chars)
+        if take < len(rest):
+            cut = rest.rfind("\n", 0, take)
+            if cut < chunk_chars // 2:
+                cut = take
+            take = cut
+        chunks.append(rest[:take])
+        rest = rest[take:]
+
+    body = ",\r\n".join(f'\t\t"{as3_escape(c)}"' for c in chunks)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out_path.write_bytes(body.encode("utf-8"))
+    return len(payload)
+
+
 def c_escape(s: str) -> str:
     out = []
     for ch in s:
@@ -83,6 +144,7 @@ def main() -> int:
     ap.add_argument("--strings-dir", default="ref/strings/strings")
     ap.add_argument("--out-header", default="plugin/src/SAQ_QuestTable.h")
     ap.add_argument("--out-json", default="ref/quest_table_debug.json")
+    ap.add_argument("--out-as3", default="ui/missionmenu/saqdata/SaqEmbeddedPayload.inc")
     ap.add_argument("--include-main", action="store_true")
     a = ap.parse_args()
 
@@ -170,6 +232,11 @@ def main() -> int:
 
     Path(a.out_json).write_text(json.dumps(rows, ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"wrote {a.out_json}")
+
+    # AS3 内嵌回退数据（C++ 推送失败时 SWF 自己也能显示列表）
+    as3_path = Path(a.out_as3)
+    n = write_as3_fragment(rows, as3_path)
+    print(f"wrote {as3_path}（载荷 {n} 字符 / {as3_path.stat().st_size} B）")
 
     # 抽样打印
     print("\n样本：")

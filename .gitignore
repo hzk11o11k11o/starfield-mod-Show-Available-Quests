@@ -4,6 +4,9 @@ plugin/.xmake/
 ui/missionmenu/build/
 ui/missionmenu_lrg/build/
 scripts/build/
+# patch/ 是 build-saq.ps1 由 src + 生成的内嵌任务数据拼出来的中间产物
+ui/missionmenu/patch/
+ui/missionmenu_lrg/patch/
 
 # --- 第三方依赖（体积大，按 docs/01 说明自行获取） ---
 tools/commonlibsf-main/

@@ -92,7 +92,6 @@ namespace SAQ
 		struct PendingPush
 		{
 			std::vector<QuestEntry> quests;
-			std::string             tabText;
 			std::size_t             total{};
 			std::size_t             live{};
 			std::uint32_t           attempts{};
@@ -104,28 +103,60 @@ namespace SAQ
 
 		// ------------------------------------------------------------------
 		// 本地化
-		// 原版 tab 文本走 translate_<lang>.txt（UTF-16LE）的 $Key，MOD 不便覆盖
-		// 整张表，所以由 C++ 读游戏语言后把成品文本推给 AS3。
+		//
+		// ★ 语言判定**不在 C++ 侧做**（只把读到的值打进日志）：
+		//   本机实测：游戏界面是中文，但 `INISettingCollection::GetSetting("sLanguage:General")`
+		//   取不到值（拿到的永远是兜底值），两个 INI 文件里也**根本没有 sLanguage 这一项**
+		//   —— 也就是说这个值在 Steam 版里另有来源。上一轮就是被它坑到：
+		//   日志打出「语言=en 标题=Available」，而游戏其实是中文。
+		//
+		//   所以现在：标题和任务名都带中英两份一起推给 AS3，由 AS3 侧用
+		//   **引擎推来的本地化任务名**（QuestData）判定语言 —— 那才是最可靠的信号。
 		// ------------------------------------------------------------------
 
-		std::string_view GetGameLanguage()
+		// 兜底：直接读 INI 文件（有的玩家会自己改 ini 设语言）
+		std::string ReadIniLanguageFromDisk()
 		{
-			auto* ini = RE::INISettingCollection::GetSingleton();
-			if (!ini) {
-				return "en"sv;
+			std::wstring gameIni;
+			if (wchar_t exePath[MAX_PATH]{}; ::GetModuleFileNameW(nullptr, exePath, MAX_PATH) > 0) {
+				std::wstring p{ exePath };
+				if (const auto slash = p.find_last_of(L'\\'); slash != std::wstring::npos) {
+					gameIni = p.substr(0, slash + 1) + L"Starfield.ini";
+				}
 			}
-			return ini->GetSetting<std::string_view>("sLanguage:General"sv, "en"sv);
+			std::wstring customIni;
+			if (wchar_t profile[MAX_PATH]{}; ::GetEnvironmentVariableW(L"USERPROFILE", profile, MAX_PATH) > 0) {
+				customIni = std::wstring{ profile } + L"\\Documents\\My Games\\Starfield\\StarfieldCustom.ini";
+			}
+
+			const std::wstring candidates[] = { customIni, gameIni };  // 自定义 INI 优先
+			for (const auto& ini : candidates) {
+				if (ini.empty()) {
+					continue;
+				}
+				wchar_t buf[64]{};
+				if (::GetPrivateProfileStringW(L"General", L"sLanguage", L"", buf, 64, ini.c_str()) > 0) {
+					char utf8[128]{};
+					if (::WideCharToMultiByte(CP_UTF8, 0, buf, -1, utf8, sizeof(utf8), nullptr, nullptr) > 0) {
+						return utf8;
+					}
+				}
+			}
+			return {};
 		}
 
-		const char* GetTabText()
+		std::string GetGameLanguage()
 		{
-			// sLanguage:General 的实测值：en / de / es / fr / it / ja / pl / ptbr / ru / zhhans
-			// （中文按 "zhhans" 走；这里把 cn/chinese 一起兜住，免得以后改了值就变英文）
-			const auto lang = GetGameLanguage();
-			if (lang.starts_with("zh") || lang.starts_with("cn") || lang.starts_with("Chinese")) {
-				return "可接任务";
+			if (auto* ini = RE::INISettingCollection::GetSingleton()) {
+				const auto lang = ini->GetSetting<std::string_view>("sLanguage:General"sv, ""sv);
+				if (!lang.empty()) {
+					return std::string{ lang };
+				}
 			}
-			return "Available";
+			if (auto disk = ReadIniLanguageFromDisk(); !disk.empty()) {
+				return disk;
+			}
+			return "?";
 		}
 
 		std::uint64_t NowMs()
@@ -167,7 +198,6 @@ namespace SAQ
 			a_totalQuests = kQuestTableSize;
 			a_liveQuests = 0;
 
-			const bool zh = GetGameLanguage().starts_with("zh");
 			for (std::size_t i = 0; i < kQuestTableSize; ++i) {
 				const auto& info = kQuestTable[i];
 				if (!RE::TESForm::LookupByID(static_cast<RE::TESFormID>(info.formID))) {
@@ -177,7 +207,8 @@ namespace SAQ
 				QuestEntry entry;
 				entry.formID = info.formID;
 				entry.type = kAvailableQuestType;  // 统一放到我们的 tab
-				entry.name = zh ? info.nameZh : info.nameEn;
+				entry.nameZh = info.nameZh;        // 中英都带上，AS3 侧按游戏语言挑
+				entry.nameEn = info.nameEn;
 				a_out.push_back(std::move(entry));
 			}
 		}
@@ -217,9 +248,9 @@ namespace SAQ
 		bool PushToUI(const std::vector<QuestEntry>& a_quests)
 		{
 			std::string detail;
-			const bool ok = UI::PushAvailableQuests(a_quests, GetTabText(), detail);
+			const bool ok = UI::PushAvailableQuests(a_quests, detail);
 			if (ok) {
-				REX::INFO("推送成功：{} | {}", detail, a_quests.size());
+				REX::INFO("推送成功：{} | {} 条", detail, a_quests.size());
 			} else {
 				REX::WARN("推送失败：{}", detail);
 			}
@@ -288,12 +319,12 @@ namespace SAQ
 
 			g_pending.quests.clear();
 			g_pending.attempts = 0;
-			g_pending.tabText = GetTabText();
 			g_pending.total = 0;
 			g_pending.live = 0;
 			CollectAvailableQuests(g_pending.quests, g_pending.total, g_pending.live);
-			REX::INFO("菜单打开：静态表={} 引擎里存在={} 待推送={} 语言={} 标题={}",
-				g_pending.total, g_pending.live, g_pending.quests.size(), GetGameLanguage(), g_pending.tabText);
+			// 语言这一项只是**日志参考**：实际显示语言由 AS3 侧按引擎推来的任务名判定。
+			REX::INFO("菜单打开：静态表={} 引擎里存在={} 待推送={} INI语言={}(仅供参考) 标题=可接任务/Available(中英都推，由 UI 选)",
+				g_pending.total, g_pending.live, g_pending.quests.size(), GetGameLanguage());
 			TryPushPending();
 		}
 

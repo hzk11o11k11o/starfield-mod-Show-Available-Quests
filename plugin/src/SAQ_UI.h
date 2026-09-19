@@ -19,12 +19,15 @@
 
 namespace SAQ
 {
-	// 一条「可接任务」记录。字段名与 AS3 侧 MissionsList 条目对齐。
+	// 一条「可接任务」记录。
+	// 名字带中英两份：**语言判定放在 AS3 侧**（它能直接看到引擎推来的本地化任务名，
+	// 比 C++ 去读 INI 可靠 —— 实测本机 INI 里根本没有 sLanguage）。
 	struct QuestEntry
 	{
 		std::uint32_t formID{};   // FormID（Starfield.esm 的 master 区段）
 		std::int32_t  type{};     // AS3：QuestUtils.AVAILABLE_QUEST_TYPE = 6
-		std::string   name;       // 按游戏语言取的显示名（UTF-8）
+		std::string   nameZh;     // 中文显示名（UTF-8）
+		std::string   nameEn;     // 英文显示名（UTF-8）
 	};
 
 	namespace UI
@@ -38,8 +41,8 @@ namespace SAQ
 		bool EnsureResolved(std::string& a_detail);
 
 		// 把可接任务推给 AS3（MissionMenu.SetAvailableQuests，单个字符串参数，见 .cpp 里的协议）。
-		// a_tabText 会同时用于设置新 tab 的标题。
+		// 标题与任务名都是「中英双语」一起推，由 AS3 侧按游戏语言挑。
 		// 返回 true = GFx 侧调用成功（返回值写在 a_detail 里）。
-		bool PushAvailableQuests(const std::vector<QuestEntry>& a_quests, std::string_view a_tabText, std::string& a_detail);
+		bool PushAvailableQuests(const std::vector<QuestEntry>& a_quests, std::string& a_detail);
 	}
 }

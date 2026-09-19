@@ -11,6 +11,7 @@ package
    import Shared.AS3.Events.CustomEvent;
    import Shared.AS3.Events.ScrollingEvent;
    import Shared.AS3.IMenu;
+   import Shared.FactionUtils;
    import Shared.Components.ButtonControls.ButtonBar.ButtonBar;
    import Shared.Components.ButtonControls.ButtonData.ButtonBaseData;
    import Shared.Components.ButtonControls.ButtonData.ButtonData;
@@ -76,6 +77,30 @@ package
       
       public static const MISSION_SHOW_ON_MAP_SOUND:String = "UIMenuMissionsMenuShowOnMap";
       
+      // ===================================================================
+      //  SAQ（Show Available Quests）：新增「可接任务」tab
+      //
+      //  数据来源有两层，C++ 推送优先，没有推送时用内嵌的回退表：
+      //    ① C++ 插件 Invoke("SetAvailableQuests", <载荷>)  —— 载荷协议见下
+      //    ② SAQ_EMBEDDED_CHUNKS（构建时由 tools/esm/gen_quest_table.py 生成，
+      //       tools/build-saq.ps1 替换掉下面的 /*__SAQ_EMBEDDED__*/ 标记）
+      //
+      //  载荷协议（一行一条，Tab 分隔，名字放最后）：
+      //      SAQ1
+      //      T\t<中文标题>\t<英文标题>
+      //      Q\t<FormID>\t<type>\t<中文名>\t<英文名>
+      //  兼容旧版 3 字段 Q 行（只有中文名 = 中英同名）。
+      //
+      //  语言判定放在 AS3 侧：**引擎推给 UI 的 QuestData 里就是本地化的任务名**，
+      //  比 C++ 去读 INI（本机实测读不到 sLanguage）可靠得多。
+      // ===================================================================
+      
+      private static const SAQ_TITLE_ZH:String = "可接任务";
+      
+      private static const SAQ_TITLE_EN:String = "Available";
+      
+      private static const SAQ_EMBEDDED_CHUNKS:Array = [/*__SAQ_EMBEDDED__*/];
+      
       public var UniversalBackButton_mc:BSButton;
       
       public var ButtonBar_mc:ButtonBar;
@@ -101,6 +126,20 @@ package
       private var AvailableQuests:Array = null;
       
       private var RawAvailableQuests:Array = null;
+      
+      private var SaqSourcePayload:String = null;
+      
+      private var SaqSourceIsCpp:Boolean = false;
+      
+      private var SaqRawQuests:Array = null;
+      
+      private var SaqTitleZh:String = null;
+      
+      private var SaqTitleEn:String = null;
+      
+      private var SaqLangKnown:Boolean = false;
+      
+      private var SaqLangZh:Boolean = false;
       
       private var StoredLastOpenedIds:Array = null;
       
@@ -246,9 +285,12 @@ package
       private function PopulateTabs() : void
       {
          this.FilterInfoA = new Array();
+         // ★ 「全部」这一位的掩码从 0xFFFFFFFF 改成 0xFFFFFFBF
+         //   即去掉 (1 << AVAILABLE_QUEST_TYPE)：未接任务只在我们的 tab 里出现，
+         //   不污染原版「全部」列表（否则一进菜单就看到一堆没有目标的条目）。
          this.FilterInfoA.push({
             "text":"$ALL",
-            "flag":4294967295
+            "flag":4294967231
          });
          this.FilterInfoA.push({
             "text":"$Main",
@@ -275,7 +317,7 @@ package
             "flag":1 << QuestUtils.COMPLETED_QUEST_TYPE
          });
          this.FilterInfoA.push({
-            "text":"$SAQ_AvailableQuests",
+            "text":this.SaqTabTitle(),
             "flag":1 << QuestUtils.AVAILABLE_QUEST_TYPE
          });
          this.TabbedFilterSelection_mc.SetTabsData(this.FilterInfoA);
@@ -287,6 +329,10 @@ package
       {
          if(param1 != null && param1.length > 0 && this.FilterInfoA != null && this.FilterInfoA.length > 0)
          {
+            if(this.FilterInfoA[this.FilterInfoA.length - 1].text == param1)
+            {
+               return;
+            }
             this.FilterInfoA[this.FilterInfoA.length - 1].text = param1;
             this.TabbedFilterSelection_mc.SetTabsData(this.FilterInfoA);
          }
@@ -331,62 +377,187 @@ package
          return _loc4_;
       }
       
-      public function SetAvailableQuests(param1:String) : int
+      // ------------------------------------------------------------------
+      //  SAQ 主体
+      // ------------------------------------------------------------------
+
+      // 判断一段文本「像不像中文」：1 = 中文，-1 = 明确不是（拉丁/假名/谚文），
+      // 0 = 判不出来（纯符号/数字/空）。
+      private static function SaqNameVerdict(param1:String) : int
       {
-         var _loc2_:Array = null;
-         var _loc3_:Array = null;
-         var _loc4_:String = null;
-         var _loc5_:int = 0;
-         var _loc6_:int = 0;
-         var _loc7_:int = 0;
+         if(param1 == null || param1.length == 0)
+         {
+            return 0;
+         }
+         var _loc2_:int = 0;
+         while(_loc2_ < param1.length)
+         {
+            var _loc3_:int = param1.charCodeAt(_loc2_);
+            if(_loc3_ >= 12352 && _loc3_ <= 12543)
+            {
+               return -1;
+            }
+            if(_loc3_ >= 44032 && _loc3_ <= 55215)
+            {
+               return -1;
+            }
+            if(_loc3_ >= 19968 && _loc3_ <= 40959)
+            {
+               return 1;
+            }
+            if(_loc3_ >= 32 && _loc3_ < 8704)
+            {
+               return -1;
+            }
+            _loc2_++;
+         }
+         return 0;
+      }
+      
+      // 游戏是不是中文（判定依据：引擎推来的任务名本身就是本地化的）
+      private function SaqUseChinese() : Boolean
+      {
+         if(this.SaqLangKnown)
+         {
+            return this.SaqLangZh;
+         }
+         if(this.QuestData != null)
+         {
+            var _loc1_:int = 0;
+            while(_loc1_ < this.QuestData.length)
+            {
+               var _loc2_:Object = this.QuestData[_loc1_];
+               var _loc3_:int = _loc2_ != null ? SaqNameVerdict(_loc2_.sName) : 0;
+               if(_loc3_ != 0)
+               {
+                  this.SaqLangZh = _loc3_ > 0;
+                  this.SaqLangKnown = true;
+                  return this.SaqLangZh;
+               }
+               _loc1_++;
+            }
+         }
+         return this.SaqLangZh;
+      }
+      
+      // tab 标题。语言判出来之前先用**英文**（国际默认），QuestData 一到就会自我纠正
+      // （PopulateTabs 里先建 tab，OnQuestDataUpdate 里再刷一次标题）。
+      // 载荷里的 T 行是保留字段：语言未知时用它给的英文标题。
+      private function SaqTabTitle() : String
+      {
+         if(this.SaqLangKnown)
+         {
+            return this.SaqLangZh ? SAQ_TITLE_ZH : SAQ_TITLE_EN;
+         }
+         if(this.SaqTitleEn != null && this.SaqTitleEn.length > 0)
+         {
+            return this.SaqTitleEn;
+         }
+         return SAQ_TITLE_EN;
+      }
+      
+      private function SaqApplyTabTitle() : void
+      {
+         this.SetAvailableTabText(this.SaqTabTitle());
+      }
+      
+      private function SaqEmbeddedPayload() : String
+      {
+         if(SAQ_EMBEDDED_CHUNKS == null || SAQ_EMBEDDED_CHUNKS.length == 0)
+         {
+            return null;
+         }
+         return SAQ_EMBEDDED_CHUNKS.join("");
+      }
+      
+      // 解析载荷 -> 与语言无关的原始条目（名字中英都留着，取用时再按语言选）
+      private function SaqParsePayload(param1:String) : Array
+      {
+         var _loc2_:Array = new Array();
          if(param1 == null)
          {
-            return -1;
+            return _loc2_;
          }
-         _loc2_ = param1.split("\n");
-         _loc3_ = new Array();
-         _loc6_ = 0;
-         while(_loc6_ < _loc2_.length)
+         var _loc3_:Array = param1.split("\n");
+         var _loc4_:int = 0;
+         while(_loc4_ < _loc3_.length)
          {
-            _loc4_ = _loc2_[_loc6_];
-            if(_loc4_.length > 2)
+            var _loc5_:String = _loc3_[_loc4_];
+            if(_loc5_.length > 2)
             {
-               if(_loc4_.substr(0,2) == "T\t")
+               if(_loc5_.substr(0,2) == "T\t")
                {
-                  this.SetAvailableTabText(_loc4_.substr(2));
-               }
-               else if(_loc4_.substr(0,2) == "Q\t")
-               {
-                  _loc5_ = _loc4_.indexOf("\t",2);
-                  if(_loc5_ > 0)
+                  var _loc6_:Array = _loc5_.substr(2).split("\t");
+                  if(_loc6_.length > 0)
                   {
-                     _loc7_ = _loc4_.indexOf("\t",_loc5_ + 1);
-                     if(_loc7_ > _loc5_)
-                     {
-                        _loc3_.push({
-                           "uID":parseInt(_loc4_.substring(2,_loc5_)),
-                           "uInstanceID":0,
-                           "iType":parseInt(_loc4_.substring(_loc5_ + 1,_loc7_)),
-                           "iFaction":0,
-                           "sName":_loc4_.substring(_loc7_ + 1),
-                           "bActive":false,
-                           "bComplete":false,
-                           "bFailed":false,
-                           "bIsMiscQuest":false,
-                           "bIsMiscObjective":false,
-                           "bCanShowOnMap":false,
-                           "iRemainingTime":-1,
-                           "aObjectives":new Array()
-                        });
-                     }
+                     this.SaqTitleZh = _loc6_[0];
+                     this.SaqTitleEn = _loc6_[_loc6_.length - 1];
+                  }
+               }
+               else if(_loc5_.substr(0,2) == "Q\t")
+               {
+                  var _loc7_:Array = _loc5_.substr(2).split("\t");
+                  if(_loc7_.length >= 3)
+                  {
+                     _loc2_.push({
+                        "uID":parseInt(_loc7_[0]),
+                        "iType":parseInt(_loc7_[1]),
+                        "sNameZh":_loc7_[2],
+                        "sNameEn":_loc7_.length >= 4 ? _loc7_[3] : _loc7_[2]
+                     });
                   }
                }
             }
-            _loc6_++;
+            _loc4_++;
          }
-         this.RawAvailableQuests = _loc3_;
-         this.AvailableQuests = this.FilterKnownQuests(_loc3_);
-         if(this.QuestData != null && this.MissionsList_mc != null)
+         return _loc2_;
+      }
+      
+      // 原始条目 -> 任务列表条目。
+      //
+      // 字段必须**覆盖引擎推的 QuestData 条目所拥有的一切**：UI 各处会直接读，
+      // 少一个就可能抛 Error #1010（实测 MissionInfo.UpdateMissionInfo 会读
+      // `param1.sDescription.length`，所以哪怕没有简介也必须给空串）。
+      private function SaqBuildEntry(param1:Object) : Object
+      {
+         return {
+            "uID":param1.uID,
+            "uInstanceID":0,
+            "iType":param1.iType,
+            "iFaction":FactionUtils.FACTION_NONE,
+            "sName":this.SaqUseChinese() ? param1.sNameZh : param1.sNameEn,
+            "sDescription":"",
+            "bActive":false,
+            "bComplete":false,
+            "bFailed":false,
+            "bCanBeRejected":false,
+            "bIsMiscQuest":false,
+            "bIsMiscObjective":false,
+            "bCanShowOnMap":false,
+            "iRemainingTime":-1,
+            "aObjectives":new Array()
+         };
+      }
+      
+      // 解析 + 建条目 + 过滤掉玩家已知任务 + 合并进任务列表 + 刷新 tab 标题
+      private function SaqRefresh() : int
+      {
+         if(this.SaqRawQuests == null)
+         {
+            var _loc1_:String = this.SaqSourceIsCpp ? this.SaqSourcePayload : this.SaqEmbeddedPayload();
+            this.SaqRawQuests = this.SaqParsePayload(_loc1_);
+         }
+         var _loc2_:Array = new Array();
+         var _loc3_:int = 0;
+         while(_loc3_ < this.SaqRawQuests.length)
+         {
+            _loc2_.push(this.SaqBuildEntry(this.SaqRawQuests[_loc3_]));
+            _loc3_++;
+         }
+         this.RawAvailableQuests = _loc2_;
+         this.AvailableQuests = this.FilterKnownQuests(_loc2_);
+         this.SaqApplyTabTitle();
+         if(this.MissionsList_mc != null)
          {
             this.MissionsList_mc.InitializeEntries(this.BuildMergedList());
             if(this.visible)
@@ -394,10 +565,23 @@ package
                this.onMissionSelectionChange();
             }
          }
-         // 返回「**解析出来的**条数」（不是过滤后剩下的条数）：C++ 侧用 >0 判定
-         // 「字符串协议通了」。若返回过滤后的数量，一旦任务全被 QuestData 滤掉就成 0，
-         // C++ 会以为编码/路径不对，白试剩下 5 种组合。
-         return _loc3_.length;
+         return _loc2_.length;
+      }
+      
+      // C++ 插件入口：Invoke("SetAvailableQuests", <载荷>)。
+      // 返回「**解析出来的**条数」（不是过滤后剩下的条数）：C++ 侧用 >0 判定
+      // 「字符串协议通了」。若返回过滤后的数量，一旦任务全被 QuestData 滤掉就成 0，
+      // C++ 会以为编码/路径不对，白试剩下 5 种组合。
+      public function SetAvailableQuests(param1:String) : int
+      {
+         if(param1 == null || param1.length == 0)
+         {
+            return -1;
+         }
+         this.SaqSourcePayload = param1;
+         this.SaqSourceIsCpp = true;
+         this.SaqRawQuests = null;
+         return this.SaqRefresh();
       }
       
       private function OnQuestDataUpdate(param1:FromClientDataEvent) : void
@@ -409,7 +593,9 @@ package
          }
          this.CollapseAllChildren();
          this.lastSelectedIndex = -1;
-         this.MissionsList_mc.InitializeEntries(this.BuildMergedList());
+         // 任务名到手了 —— 语言判定与「已接任务」过滤都在这里一并重算
+         // （SaqRefresh 内部会 InitializeEntries(BuildMergedList())）
+         this.SaqRefresh();
          if(this.visible)
          {
             stage.focus = this.MissionsList_mc;

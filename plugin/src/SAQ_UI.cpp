@@ -76,25 +76,61 @@ namespace SAQ::UI
 		constexpr std::size_t kEntryNextOffset = 0x30;
 		constexpr std::size_t kMenuPtrInValueOffset = 0x20;
 
-		// commonlibsf 的 IMenu / Movie 成员偏移（下面每次都会拿 RTTI 名字复核，
-		// 对不上就换候选偏移，所以这里错也不会炸）。
-		constexpr std::size_t kIMenuUiMovieOffset = 0x088;
-		constexpr std::size_t kMovieAsRootOffset = 0x010;
-
-		// commonlibsf 的 ASMovieRootBase 虚函数槽（**槽序号**，不是字节偏移）：
-		//   vtable[0x39] = Invoke(const char*, Value*, const Value*, u32)
+		// commonlibsf 的 IMenu 成员偏移。
 		//
-		// 离线复核（tools/re/rtti_slots.py --name "MovieRoot@AS3@GFx@Scaleform@@"）：
-		//   全 exe 只有一个类名含 "MovieRoot"：`.?AVMovieRoot@AS3@GFx@Scaleform@@`
-		//   （TD RVA 0x59A53C0），它的主 vtable = RVA 0x3BE32B0，
-		//     [2C]=0x33675B0 CreateString / [2D]=0x3367630 CreateStringW
-		//     [38]=0x3369180 [39]=0x3368DC0 Invoke / [3A]=0x33691B0 InvokeArgs
-		//   ⇒ 「RTTI 含 MovieRoot」本身就是**精确**的身份判据；槽号 0x39 也被证实。
+		// ★ 2026-09-19 第 5 轮：这套偏移这次**被运行时证据反证了**（不是猜的）：
+		//   上一轮日志里 `uiMovie=IMenu+0x78(?AVMovieClip@fl_display@Instances@AS3@GFx@Scaleform@@)`
+		//   —— 0x78 上是个 AS3 的 MovieClip 实例对象，而它正好等于
+		//   `menuObj(0x58) + Value::_value(0x20)`。GFx::Value 的布局
+		//   （_prev 00 / _next 08 / _objectInterface 10 / _type 18 / _value 20，sizeof 0x30）
+		//   由 commonlibsf 声明，且被这次观测独立印证 ⇒ IMenu::menuObj 确实在 0x58。
+		//   于是：
+		//     IMenu+0x58  menuObj（GFx::Value，装的是菜单根 AS3 对象）
+		//     IMenu+0x68  = menuObj._objectInterface（GFx::Value::ObjectInterface*）
+		//     IMenu+0x78  = menuObj._value（AS3 根对象本体，上一轮误当成 Movie 的那个）
+		//     IMenu+0x88  = uiMovie（commonlibsf 声明，紧跟在 Value 后面）
+		constexpr std::size_t kIMenuMenuObjOffset = 0x058;
+		constexpr std::size_t kValueObjectInterfaceOffset = 0x010;
+		constexpr std::size_t kValueDataOffset = 0x020;
+		constexpr std::size_t kIMenuUiMovieOffset = 0x088;
+
+		// GFx::Value::ObjectInterface 的成员（commonlibsf 声明，与 GFx SDK 一致）：
+		//   +0x00 虚表 / +0x08 MovieImpl* movieRoot / +0x10 Value* lastValue
+		// ⇒ 「电影对象」还有一条**不依赖 IMenu 偏移**的取法：
+		//     MovieImpl* = [[IMenu + 0x68] + 0x08]
+		constexpr std::size_t kObjectInterfaceMovieRootOffset = 0x008;
+
+		// ★ 精确身份判据（离线从 exe 的 RTTI 里量出来的主虚表 RVA）
+		//   tools/re/rtti_slots.py --name "MovieRoot@AS3@GFx@Scaleform@@"
+		//     TD RVA 0x59A53C0  主 vtable RVA 0x3BE32B0
+		//     [2C] CreateString / [2D] CreateStringW / [38] / [39] Invoke=0x3368DC0 / [3A] InvokeArgs
+		//   tools/re/rtti_slots.py --name "MovieImpl@GFx@Scaleform@@"
+		//     TD RVA 0x599B150  主 vtable RVA 0x3BCFEE8
+		//
+		//   为什么要「比对虚表 RVA」而不是「比对 RTTI 名字」：RTTI 名字要读
+		//   vtable[-1] → COL → TD → 名字，中途任何一步失败就退化成"没有 RTTI"，
+		//   上一轮就是靠"名字里含 Movie"这种模糊判据把 AS3 的 MovieClip 当成 Movie 了。
+		//   虚表 RVA 是**一次指针比较**，全 exe 唯一，误判概率为零。
+		constexpr std::uintptr_t kMovieRootVtableRva = 0x3BE32B0;
+		constexpr std::uintptr_t kMovieImplVtableRva = 0x3BCFEE8;
+
+		// ASMovieRootBase 虚函数槽（**槽序号**，不是字节偏移）：
+		//   vtable[0x39] = Invoke(const char*, Value*, const Value*, u32)
 		constexpr std::size_t kSlotAsRootCreateString = 0x2C;  // CreateString(Value*, const char*)
 		constexpr std::size_t kSlotAsRootInvoke = 0x39;        // Invoke(const char*, Value*, const Value*, u32)
 		constexpr std::uintptr_t kInvokeRva = 0x3368DC0;       // 上面那个槽指向的函数（1.16.244.0 实测）
 
+		// 在「电影对象」里扫 ASMovieRoot 指针时扫多少字节。
+		// （MovieImpl 里存 ASMovieRoot 的位置没挖（也无需挖）：按虚表比对比扫一遍更快也更稳，
+		//   实测一次菜单打开只扫一次，2048 次指针读取，无感。）
+		constexpr std::size_t kMovieScanBytes = 0x4000;
+		constexpr std::size_t kObjectScanBytes = 0x800;
+
 		constexpr const char* kMenuName = "BSMissionMenu";
+
+		// 新 tab 的标题（中/英各一份推给 AS3，由 AS3 按游戏语言挑）
+		constexpr std::string_view kTabTitleZh = "可接任务";
+		constexpr std::string_view kTabTitleEn = "Available";
 
 		// ====================================================================
 		// 二、安全内存访问
@@ -358,16 +394,18 @@ namespace SAQ::UI
 		{
 			bool           ok{ false };
 			std::uintptr_t menu{};      // IMenu*
-			std::uintptr_t movie{};     // Scaleform::GFx::Movie*
-			std::uintptr_t asRoot{};    // ASMovieRootBase*
+			std::uintptr_t movie{};     // Scaleform::GFx::MovieImpl*
+			std::uintptr_t asRoot{};    // Scaleform::GFx::AS3::MovieRoot*
 			std::size_t    mapOffset{ kMenuMapOffset };
 			std::size_t    menuInValueOffset{ kMenuPtrInValueOffset };
-			std::size_t    uiMovieOffset{ kIMenuUiMovieOffset };
-			std::size_t    asRootOffset{ kMovieAsRootOffset };
+			std::size_t    uiMovieOffset{};     // Movie 取到自 IMenu 的哪个偏移
+			std::size_t    asRootOffset{};      // ASMovieRoot 在 Movie 里的偏移（rootInInterface 时为 0）
+			bool           rootInInterface{};   // true = menuObj._objectInterface 本身就是 MovieRoot
 			char           menuName[64]{};
 			char           menuRtti[192]{};
 			char           movieRtti[192]{};
 			char           rootRtti[192]{};
+			char           where[80]{};         // 走了哪条路解析成功（日志用）
 			std::string    detail;
 		};
 
@@ -480,89 +518,184 @@ namespace SAQ::UI
 			return true;
 		}
 
-		// 弱判据（RTTI 名字读不出来时的兜底）：对象首 qword 看起来是主模块里的代码指针。
-		bool LooksLikeVmObject(std::uintptr_t a_obj)
+		// ====================================================================
+		// 五、身份判据与「IMenu → Movie → ASMovieRoot」解析
+		//
+		// 上一轮的失败根因（日志实证）：扫描用的是「RTTI 名字里含 Movie」这种模糊判据，
+		// 于是在 IMenu+0x78 抓到了 menuObj 里的 **AS3 MovieClip 实例对象**
+		// （`?AVMovieClip@fl_display@Instances@AS3@GFx@Scaleform@@` —— 名字里也有 "Movie"），
+		// 从它身上当然找不到 ASMovieRoot。
+		//
+		// 这一轮改成三条硬判据：
+		//   ① **虚表 RVA 精确比对**：MovieImpl / AS3::MovieRoot 的主虚表 RVA 离线量出来
+		//      写死在常量里（全 exe 各只有一个类），一次指针比较就能定性，零误判；
+		//   ② **多路径**：ObjectInterface::movieRoot → IMenu::uiMovie → IMenu 全对象扫描；
+		//      拿到 Movie 后在它前 0x4000 字节里按①找 ASMovieRoot（含 ObjectInterface
+		//      本身就是 MovieRoot 这一特例）；
+		//   ③ 调用前再核对 Invoke 槽的 RVA（0x3368DC0），对不上就不调。
+		// ====================================================================
+
+		// 这个对象的虚表是不是「某个已知 RVA 的主虚表」
+		bool VtableIs(std::uintptr_t a_obj, std::uintptr_t a_vtableRva)
 		{
-			const auto vtable = ReadPtr(a_obj);
-			return vtable >= ModuleBase() && vtable < ModuleBase() + ModuleSize();
+			return a_obj && ReadPtr(a_obj) == ModuleBase() + a_vtableRva;
 		}
 
-		bool ResolveMovie(Bridge& a_out)
+		bool RttiContains(std::uintptr_t a_obj, const char* a_needle)
 		{
-			// IMenu::uiMovie（Ptr<Movie>）：0x40~0x180 里找「RTTI 名字含 Movie（但不是 MovieDef）」
-			// 的指针；判据是 RTTI 名字，所以不依赖 commonlibsf 标的 0x88。
-			// 全不中时退回 0x88 + 弱判据（只试这一个偏移，避免误判）。
-			bool found = false;
-			ForEachCandidate(0x40, 0x180, 8, [&](std::size_t offset) {
-				const auto candidate = ReadPtr(a_out.menu + offset);
-				if (!candidate) {
-					return false;
-				}
-				char rtti[192]{};
-				if (!SafeRttiName(reinterpret_cast<const void*>(candidate), rtti) || !rtti[0]) {
-					return false;
-				}
-				if (!std::strstr(rtti, "Movie") || std::strstr(rtti, "MovieDef")) {
-					return false;
-				}
-				a_out.uiMovieOffset = offset;
-				a_out.movie = candidate;
-				std::memcpy(a_out.movieRtti, rtti, sizeof(a_out.movieRtti));
-				found = true;
-				return true;
-			});
-
-			if (!found && LooksLikeVmObject(ReadPtr(a_out.menu + kIMenuUiMovieOffset))) {
-				a_out.uiMovieOffset = kIMenuUiMovieOffset;
-				a_out.movie = ReadPtr(a_out.menu + kIMenuUiMovieOffset);
-				std::snprintf(a_out.movieRtti, sizeof(a_out.movieRtti), "弱判据(无RTTI)");
-				found = true;
-			}
-
-			if (!found) {
-				a_out.detail = "IMenu(+" + std::string(a_out.menuRtti) + ") 里没找到 Movie 指针；0x40~0x180 内各指针的 RTTI:" +
-					DescribeCandidates(a_out.menu, 0x40, 0x180, 8);
+			if (!a_obj) {
 				return false;
 			}
-			return true;
+			char rtti[192]{};
+			if (!SafeRttiName(reinterpret_cast<const void*>(a_obj), rtti) || !rtti[0]) {
+				return false;
+			}
+			return std::strstr(rtti, a_needle) != nullptr;
 		}
 
-		bool ResolveAsRoot(Bridge& a_out)
+		void RttiInto(char (&a_out)[192], std::uintptr_t a_obj)
 		{
-			// Movie::asMovieRoot（Ptr<ASMovieRootBase>）：0x00~0x48 里找「RTTI 名字含 MovieRoot」的指针；
-			// 全不中时退回 commonlibsf 的 0x10 + 弱判据。
-			bool found = false;
-			ForEachCandidate(0x00, 0x48, 8, [&](std::size_t offset) {
-				const auto candidate = ReadPtr(a_out.movie + offset);
-				if (!candidate) {
-					return false;
-				}
-				char rtti[192]{};
-				if (!SafeRttiName(reinterpret_cast<const void*>(candidate), rtti) || !rtti[0]) {
-					return false;
-				}
-				if (!std::strstr(rtti, "MovieRoot")) {
-					return false;
-				}
-				a_out.asRootOffset = offset;
-				a_out.asRoot = candidate;
-				std::memcpy(a_out.rootRtti, rtti, sizeof(a_out.rootRtti));
-				found = true;
-				return true;
-			});
+			if (!SafeRttiName(reinterpret_cast<const void*>(a_obj), a_out) || !a_out[0]) {
+				std::snprintf(a_out, sizeof(a_out), "(无 RTTI)");
+			}
+		}
 
-			if (!found && LooksLikeVmObject(ReadPtr(a_out.movie + kMovieAsRootOffset))) {
-				a_out.asRootOffset = kMovieAsRootOffset;
-				a_out.asRoot = ReadPtr(a_out.movie + kMovieAsRootOffset);
-				std::snprintf(a_out.rootRtti, sizeof(a_out.rootRtti), "弱判据(无RTTI)");
-				found = true;
+		bool LooksLikeMovie(std::uintptr_t a_obj)
+		{
+			return VtableIs(a_obj, kMovieImplVtableRva) || RttiContains(a_obj, "MovieImpl@GFx@Scaleform");
+		}
+
+		bool LooksLikeAsRoot(std::uintptr_t a_obj)
+		{
+			return VtableIs(a_obj, kMovieRootVtableRva) || RttiContains(a_obj, "MovieRoot@AS3@GFx@Scaleform");
+		}
+
+		// 在 a_obj 的前 a_bytes 字节里找「指向 AS3::MovieRoot 的指针」，
+		// 返回**存它的那个槽的地址**（0 = 没找到）—— 返回地址是为了把偏移写进日志。
+		std::uintptr_t FindAsRootSlot(std::uintptr_t a_obj, std::size_t a_bytes)
+		{
+			if (!a_obj || !IsMapped(reinterpret_cast<const void*>(a_obj), sizeof(std::uintptr_t))) {
+				return 0;
+			}
+			const auto want = ModuleBase() + kMovieRootVtableRva;
+			for (std::size_t off = 0; off + sizeof(std::uintptr_t) <= a_bytes; off += sizeof(std::uintptr_t)) {
+				const auto slot = a_obj + off;
+				const auto candidate = ReadPtr(slot);
+				if (candidate && ReadPtr(candidate) == want) {
+					return slot;
+				}
+			}
+			return 0;
+		}
+
+		bool ResolveMovieChain(Bridge& a_out)
+		{
+			const auto menu = a_out.menu;
+			const auto iface = ReadPtr(menu + kIMenuMenuObjOffset + kValueObjectInterfaceOffset);
+			const auto as3Root = ReadPtr(menu + kIMenuMenuObjOffset + kValueDataOffset);
+			const auto uiMovie = ReadPtr(menu + kIMenuUiMovieOffset);
+
+			std::string diag = std::format(
+				" IMenu+0x{:X}=0x{:X} IMenu+0x{:X}=0x{:X} IMenu+0x{:X}=0x{:X}",
+				kIMenuMenuObjOffset + kValueObjectInterfaceOffset, iface,
+				kIMenuMenuObjOffset + kValueDataOffset, as3Root,
+				kIMenuUiMovieOffset, uiMovie);
+
+			// ⚡ 特例：AS3 的 Value::ObjectInterface 有可能就是 MovieRoot 本体
+			if (LooksLikeAsRoot(iface)) {
+				a_out.asRoot = iface;
+				a_out.rootInInterface = true;
+				a_out.asRootOffset = 0;
+				RttiInto(a_out.rootRtti, iface);
+				std::snprintf(a_out.where, sizeof(a_out.where), "menuObj._objectInterface 本体");
 			}
 
-			if (!found) {
-				a_out.detail = "Movie(+" + std::string(a_out.movieRtti) + ") 里没找到 ASMovieRoot 指针；0x00~0x48 内各指针的 RTTI:" +
-					DescribeCandidates(a_out.movie, 0x00, 0x48, 8);
+			// ① 收集 Movie 候选（顺序 = 可信度）
+			constexpr std::size_t kMaxCand = 8;
+			std::uintptr_t cand[kMaxCand]{};
+			std::size_t    candMenuOff[kMaxCand]{};
+			const char*    candHow[kMaxCand]{};
+			std::size_t    count = 0;
+			const auto addCand = [&](std::uintptr_t a_obj, std::size_t a_menuOff, const char* a_how) {
+				if (!a_obj || count >= kMaxCand) {
+					return;
+				}
+				for (std::size_t i = 0; i < count; ++i) {
+					if (cand[i] == a_obj) {
+						return;
+					}
+				}
+				cand[count] = a_obj;
+				candMenuOff[count] = a_menuOff;
+				candHow[count] = a_how;
+				++count;
+			};
+
+			addCand(ReadPtr(iface + kObjectInterfaceMovieRootOffset),
+				kIMenuMenuObjOffset + kValueObjectInterfaceOffset, "ObjectInterface(+0x8)");
+			addCand(uiMovie, kIMenuUiMovieOffset, "IMenu::uiMovie");
+			for (std::size_t off = 0; off <= 0x200; off += 8) {
+				const auto p = ReadPtr(menu + off);
+				if (p && LooksLikeMovie(p)) {
+					addCand(p, off, "IMenu 内扫描");
+				}
+			}
+
+			// ② 逐个候选：定性 + 在里面找 ASMovieRoot
+			std::string seen;
+			for (std::size_t i = 0; i < count; ++i) {
+				char rtti[192]{};
+				RttiInto(rtti, cand[i]);
+				const bool isMovie = LooksLikeMovie(cand[i]);
+				seen += std::format(" [{}]=IMenu+0x{:X}({}){}", candHow[i], candMenuOff[i], rtti, isMovie ? "✔" : "✘");
+				if (!isMovie) {
+					continue;
+				}
+				if (!a_out.movie) {
+					a_out.movie = cand[i];
+					a_out.uiMovieOffset = candMenuOff[i];
+					std::memcpy(a_out.movieRtti, rtti, sizeof(a_out.movieRtti));
+				}
+				if (!a_out.asRoot) {
+					const auto slot = FindAsRootSlot(cand[i], kMovieScanBytes);
+					if (slot) {
+						a_out.asRoot = ReadPtr(slot);
+						a_out.asRootOffset = slot - cand[i];
+						RttiInto(a_out.rootRtti, a_out.asRoot);
+						std::snprintf(a_out.where, sizeof(a_out.where), "%s → MovieImpl+0x%zX",
+							candHow[i], a_out.asRootOffset);
+					}
+				}
+			}
+
+			// ③ 兜底：AS3 根对象 / ObjectInterface 自身里也扫一遍
+			if (!a_out.asRoot && as3Root) {
+				const auto slot = FindAsRootSlot(as3Root, kObjectScanBytes);
+				if (slot) {
+					a_out.asRoot = ReadPtr(slot);
+					a_out.asRootOffset = slot - as3Root;
+					RttiInto(a_out.rootRtti, a_out.asRoot);
+					std::snprintf(a_out.where, sizeof(a_out.where), "AS3 根对象(IMenu+0x%X)+0x%zX",
+						static_cast<unsigned>(kIMenuMenuObjOffset + kValueDataOffset), a_out.asRootOffset);
+				}
+			}
+			if (!a_out.asRoot && iface) {
+				const auto slot = FindAsRootSlot(iface, kObjectScanBytes);
+				if (slot) {
+					a_out.asRoot = ReadPtr(slot);
+					a_out.asRootOffset = slot - iface;
+					RttiInto(a_out.rootRtti, a_out.asRoot);
+					std::snprintf(a_out.where, sizeof(a_out.where), "ObjectInterface+0x%zX", a_out.asRootOffset);
+				}
+			}
+
+			if (!a_out.asRoot) {
+				a_out.detail = std::format("IMenu(0x{:X}) 里没解析出 ASMovieRoot｜候选指针:{}｜Movie 候选:{}",
+					menu, diag, seen.empty() ? std::string{ " 无" } : seen);
 				return false;
 			}
+			a_out.detail = std::format("途径={}｜候选指针:{}｜Movie 候选:{}", a_out.where, diag,
+				seen.empty() ? std::string{ " 无" } : seen);
 			return true;
 		}
 
@@ -587,12 +720,14 @@ namespace SAQ::UI
 			s += " IMenu=值+0x";
 			s += std::format("{:X}", a_bridge.menuInValueOffset);
 			s += "(" + std::string(a_bridge.menuRtti) + ")";
-			s += " uiMovie=IMenu+0x";
+			s += " Movie=IMenu+0x";
 			s += std::format("{:X}", a_bridge.uiMovieOffset);
 			s += "(" + std::string(a_bridge.movieRtti) + ")";
-			s += " asMovieRoot=Movie+0x";
-			s += std::format("{:X}", a_bridge.asRootOffset);
-			s += "(" + std::string(a_bridge.rootRtti) + ")";
+			s += a_bridge.rootInInterface ? " ASMovieRoot=menuObj._objectInterface" : " ASMovieRoot=Movie+0x";
+			if (!a_bridge.rootInInterface) {
+				s += std::format("{:X}", a_bridge.asRootOffset);
+			}
+			s += "(" + std::string(a_bridge.rootRtti) + ") @" + a_bridge.where;
 			return s;
 		}
 	}
@@ -624,13 +759,9 @@ namespace SAQ::UI
 			bridge.detail.clear();
 			return false;
 		}
-		if (!ResolveMovie(bridge)) {
-			a_detail = bridge.detail;
-			bridge.detail.clear();
-			return false;
-		}
-		if (!ResolveAsRoot(bridge)) {
-			a_detail = bridge.detail;
+		if (!ResolveMovieChain(bridge)) {
+			a_detail = "Movie/ASMovieRoot 解析失败：" + bridge.detail +
+				"｜IMenu 内各指针的 RTTI:" + DescribeCandidates(bridge.menu, 0x58, 0x180, 8);
 			bridge.detail.clear();
 			return false;
 		}
@@ -643,24 +774,30 @@ namespace SAQ::UI
 
 	namespace
 	{
-		// 把任务列表编成一行行文本（AS3 侧解析，协议见 docs/02-UI通道逆向.md）：
+		// 把任务列表编成一行行文本（AS3 侧 MissionMenu.SaqParsePayload 解析，
+		// 协议与 SWF 内嵌的回退数据完全一致）：
 		//     SAQ1
-		//     T\t<tab 标题>
-		//     Q\t<FormID>\t<type>\t<显示名>
-		// 名字里可能有任意标点，所以用 Tab 分隔、名字放最后一项。
-		std::string BuildPayloadUtf8(const std::vector<QuestEntry>& a_quests, std::string_view a_tabText)
+		//     T\t可接任务\tAvailable
+		//     Q\t<FormID>\t<type>\t<中文名>\t<英文名>
+		//
+		// ★ 标题和名字都带**中英两份**，由 AS3 侧按游戏语言挑：C++ 侧拿不到可靠的语言
+		//   （实测本机 INI 里根本没有 sLanguage，游戏是中文但读到的是空/英文），
+		//   而 AS3 侧能直接看引擎推来的任务名 —— 那是本地化的，判定最准。
+		// 名字里可能有任意标点，所以用 Tab 分隔、名字放最后。
+		std::string BuildPayloadUtf8(const std::vector<QuestEntry>& a_quests)
 		{
 			std::string s;
-			s.reserve(a_quests.size() * 32 + 64);
+			s.reserve(a_quests.size() * 48 + 96);
 			s += "SAQ1\n";
-			s += "T\t";
-			s += a_tabText;
-			s += "\n";
+			s += "T\t" + std::string{ kTabTitleZh } + "\t" + std::string{ kTabTitleEn } + "\n";
 			for (const auto& q : a_quests) {
-				std::string name = q.name;
-				for (auto& ch : name) {
-					if (ch == '\r' || ch == '\n' || ch == '\t') {
-						ch = ' ';
+				std::string zh = q.nameZh;
+				std::string en = q.nameEn;
+				for (auto* name : { &zh, &en }) {
+					for (auto& ch : *name) {
+						if (ch == '\r' || ch == '\n' || ch == '\t') {
+							ch = ' ';
+						}
 					}
 				}
 				s += "Q\t";
@@ -668,7 +805,9 @@ namespace SAQ::UI
 				s += "\t";
 				s += std::to_string(q.type);
 				s += "\t";
-				s += name;
+				s += zh;
+				s += "\t";
+				s += en;
 				s += "\n";
 			}
 			return s;
@@ -742,7 +881,7 @@ namespace SAQ::UI
 		return "其它";
 	}
 
-	bool PushAvailableQuests(const std::vector<QuestEntry>& a_quests, std::string_view a_tabText, std::string& a_detail)
+	bool PushAvailableQuests(const std::vector<QuestEntry>& a_quests, std::string& a_detail)
 	{
 		if (!EnsureResolved(a_detail)) {
 			return false;
@@ -758,10 +897,17 @@ namespace SAQ::UI
 			a_detail = slotDetail;
 			return false;
 		}
-		const auto slotNote = std::format(" Invoke槽=ASMovieRoot+0x{:X}{}",
-			invokeRva, invokeRva == kInvokeRva ? std::string{} : std::string{ " ★与离线验证值 0x3368DC0 不符" });
+		if (invokeRva != kInvokeRva) {
+			// 虚表槽内容与离线验证值不符 ⇒ 说明"这个对象其实不是本版本的 AS3::MovieRoot"。
+			// 宁可这次不推（SWF 里自带内嵌回退数据，界面不会空），也不能乱调别人的虚函数。
+			a_detail = std::format("ASMovieRoot 虚表[0x{:X}] 指向 0x{:X}，与离线验证值 0x{:X} 不符 ⇒ 拒绝调用",
+				kSlotAsRootInvoke, invokeRva, kInvokeRva);
+			Reset();
+			return false;
+		}
+		const auto slotNote = std::format(" Invoke槽=ASMovieRoot+0x{:X}", invokeRva);
 
-		const std::string payloadUtf8 = BuildPayloadUtf8(a_quests, a_tabText);
+		const std::string payloadUtf8 = BuildPayloadUtf8(a_quests);
 		const std::wstring payloadWide = Utf8ToWide(payloadUtf8);
 		if (payloadWide.empty()) {
 			a_detail = "载荷编码失败（UTF-8 -> UTF-16）";
