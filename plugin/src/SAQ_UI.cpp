@@ -38,13 +38,28 @@ namespace SAQ::UI
 		//     mov  rcx, [rsp + 0x40]      ; = 值 + 0x20
 		//     test al, al / test rcx, rcx / setne bl   ; 非空 ⇒ 菜单是开着的
 		//
-		// 查找函数（RVA 0x2546170）读的表字段：
+		// 查找函数（RVA 0x2546170）的**逐条真身**（2026-09-19 第 3 轮重新反汇编）：
 		//     mov  rbx, [rcx + 0x40]         ; 容量（2 的幂）
+		//     mov  rsi, [rdx]                ; key = BSFixedString 里那唯一的 qword（= Entry*）
+		//     mov  eax, [rsi + 0x14]         ; ★ 读 string-pool Entry 的 flags
+		//     shr  eax, 1 / test al, 1       ;   kExternal(=1<<1) 位
+		//     je   →  lea rcx, [rsi + 0x18]  ;   ✦ 普通条目：字符数据 = Entry + 0x18
+		//     jne  →  mov rcx, [rsi + 8]     ;   ✦ 外挂条目：沿 _right 找到叶子（函数 0x28CAE80）
+		//     mov  rax, rcx / shr rax, 0x20 / xor ecx, eax
+		//                                    ; ★★ 哈希 = charsPtr ^ (charsPtr >> 32)
+		//     and  rdx, [rbx - 1]            ; index = hash & (capacity - 1)
 		//     mov  rcx, [rbp + 0x38]         ; 条目数组指针
 		//     imul rax, rdx, 0x38            ; 条目跨度 0x38
 		//     cmp  dword [rax+rcx+0x30], -1  ; 空槽哨兵
-		//     cmp  qword [rax+rcx], rsi      ; key = string-pool 指针（指针相等比较）
-		// 哈希 = keyPtr ^ (keyPtr >> 32)（与 commonlibsf 的 UIMenuNameHash 一致）。
+		//     cmp  qword [rax+rcx], rsi      ; ★ key 的**比较**用的是 Entry*（不是 chars）
+		//
+		// ★ 这里有两个**不同的**指针，第 3 轮就是把它俩搞混才一直失败的：
+		//     entryKey = BSFixedString 里的 Entry*  → 只用于**比较**
+		//     charsPtr = Entry 的字符数据(+0x18)    → 只用于**算哈希**
+		//   commonlibsf 的 `UIMenuNameHash` 写的是 `c_str()` 的指针…但那个 `c_str()`
+		//   返回的就是字符指针，我们上一轮却拿 Entry* 去算哈希 ⇒ 每次都在错的桶里找，
+		//   链一走到空槽就报「没找到」——就是 `UI 里没找到 BSMissionMenu 的菜单表条目`
+		//   的真凶（日志实测：UI 指针、IsMenuOpen 都是好的，只有我们自己查表查不到）。
 		//
 		// 结论：
 		//   ★ 真实的菜单表在 UI+0x450，而 commonlibsf 的 UI::menuMap 标的是 0x470
@@ -66,9 +81,18 @@ namespace SAQ::UI
 		constexpr std::size_t kIMenuUiMovieOffset = 0x088;
 		constexpr std::size_t kMovieAsRootOffset = 0x010;
 
-		// commonlibsf 的 ASMovieRootBase 虚函数槽（只调这两个，且调用前都会核对槽指向主模块）
+		// commonlibsf 的 ASMovieRootBase 虚函数槽（**槽序号**，不是字节偏移）：
+		//   vtable[0x39] = Invoke(const char*, Value*, const Value*, u32)
+		//
+		// 离线复核（tools/re/rtti_slots.py --name "MovieRoot@AS3@GFx@Scaleform@@"）：
+		//   全 exe 只有一个类名含 "MovieRoot"：`.?AVMovieRoot@AS3@GFx@Scaleform@@`
+		//   （TD RVA 0x59A53C0），它的主 vtable = RVA 0x3BE32B0，
+		//     [2C]=0x33675B0 CreateString / [2D]=0x3367630 CreateStringW
+		//     [38]=0x3369180 [39]=0x3368DC0 Invoke / [3A]=0x33691B0 InvokeArgs
+		//   ⇒ 「RTTI 含 MovieRoot」本身就是**精确**的身份判据；槽号 0x39 也被证实。
 		constexpr std::size_t kSlotAsRootCreateString = 0x2C;  // CreateString(Value*, const char*)
 		constexpr std::size_t kSlotAsRootInvoke = 0x39;        // Invoke(const char*, Value*, const Value*, u32)
+		constexpr std::uintptr_t kInvokeRva = 0x3368DC0;       // 上面那个槽指向的函数（1.16.244.0 实测）
 
 		constexpr const char* kMenuName = "BSMissionMenu";
 
@@ -200,41 +224,129 @@ namespace SAQ::UI
 			}
 		}
 
+		// 调用前核对 ASMovieRoot::Invoke 的虚表槽：拿到它的 RVA 用来比对离线验证值。
+		// 返回 false = 槽指针不落在主模块里（vtable 布局对不上 ⇒ 宁可失败也不能乱调）。
+		bool CheckInvokeSlot(std::uintptr_t a_root, std::uintptr_t& a_outRva, std::string& a_detail)
+		{
+			const auto vtable = ReadPtr(a_root);
+			if (!vtable) {
+				a_detail = "ASMovieRoot 虚表指针为空";
+				return false;
+			}
+			const auto slot = ReadPtr(vtable + kSlotAsRootInvoke * sizeof(std::uintptr_t));
+			if (slot < ModuleBase() || slot >= ModuleBase() + ModuleSize()) {
+				a_detail = std::format("ASMovieRoot 虚表[0x{:X}] 不是主模块里的代码（布局对不上）", kSlotAsRootInvoke);
+				return false;
+			}
+			a_outRva = slot - ModuleBase();
+			return true;
+		}
+
 		// ====================================================================
 		// 三、菜单表查找（算法的照抄实现，见文件顶部注释）
 		// ====================================================================
 
-		// 返回指向「条目里的值」的指针；查不到返回 nullptr。
-		std::uintptr_t ScatterFindValue(std::uintptr_t a_map, std::uintptr_t a_key)
+		// 一次查找的结果（诊断信息一起带出来，失败时日志里能看出「形状不对」还是「哈希没中」）。
+		//
+		// 这是个 POD —— 带 __try 的函数里不能有需要栈展开的成员（MSVC C2712）。
+		struct FindOutcome
 		{
-			if (!a_map || !a_key) {
-				return 0;
+			std::uintptr_t value{};      // 命中：指向「条目里的值」；0 = 没找到
+			std::uint64_t  capacity{};   // 表容量（0 ⇒ 这个偏移根本不是菜单表）
+			std::uint64_t  hashIndex{};  // 哈希算出的起始槽（诊断用）
+			int            how{};        // 见 kFindHow*
+		};
+
+		constexpr int kFindShapeBad = 0;   // 形状不对（不是菜单表）
+		constexpr int kFindHashMiss = 1;   // 形状对、哈希链走到空槽
+		constexpr int kFindHashHit = 2;    // 哈希命中
+		constexpr int kFindLinearHit = 3;  // 哈希没中、线性扫全表命中
+
+		// 线性兜底最多扫多少个槽（真实菜单表只有几十~几百槽；这一层只是保险）
+		constexpr std::uint64_t kMaxLinearSlots = 0x4000;
+
+		// 在 a_map 里找 key = a_entryKey 的条目，返回**指向值的指针**（0 = 没找到）。
+		//
+		//   a_entryKey = BSFixedString 的 Entry*      → 比较用（string pool 唯一化 ⇒ 指针相等）
+		//   a_charsPtr = 那个 Entry 的字符数据指针     → 哈希用（★ 别用 Entry* 算哈希）
+		//
+		// 先按引擎那条路走哈希；一旦没中就**线性扫全表兜底** —— 就算以后游戏改了哈希
+		// 算法，这里也只是慢一点，不会像这轮一样直接查不到。
+		FindOutcome ScatterFindValue(std::uintptr_t a_map, std::uintptr_t a_entryKey, std::uintptr_t a_charsPtr)
+		{
+			FindOutcome out;
+			if (!a_map || !a_entryKey || !a_charsPtr) {
+				return out;
 			}
 			__try {
 				const auto* map = reinterpret_cast<const std::byte*>(a_map);
 				const auto capacity = *reinterpret_cast<const std::uint64_t*>(map + kMapCapacityOffset);
 				const auto* entries = *reinterpret_cast<const std::byte* const*>(map + kMapEntriesOffset);
 				if (!entries || capacity < 2 || capacity > 0x20000 || (capacity & (capacity - 1)) != 0) {
-					return 0;  // 形状不对 ⇒ 这不是菜单表
+					return out;  // 形状不对 ⇒ 这不是菜单表
 				}
-				std::uint64_t index = (a_key ^ (a_key >> 32)) & (capacity - 1);
+				out.capacity = capacity;
+
+				const auto slotAt = [&](std::uint64_t a_index) {
+					return entries + a_index * kEntryStride;
+				};
+				const auto slotKey = [&](std::uint64_t a_index) {
+					return *reinterpret_cast<const std::uintptr_t*>(slotAt(a_index));
+				};
+				const auto slotNext = [&](std::uint64_t a_index) {
+					return *reinterpret_cast<const std::int32_t*>(slotAt(a_index) + kEntryNextOffset);
+				};
+
+				// ① 哈希链（和引擎同一条路；哈希用的是**字符数据指针**）
+				std::uint64_t index = (a_charsPtr ^ (a_charsPtr >> 32)) & (capacity - 1);
+				out.hashIndex = index;
 				for (std::uint32_t guard = 0; guard < 0x40; ++guard) {
-					const auto* entry = entries + index * kEntryStride;
-					const auto next = *reinterpret_cast<const std::int32_t*>(entry + kEntryNextOffset);
+					const auto next = slotNext(index);
 					if (next == -1) {
-						return 0;  // 空槽 ⇒ 查不到
+						break;  // 空槽 ⇒ 哈希这条路没中
 					}
-					if (*reinterpret_cast<const std::uintptr_t*>(entry) == a_key) {
-						return reinterpret_cast<std::uintptr_t>(entry + kEntryValueOffset);
+					if (slotKey(index) == a_entryKey) {
+						out.value = reinterpret_cast<std::uintptr_t>(slotAt(index) + kEntryValueOffset);
+						out.how = kFindHashHit;
+						return out;
 					}
 					index = static_cast<std::uint64_t>(static_cast<std::uint32_t>(next));
 					if (index >= capacity) {
-						return 0;
+						break;
 					}
 				}
-				return 0;
+
+				// ② 线性兜底（哈希算法万一变了也不至于瞎）
+				const auto slots = capacity < kMaxLinearSlots ? capacity : kMaxLinearSlots;
+				for (std::uint64_t i = 0; i < slots; ++i) {
+					if (slotNext(i) == -1) {
+						continue;
+					}
+					if (slotKey(i) == a_entryKey) {
+						out.value = reinterpret_cast<std::uintptr_t>(slotAt(i) + kEntryValueOffset);
+						out.how = kFindLinearHit;
+						return out;
+					}
+				}
+
+				out.how = kFindHashMiss;
+				return out;
 			} __except (EXCEPTION_EXECUTE_HANDLER) {
-				return 0;
+				return out;
+			}
+		}
+
+		const char* FindHowName(int a_how)
+		{
+			switch (a_how) {
+			case kFindHashMiss:
+				return "哈希没中";
+			case kFindHashHit:
+				return "哈希命中";
+			case kFindLinearHit:
+				return "线性命中";
+			default:
+				return "形状不符";
 			}
 		}
 
@@ -253,6 +365,7 @@ namespace SAQ::UI
 			std::size_t    uiMovieOffset{ kIMenuUiMovieOffset };
 			std::size_t    asRootOffset{ kMovieAsRootOffset };
 			char           menuName[64]{};
+			char           menuRtti[192]{};
 			char           movieRtti[192]{};
 			char           rootRtti[192]{};
 			std::string    detail;
@@ -262,6 +375,25 @@ namespace SAQ::UI
 		{
 			static Bridge bridge;
 			return bridge;
+		}
+
+		// 把某个对象里 0x??~0x?? 范围内「每个非空指针指向的对象的 RTTI 名字」列出来。
+		// 只在**失败时**调用（一次菜单打开最多一次），用于让下一轮日志直接说明问题。
+		std::string DescribeCandidates(std::uintptr_t a_obj, std::size_t a_first, std::size_t a_last, std::size_t a_step)
+		{
+			std::string s;
+			for (std::size_t off = a_first; off <= a_last; off += a_step) {
+				const auto candidate = ReadPtr(a_obj + off);
+				if (!candidate) {
+					continue;
+				}
+				char rtti[192]{};
+				if (!SafeRttiName(reinterpret_cast<const void*>(candidate), rtti) || !rtti[0]) {
+					std::snprintf(rtti, sizeof(rtti), "(无 RTTI)");
+				}
+				s += std::format(" 0x{:X}->{}", off, rtti);
+			}
+			return s.empty() ? std::string{ " (范围内没有任何非空指针)" } : s;
 		}
 
 		// 候选偏移的试探顺序：先试反汇编实测值，再按 8 字节步长扫一遍附近
@@ -276,43 +408,63 @@ namespace SAQ::UI
 			}
 		}
 
+		// 值的 0x28 字节里，IMenu* 先按 IsMenuOpen 反汇编出来的 0x20 试，再按 8 字节步长扫全部 qword。
+		constexpr std::size_t kMenuPtrCandidates[] = { 0x20, 0x00, 0x08, 0x10, 0x18 };
+
 		bool ResolveMapAndMenu(RE::UI* a_ui, Bridge& a_out)
 		{
-			// 菜单名的 key 就是 BSFixedString 里的 string-pool 指针（见 docs/02）：
-			// 表里存的和查询用的都是它，比较也是指针比较。
+			// ★ 两个指针，别搞混（见文件顶部）：
+			//   entryKey = BSFixedString 里存的 Entry*（表里的 key 就是它，比较用）
+			//   charsPtr = 那个 Entry 的字符数据（哈希用）
 			static const RE::BSFixedString menuName{ kMenuName };
-			const auto key = *reinterpret_cast<const std::uintptr_t*>(std::addressof(menuName));
-			if (!key) {
+			const auto entryKey = *reinterpret_cast<const std::uintptr_t*>(std::addressof(menuName));
+			const auto charsPtr = reinterpret_cast<std::uintptr_t>(menuName.c_str());
+			if (!entryKey || !charsPtr) {
 				a_out.detail = "BSFixedString(\"BSMissionMenu\") 未进入 string pool";
 				return false;
 			}
 
 			const auto uiBase = reinterpret_cast<std::uintptr_t>(a_ui);
 
+			std::string shapes;  // 诊断：形状通过的表偏移 + 查找结果
+			std::string menus;   // 诊断：值里各 qword 指向对象的 RTTI（只有形状通过时才值得看）
 			bool found = false;
 			ForEachCandidate(0x3C0, 0x4C0, 8, [&](std::size_t mapOffset) {
-				const auto value = ScatterFindValue(uiBase + mapOffset, key);
-				if (!value) {
+				const auto outcome = ScatterFindValue(uiBase + mapOffset, entryKey, charsPtr);
+				if (!outcome.capacity) {
+					return false;  // 这个偏移上根本不是散列表
+				}
+				shapes += std::format(" 0x{:X}(cap=0x{:X} idx=0x{:X} {})",
+					mapOffset, outcome.capacity, outcome.hashIndex,
+					FindHowName(outcome.how));
+				if (!outcome.value) {
 					return false;
 				}
-				// 值里哪个 qword 是 IMenu*？先用 IsMenuOpen 的实测偏移 0x20，再扫 0x00~0x20，
-				// 判据 = 那个对象里存着自己的 menuName（同一个 string-pool 指针）。
+				const auto value = outcome.value;
+				// 判据 = 那个对象里存着自己的 menuName（同一个 string-pool Entry 指针）。
 				bool hit = false;
-				ForEachCandidate(0, 0x20, 8, [&](std::size_t inValueOffset) {
+				for (const auto inValueOffset : kMenuPtrCandidates) {
 					const auto menu = ReadPtr(value + inValueOffset);
 					if (!menu) {
-						return false;
+						continue;
 					}
-					if (!ObjectContainsPointer(reinterpret_cast<const void*>(menu), key, 0x200)) {
-						return false;
+					char rtti[192]{};
+					if (!SafeRttiName(reinterpret_cast<const void*>(menu), rtti) || !rtti[0]) {
+						std::snprintf(rtti, sizeof(rtti), "(无 RTTI)");
+					}
+					if (!ObjectContainsPointer(reinterpret_cast<const void*>(menu), entryKey, 0x200)) {
+						menus += std::format(" 值+0x{:X}->{}(名字指针不匹配)", inValueOffset, rtti);
+						continue;
 					}
 					a_out.mapOffset = mapOffset;
 					a_out.menuInValueOffset = inValueOffset;
 					a_out.menu = menu;
 					std::memcpy(a_out.menuName, kMenuName, sizeof(kMenuName));
+					std::memcpy(a_out.menuRtti, rtti, sizeof(a_out.menuRtti));
+					menus += std::format(" 值+0x{:X}->{}✔", inValueOffset, rtti);
 					hit = true;
-					return true;
-				});
+					break;
+				}
 				if (hit) {
 					found = true;
 				}
@@ -320,7 +472,9 @@ namespace SAQ::UI
 			});
 
 			if (!found) {
-				a_out.detail = "UI 里没找到 BSMissionMenu 的菜单表条目";
+				a_out.detail = "UI 里没找到 BSMissionMenu 的菜单表条目｜候选表:" +
+					(shapes.empty() ? std::string{ " 无(0x3C0~0x4C0 里没有形状像散列表的字段)" } : shapes) +
+					"｜值内指针:" + (menus.empty() ? std::string{ " 无" } : menus);
 				return false;
 			}
 			return true;
@@ -335,11 +489,11 @@ namespace SAQ::UI
 
 		bool ResolveMovie(Bridge& a_out)
 		{
-			// IMenu::uiMovie（Ptr<Movie>）：
-			//   ① 0x80~0x140 里找「RTTI 名字含 Movie（但不是 MovieDef）」的指针；
-			//   ② 全不中时，退回 commonlibsf 的偏移 0x88 + 弱判据（只试这一个偏移，避免误判）。
+			// IMenu::uiMovie（Ptr<Movie>）：0x40~0x180 里找「RTTI 名字含 Movie（但不是 MovieDef）」
+			// 的指针；判据是 RTTI 名字，所以不依赖 commonlibsf 标的 0x88。
+			// 全不中时退回 0x88 + 弱判据（只试这一个偏移，避免误判）。
 			bool found = false;
-			ForEachCandidate(0x80, 0x140, 8, [&](std::size_t offset) {
+			ForEachCandidate(0x40, 0x180, 8, [&](std::size_t offset) {
 				const auto candidate = ReadPtr(a_out.menu + offset);
 				if (!candidate) {
 					return false;
@@ -366,7 +520,8 @@ namespace SAQ::UI
 			}
 
 			if (!found) {
-				a_out.detail = "IMenu 里没找到 Movie 指针（0x80~0x140 + 0x88 兜底都没中）";
+				a_out.detail = "IMenu(+" + std::string(a_out.menuRtti) + ") 里没找到 Movie 指针；0x40~0x180 内各指针的 RTTI:" +
+					DescribeCandidates(a_out.menu, 0x40, 0x180, 8);
 				return false;
 			}
 			return true;
@@ -374,11 +529,10 @@ namespace SAQ::UI
 
 		bool ResolveAsRoot(Bridge& a_out)
 		{
-			// Movie::asMovieRoot（Ptr<ASMovieRootBase>）：
-			//   ① 0x00~0x40 里找「RTTI 名字含 MovieRoot」的指针；
-			//   ② 全不中时退回 commonlibsf 的 0x10 + 弱判据。
+			// Movie::asMovieRoot（Ptr<ASMovieRootBase>）：0x00~0x48 里找「RTTI 名字含 MovieRoot」的指针；
+			// 全不中时退回 commonlibsf 的 0x10 + 弱判据。
 			bool found = false;
-			ForEachCandidate(0x00, 0x40, 8, [&](std::size_t offset) {
+			ForEachCandidate(0x00, 0x48, 8, [&](std::size_t offset) {
 				const auto candidate = ReadPtr(a_out.movie + offset);
 				if (!candidate) {
 					return false;
@@ -405,7 +559,8 @@ namespace SAQ::UI
 			}
 
 			if (!found) {
-				a_out.detail = "Movie 里没找到 ASMovieRoot 指针（0x00~0x40 + 0x10 兜底都没中）";
+				a_out.detail = "Movie(+" + std::string(a_out.movieRtti) + ") 里没找到 ASMovieRoot 指针；0x00~0x48 内各指针的 RTTI:" +
+					DescribeCandidates(a_out.movie, 0x00, 0x48, 8);
 				return false;
 			}
 			return true;
@@ -431,6 +586,7 @@ namespace SAQ::UI
 			s += std::format("{:X}", a_bridge.mapOffset);
 			s += " IMenu=值+0x";
 			s += std::format("{:X}", a_bridge.menuInValueOffset);
+			s += "(" + std::string(a_bridge.menuRtti) + ")";
 			s += " uiMovie=IMenu+0x";
 			s += std::format("{:X}", a_bridge.uiMovieOffset);
 			s += "(" + std::string(a_bridge.movieRtti) + ")";
@@ -439,6 +595,14 @@ namespace SAQ::UI
 			s += "(" + std::string(a_bridge.rootRtti) + ")";
 			return s;
 		}
+	}
+
+	// ★ 每次菜单「由关变开」都要清一次缓存：菜单一关，SWF 的 Movie 对象通常就被
+	//   销毁了（Ptr<Movie> 释放），下一帧再拿旧指针去 Invoke 是野指针。
+	//   （实测第 3 轮的失败日志里，同一个 session 内缓存跨菜单复用是隐患。）
+	void Reset()
+	{
+		Cached() = Bridge{};
 	}
 
 	bool EnsureResolved(std::string& a_detail)
@@ -554,6 +718,30 @@ namespace SAQ::UI
 		};
 	}
 
+	// 返回值的类型名（日志用）：AS3 那边没这个方法时通常得到 undefined。
+	const char* DescribeValueType(const RE::Scaleform::GFx::Value& a_value)
+	{
+		if (a_value.IsUndefined()) {
+			return "undefined";
+		}
+		if (a_value.IsNumber() || a_value.IsInt() || a_value.IsUInt()) {
+			return "数值";
+		}
+		if (a_value.IsString() || a_value.IsStringW()) {
+			return "字符串";
+		}
+		if (a_value.IsBoolean()) {
+			return "布尔";
+		}
+		if (a_value.IsObject()) {
+			return "对象";
+		}
+		if (a_value.IsArray()) {
+			return "数组";
+		}
+		return "其它";
+	}
+
 	bool PushAvailableQuests(const std::vector<QuestEntry>& a_quests, std::string_view a_tabText, std::string& a_detail)
 	{
 		if (!EnsureResolved(a_detail)) {
@@ -565,10 +753,13 @@ namespace SAQ::UI
 			a_detail = "ASMovieRoot 指针为空";
 			return false;
 		}
-		if (!VtableSlotInModule(root, kSlotAsRootInvoke)) {
-			a_detail = "ASMovieRoot 的 Invoke 槽不在主模块里（vtable 布局对不上）";
+		std::uintptr_t invokeRva{};
+		if (std::string slotDetail; !CheckInvokeSlot(bridge.asRoot, invokeRva, slotDetail)) {
+			a_detail = slotDetail;
 			return false;
 		}
+		const auto slotNote = std::format(" Invoke槽=ASMovieRoot+0x{:X}{}",
+			invokeRva, invokeRva == kInvokeRva ? std::string{} : std::string{ " ★与离线验证值 0x3368DC0 不符" });
 
 		const std::string payloadUtf8 = BuildPayloadUtf8(a_quests, a_tabText);
 		const std::wstring payloadWide = Utf8ToWide(payloadUtf8);
@@ -606,17 +797,30 @@ namespace SAQ::UI
 			trail += std::string{ trail.empty() ? "" : " | " } + (attempt.wide ? "W:" : "S:") + attempt.path;
 			trail += called ? "=ok" : "=fail";
 			if (hasNumber) {
-				trail += "(" + std::format("{:.0f}", reported) + ")";
+				trail += std::format("(返回 {:.0f})", reported);
+			} else if (called) {
+				trail += std::format("(返回 {})", DescribeValueType(ret));
 			}
 
-			// AS3 侧返回「实际拿到多少条」；0 = 字符串没解析出来（编码/传参不对），继续试下一种。
+			// AS3 侧返回「解析到的条数」：>0 才算成功。
+			// （=ok(返回 0) ⇒ 调用到了但字符串没解析出来；=ok(返回 undefined) ⇒ 没这个方法/路径不对。）
 			if (called && reported > 0.0) {
 				ok = true;
 				break;
 			}
 		}
 
-		a_detail = bridge.detail + " 调用: " + trail + std::format(" 载荷={} 字节/{} 条", payloadUtf8.size(), a_quests.size());
+		// 先把解析信息留一份 —— 失败时下面会 Reset()，缓存里的 detail 会被清掉。
+		const std::string bridgeDetail = bridge.detail;
+
+		if (!ok) {
+			// 六种组合全失败：把缓存清掉，下一次重试（或下次开菜单）从「找菜单表」重新来一遍
+			// —— 菜单刚开那一两帧 Movie 可能还在换代的中间态，缓存住就没救了。
+			Reset();
+		}
+
+		a_detail = bridgeDetail + slotNote + " 调用: " + trail +
+			std::format(" 载荷={} 字节/{} 条", payloadUtf8.size(), a_quests.size());
 		return ok;
 	}
 }

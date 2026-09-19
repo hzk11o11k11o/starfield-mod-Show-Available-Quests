@@ -119,8 +119,10 @@ namespace SAQ
 
 		const char* GetTabText()
 		{
+			// sLanguage:General 的实测值：en / de / es / fr / it / ja / pl / ptbr / ru / zhhans
+			// （中文按 "zhhans" 走；这里把 cn/chinese 一起兜住，免得以后改了值就变英文）
 			const auto lang = GetGameLanguage();
-			if (lang.starts_with("zh")) {
+			if (lang.starts_with("zh") || lang.starts_with("cn") || lang.starts_with("Chinese")) {
 				return "可接任务";
 			}
 			return "Available";
@@ -280,12 +282,18 @@ namespace SAQ
 
 		void OnMissionMenuOpened()
 		{
+			// ★ 菜单是「新开的」，上一轮解析出来的 Movie 指针多半已经随菜单关闭销毁了，
+			//   必须重新解析一遍（Reset 后第一次推送会重新走「菜单表 → IMenu → Movie」）。
+			UI::Reset();
+
 			g_pending.quests.clear();
 			g_pending.attempts = 0;
 			g_pending.tabText = GetTabText();
 			g_pending.total = 0;
 			g_pending.live = 0;
 			CollectAvailableQuests(g_pending.quests, g_pending.total, g_pending.live);
+			REX::INFO("菜单打开：静态表={} 引擎里存在={} 待推送={} 语言={} 标题={}",
+				g_pending.total, g_pending.live, g_pending.quests.size(), GetGameLanguage(), g_pending.tabText);
 			TryPushPending();
 		}
 

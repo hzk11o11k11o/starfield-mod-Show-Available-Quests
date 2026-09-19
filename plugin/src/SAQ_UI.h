@@ -29,7 +29,11 @@ namespace SAQ
 
 	namespace UI
 	{
-		// 解析「UI → 菜单表 → IMenu → Movie → ASMovieRoot」这条链（结果缓存，一次即可）。
+		// 清掉解析缓存。★ 每次菜单「由关变开」都必须调：菜单一关，SWF 的 Movie
+		// 对象通常会被销毁，缓存下来的指针就是野指针。
+		void Reset();
+
+		// 解析「UI → 菜单表 → IMenu → Movie → ASMovieRoot」这条链（结果在本次菜单打开期间缓存）。
 		// 失败时 a_detail 写明卡在哪一步（直接进日志）。
 		bool EnsureResolved(std::string& a_detail);
 

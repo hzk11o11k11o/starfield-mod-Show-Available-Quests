@@ -396,7 +396,10 @@ package
                this.onMissionSelectionChange();
             }
          }
-         return this.AvailableQuests == null ? -1 : this.AvailableQuests.length;
+         // 返回「**解析出来的**条数」（不是过滤后剩下的条数）：C++ 侧用 >0 判定
+         // 「字符串协议通了」。若返回过滤后的数量，一旦任务全被 QuestData 滤掉就成 0，
+         // C++ 会以为编码/路径不对，白试剩下 5 种组合。
+         return _loc3_.length;
       }
       
       private function OnQuestDataUpdate(param1:FromClientDataEvent) : void
