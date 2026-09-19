@@ -554,6 +554,39 @@ package
          return QuestUtils.MISSION_QUEST_TYPE;
       }
       
+      // 我们的条目带的「目标（阶段）」：一条静态文案。字段按 MissionsListEntry.SetEntryText /
+      // ShowObjective 的读取清单给全（sName / iRemainingTime / bComplete / bActive /
+      // bFailed / bIsMiscObjective / bCanShowOnMap）—— 少一个都可能渲染出问题。
+      // 注意：**不能**带 aObjectives 属性（IsMission 的判据是 hasOwnProperty("aObjectives")，
+      // 带了它这条子条目就会被当成"任务"）。
+      private function SaqBuildObjective(param1:Object) : Object
+      {
+         return {
+            "uID":param1.uID,
+            "uOwnerQuestFormID":param1.uID,
+            "uIndex":0,
+            "uInstanceID":0,
+            "iType":SaqSafeType(param1.iType),
+            "iFaction":FactionUtils.FACTION_NONE,
+            "sName":this.SaqUseChinese() ? "前往接取地点" : "Reach the pickup location",
+            "sDescription":"",
+            "bComplete":false,
+            "bFailed":false,
+            "bActive":false,
+            "bIsMiscObjective":false,
+            "bCanShowOnMap":false,
+            "iRemainingTime":-1
+         };
+      }
+      
+      // 右侧详情面板里的描述文案（固定内容，告诉玩家这条记录怎么用）。
+      private function SaqDescriptionText() : String
+      {
+         return this.SaqUseChinese()
+            ? "这条任务当前可以接取。选中后按 X 键（SET COURSE）可引导到接取地点。"
+            : "This quest is currently available. Press X (SET COURSE) to be guided to the pickup location.";
+      }
+      
       private function SaqBuildEntry(param1:Object) : Object
       {
          return {
@@ -562,7 +595,7 @@ package
             "iType":SaqSafeType(param1.iType),
             "iFaction":FactionUtils.FACTION_NONE,
             "sName":this.SaqUseChinese() ? param1.sNameZh : param1.sNameEn,
-            "sDescription":"",
+            "sDescription":this.SaqDescriptionText(),
             "bActive":false,
             "bComplete":false,
             "bFailed":false,
@@ -571,7 +604,10 @@ package
             "bIsMiscObjective":false,
             "bCanShowOnMap":false,
             "iRemainingTime":-1,
-            "aObjectives":new Array(),
+            // ★ 第 12 轮：带一条「目标（阶段）」——玩家反馈「看不到任务阶段，没法像原版
+            //   任务那样展开看内容」。原版 MissionsList 展开子条目 = aObjectives
+            //   （见 MissionsList.GetChildrenOfEntry），空数组时条目就是个没有阶段的死条目。
+            "aObjectives":[this.SaqBuildObjective(param1)],
             // ★ 可见性标记（MissionsList.EntryFilterCompare_Impl 里唯一认它的判据）：
             //   iType 保留原始任务类型给图标/类型文本用，**不能**再靠 iType 决定
             //   是否出现在「可接任务」tab（那是上一轮列表空的根因）。

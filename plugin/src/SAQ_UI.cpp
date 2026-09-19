@@ -181,12 +181,17 @@ namespace SAQ::UI
 			return begin <= end && a_bytes <= end - begin;
 		}
 
+		// ★ 第 12 轮：不再先做 IsMapped（VirtualQuery）——实测「推送失败（重试）… 耗时 3921 ms」
+		//   的失败路径里，`FindAsRootSlot` 一次要跑 2048 步 ×2 次 ReadPtr，而每一步 ReadPtr
+		//   都会先 VirtualQuery（内核调用）。VirtualQuery 正常只要 ~μs 级，但在游戏进程里
+		//   （VAD 树大、与引擎的内存操作抢锁）实测明显更贵，4096+ 次累计成秒级卡顿。
+		//   改成**纯 __try**：有效指针零额外开销；坏指针走一次结构化异常（~几十 μs，
+		//   且只发生在坏指针上）。语义与之前完全等价（读不到就返回兜底值）。
+		//
+		//   （IsMapped 函数本身保留：将来若要做「大范围预检」还有用。）
 		template <class T>
 		T SafeRead(const void* a_src, T a_fallback)
 		{
-			if (!IsMapped(a_src, sizeof(T))) {
-				return a_fallback;
-			}
 			__try {
 				return *static_cast<const T*>(a_src);
 			} __except (EXCEPTION_EXECUTE_HANDLER) {
@@ -594,7 +599,9 @@ namespace SAQ::UI
 		// 返回**存它的那个槽的地址**（0 = 没找到）—— 返回地址是为了把偏移写进日志。
 		std::uintptr_t FindAsRootSlot(std::uintptr_t a_obj, std::size_t a_bytes)
 		{
-			if (!a_obj || !IsMapped(reinterpret_cast<const void*>(a_obj), sizeof(std::uintptr_t))) {
+			// ★ 第 12 轮：开头的 IsMapped 预检去掉（ReadPtr 自己已有 __try 保护；
+			//   这里是「扫 16KB」的热点，预检省下的每一次内核调用都是净赚）。
+			if (!a_obj) {
 				return 0;
 			}
 			const auto want = ModuleBase() + kMovieRootVtableRva;
@@ -867,20 +874,30 @@ namespace SAQ::UI
 			return false;
 		}
 
+		// ★ 第 12 轮：分解耗时（表解析 / Movie 链解析 / 失败诊断）——
+		//   上一轮实测「推送失败（重试）… 耗时 3921 ms」，但从日志里看不出钱花在哪一段。
+		//   计时写进 detail：失败与成功两边都会出现在日志里。
+		const auto t0 = ::GetTickCount64();
 		if (!ResolveMapAndMenu(ui, bridge)) {
-			a_detail = bridge.detail.empty() ? std::string{ "菜单表解析失败" } : bridge.detail;
+			a_detail = (bridge.detail.empty() ? std::string{ "菜单表解析失败" } : bridge.detail) +
+				std::format("（表 {} ms）", ::GetTickCount64() - t0);
 			bridge.detail.clear();
 			return false;
 		}
+		const auto t1 = ::GetTickCount64();
 		if (!ResolveMovieChain(bridge)) {
+			const auto t2 = ::GetTickCount64();
 			a_detail = "Movie/ASMovieRoot 解析失败：" + bridge.detail +
-				"｜IMenu 内各指针的 RTTI:" + DescribeCandidates(bridge.menu, 0x58, 0x180, 8);
+				"｜IMenu 内各指针的 RTTI:" + DescribeCandidates(bridge.menu, 0x58, 0x180, 8) +
+				std::format("（表 {} ms / 链 {} ms / 诊断 {} ms）",
+					t1 - t0, t2 - t1, ::GetTickCount64() - t2);
 			bridge.detail.clear();
 			return false;
 		}
 
 		bridge.ok = true;
-		bridge.detail = Describe(bridge);
+		bridge.detail = Describe(bridge) +
+			std::format("（表 {} ms / 链 {} ms）", t1 - t0, ::GetTickCount64() - t1);
 		a_detail = bridge.detail;
 		return true;
 	}

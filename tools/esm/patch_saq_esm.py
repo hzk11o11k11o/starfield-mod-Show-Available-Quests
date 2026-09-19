@@ -52,7 +52,17 @@ ALIAS_ID = 0
 ALIAS_NAME = "SAQ_GuideTarget"
 ALIAS_FLAGS = 0x02          # 与 SQ_Followers\AvailableFollowers（脚本填充型别名）一致
 OBJECTIVE_INDEX = 10
-OBJECTIVE_TEXT = b"<Alias=SAQ_GuideTarget>"
+# ★ 文本必须带 NUL 终止（第 12 轮实证）：对照两个非本地化第三方 ESM 的文本子记录，
+#   StarfieldAlwaysScan.esm 的 FULL 长度 12 = "Always Scan"(11)+NUL，
+#   morelore_mantislegacy.esm 的 NNAM 也都是「文本长度+1」。
+#   第 11 轮我们没有写 NUL（len=23 = 恰好 23 个可见字符），游戏里 HUD「任务更新」
+#   显示成 "[...]"（文本为空）——补上 NUL 是这一轮的直接修复。
+OBJECTIVE_TEXT = b"<Alias=SAQ_GuideTarget>\x00"
+# 代理任务的任务名（QUST 记录级 FULL）。同样要 NUL 终止。
+# 为什么要有名字：引擎会把「正在运行 + 有已显示目标」的任务塞进玩家任务日志
+#   （第 11 轮日志实证：qdata 列表里出现「f000800:」——名字为空的那条就是它），
+#   没名字时 HUD 的任务更新提示与任务日志都显示成空白/省略号。
+QUEST_NAME = "可接任务".encode("utf-8") + b"\x00"
 
 # 记录里「目标 / 别名」相关的子记录（重建时先全部删掉）
 ALIAS_SUBS = {b"ALST", b"ALLS", b"ALID", b"ALFG", b"ALED", b"VTCK", b"ALFA", b"ALRT",
@@ -90,7 +100,9 @@ def build_quest_payload(old_payload: bytes) -> tuple[bytes, dict]:
 
     # ★ 用白名单重建，而不是「删掉已知的」：FNAM/NNAM/VTCK 在目标与别名里都会出现，
     #   用黑名单会把上一次运行留下的 FNAM 带进来（踩过一次：记录里出现两个多余的 FNAM）。
-    keep = {b"EDID", b"VMAD", b"FULL", b"DNAM", b"NAM3", b"NEXT", b"QTYP", b"ENAM", b"QTGL"}
+    # ★ 第 12 轮：FULL 从白名单去掉 —— 每次都用我们自己的 QUEST_NAME 重写一遍，
+    #   保证「任务名」这一项也是幂等的（旧 FULL 一律丢弃）。
+    keep = {b"EDID", b"VMAD", b"DNAM", b"NAM3", b"NEXT", b"QTYP", b"ENAM", b"QTGL"}
     head, tail = [], []
     for sig, sp in subs:
         if sig not in keep:
@@ -98,6 +110,9 @@ def build_quest_payload(old_payload: bytes) -> tuple[bytes, dict]:
             continue
         # 目标放在「记录级字段之后、别名之前」：保留原顺序，遇到第一个别名/目标就切换
         head.append(make_sub(sig, sp))
+        # 任务名（FULL）紧跟 EDID（BGS 惯例的排布）
+        if sig == b"EDID":
+            head.append(make_sub(b"FULL", QUEST_NAME))
 
     # 目标
     head.append(make_sub(b"QOBJ", struct.pack("<H", OBJECTIVE_INDEX)))
