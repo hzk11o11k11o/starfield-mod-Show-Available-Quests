@@ -206,6 +206,16 @@ package
          {
             _loc2_ = true;
          }
+         // ★ SAQ：未接任务（Show Available Quests）的条目。
+         //   这些条目的 iType 保留**原始任务类型**（0=活动/2=派系/3=杂项/4=任务…），
+         //   所以不能用 iType 判可见性 —— 否则在「可接任务」tab（掩码 1<<6=64）里
+         //   会被 (64 & 1<<iType) == 0 全部滤掉（这就是上一轮"tab 在但列表空"的根因）。
+         //   改判 bSaqAvailable 标记：该标记的条目**只**在带 AVAILABLE_QUEST_TYPE 位的
+         //   掩码下可见 ⇒ 只出现在我们的 tab，「全部」/其它 tab 一律不显示。
+         else if(param1.bSaqAvailable === true)
+         {
+            _loc2_ = (filterMask & 1 << QuestUtils.AVAILABLE_QUEST_TYPE) != 0;
+         }
          else if(filterMask == 1 << QuestUtils.COMPLETED_QUEST_TYPE)
          {
             _loc2_ = Boolean(param1.bComplete);

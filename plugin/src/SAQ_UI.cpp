@@ -848,9 +848,15 @@ namespace SAQ::UI
 			const char* path;
 		};
 		constexpr Attempt kAttempts[] = {
+			// ★ SWF 侧在 root 上挂的入口放最前（MissionMenu 是舞台子元件、不是 root，
+			//   所以老的三条路径实测全 fail；见 MissionMenu.SaqPublishEntryPoint）。
+			{ true, "SAQ_SetAvailableQuests" },
+			{ true, "_root.SAQ_SetAvailableQuests" },
 			{ true, "SetAvailableQuests" },
 			{ true, "_root.SetAvailableQuests" },
 			{ true, "_root.root.SetAvailableQuests" },
+			{ false, "SAQ_SetAvailableQuests" },
+			{ false, "_root.SAQ_SetAvailableQuests" },
 			{ false, "SetAvailableQuests" },
 			{ false, "_root.SetAvailableQuests" },
 			{ false, "_root.root.SetAvailableQuests" },

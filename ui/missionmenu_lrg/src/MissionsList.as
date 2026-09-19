@@ -206,6 +206,12 @@ package
          {
             _loc2_ = true;
          }
+         // ★ SAQ：未接任务的 iType 保留原始任务类型（0~5），可见性改看 bSaqAvailable
+         //   标记 —— 否则在「可接任务」tab（掩码 1<<6=64）里会被 (64 & 1<<iType) 全滤掉。
+         else if(param1.bSaqAvailable === true)
+         {
+            _loc2_ = (filterMask & 1 << QuestUtils.AVAILABLE_QUEST_TYPE) != 0;
+         }
          else if(filterMask == 1 << QuestUtils.COMPLETED_QUEST_TYPE)
          {
             _loc2_ = Boolean(param1.bComplete);

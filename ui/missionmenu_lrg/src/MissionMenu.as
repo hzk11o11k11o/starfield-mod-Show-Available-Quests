@@ -520,12 +520,26 @@ package
       // 字段必须**覆盖引擎推的 QuestData 条目所拥有的一切**：UI 各处会直接读，
       // 少一个就可能抛 Error #1010（实测 MissionInfo.UpdateMissionInfo 会读
       // `param1.sDescription.length`，所以哪怕没有简介也必须给空串）。
+      // 原始类型 -> UI 能安全渲染的类型。
+      // 原版 QuestUtils.GetQuestIconLabel 只对「活动(0)/杂项(3)/任务(4)」返回真实图标名，
+      // 派系(2)/主线(1) 会落到 default -> "None"，而 FactionSymbols 里未必有 "None" 这一帧
+      // —— gotoAndStop 找不到帧会抛异常，把整行（甚至整列表）的渲染带崩。
+      // 静态表里存在的就是 0/2/3/4，所以只把 2 归一成 4（派系任务按「任务」图标显示）。
+      private static function SaqSafeType(param1:int) : int
+      {
+         if(param1 == QuestUtils.ACTIVITY_QUEST_TYPE || param1 == QuestUtils.MISC_QUEST_TYPE || param1 == QuestUtils.MISSION_QUEST_TYPE)
+         {
+            return param1;
+         }
+         return QuestUtils.MISSION_QUEST_TYPE;
+      }
+      
       private function SaqBuildEntry(param1:Object) : Object
       {
          return {
             "uID":param1.uID,
             "uInstanceID":0,
-            "iType":param1.iType,
+            "iType":SaqSafeType(param1.iType),
             "iFaction":FactionUtils.FACTION_NONE,
             "sName":this.SaqUseChinese() ? param1.sNameZh : param1.sNameEn,
             "sDescription":"",
@@ -537,7 +551,11 @@ package
             "bIsMiscObjective":false,
             "bCanShowOnMap":false,
             "iRemainingTime":-1,
-            "aObjectives":new Array()
+            "aObjectives":new Array(),
+            // ★ 可见性标记（MissionsList.EntryFilterCompare_Impl 里唯一认它的判据）：
+            //   iType 保留原始任务类型给图标/类型文本用，**不能**再靠 iType 决定
+            //   是否出现在「可接任务」tab（那是上一轮列表空的根因）。
+            "bSaqAvailable":true
          };
       }
       
@@ -561,6 +579,11 @@ package
          this.SaqApplyTabTitle();
          if(this.MissionsList_mc != null)
          {
+            // 把列表掩码与本菜单当前选中的 tab 对齐一次。
+            // （BSScrollingTree 的默认掩码是 0xFFFFFFFF；如果这一帧还没人设置过它，
+            //   「全部」tab 会用 0xFFFFFFFF 放行 bSaqAvailable 条目的判据 —— 这里先对齐，
+            //   保证重建列表时用的是当前 tab 的真实掩码。）
+            this.SaqSyncListMask();
             this.MissionsList_mc.InitializeEntries(this.BuildMergedList());
             if(this.visible)
             {
@@ -568,6 +591,41 @@ package
             }
          }
          return _loc2_.length;
+      }
+      
+      private function SaqSyncListMask() : void
+      {
+         var _loc1_:int = this.TabbedFilterSelection_mc != null ? int(this.TabbedFilterSelection_mc.selectedIndex) : -1;
+         if(_loc1_ >= 0 && _loc1_ < this.FilterInfoA.length)
+         {
+            this.MissionsList_mc.filterMask = this.FilterInfoA[_loc1_].flag;
+         }
+      }
+      
+      // ==================================================================
+      //  把 SAQ 入口挂到 SWF 的 root 上 —— 这是 C++ 推送能用起来的关键。
+      //
+      //  背景：C++ 侧只能通过 ASMovieRoot::Invoke("A.B.C") 调 AS3，而路径解析
+      //  **从 root 开始**。MissionMenu 这个类（Embed 自 assets.swf 的 symbol94）
+      //  是主时间轴上的**子元件**，不是 root 本身，所以
+      //  "SetAvailableQuests" / "_root.SetAvailableQuests" / "_root.root.…"
+      //  在 root 上都找不到 —— 日志里就是六种组合全 fail。
+      //  在 root（MainTimeline，dynamic 的 MovieClip）上挂一份函数引用后，
+      //  C++ 调 "SAQ_SetAvailableQuests" 就能直达本实例。
+      // ==================================================================
+      private function SaqPublishEntryPoint() : void
+      {
+         try
+         {
+            var _loc1_:Object = this.root;
+            if(_loc1_ != null && _loc1_ != this)
+            {
+               _loc1_["SAQ_SetAvailableQuests"] = this.SetAvailableQuests;
+            }
+         }
+         catch(e:Error)
+         {
+         }
       }
       
       // C++ 插件入口：Invoke("SetAvailableQuests", <载荷>)。
@@ -649,6 +707,8 @@ package
          BSUIDataManager.Subscribe("FireForgetEventData",this.onFireForgetEvent);
          GlobalFunc.PlayMenuSound("UIMenuMissionsMenuEnter");
          this.KeyHelper = new ButtonKeyHelper();
+         // root 上挂一份 C++ 插件用的入口（见 SaqPublishEntryPoint 注释）
+         this.SaqPublishEntryPoint();
       }
       
       override protected function OnPlatformChanged(param1:Object) : void
