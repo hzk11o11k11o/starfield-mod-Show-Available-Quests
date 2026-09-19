@@ -1,0 +1,41 @@
+#pragma once
+
+// ============================================================================
+//  SAQ_UI —— C++ 侧访问 BSMissionMenu 的 SWF（GFx）通道
+//
+//  为什么单独一层：commonlibsf 的 UI / IMenu / 菜单表**偏移在 1.16.244.0 上是过时的**
+//  （实测：UI::menuMap 标 0x470，真实的菜单表在 UI+0x450）。所以这里不直接用
+//  UI::GetMenuMovie()，而是自己按「反汇编出来的算法」查表，并且每一步都用
+//  RTTI 名字 / 虚函数调用做校验，校验不过就换候选偏移 —— 猜错最坏是「推送失败」，
+//  而不是把游戏带崩。
+//
+//  实测结论、算法与偏移来源见 SAQ_UI.cpp 顶部注释与 docs/02-UI通道逆向.md。
+// ============================================================================
+
+#include <cstdint>
+#include <string>
+#include <string_view>
+#include <vector>
+
+namespace SAQ
+{
+	// 一条「可接任务」记录。字段名与 AS3 侧 MissionsList 条目对齐。
+	struct QuestEntry
+	{
+		std::uint32_t formID{};   // FormID（Starfield.esm 的 master 区段）
+		std::int32_t  type{};     // AS3：QuestUtils.AVAILABLE_QUEST_TYPE = 6
+		std::string   name;       // 按游戏语言取的显示名（UTF-8）
+	};
+
+	namespace UI
+	{
+		// 解析「UI → 菜单表 → IMenu → Movie → ASMovieRoot」这条链（结果缓存，一次即可）。
+		// 失败时 a_detail 写明卡在哪一步（直接进日志）。
+		bool EnsureResolved(std::string& a_detail);
+
+		// 把可接任务推给 AS3（MissionMenu.SetAvailableQuests，单个字符串参数，见 .cpp 里的协议）。
+		// a_tabText 会同时用于设置新 tab 的标题。
+		// 返回 true = GFx 侧调用成功（返回值写在 a_detail 里）。
+		bool PushAvailableQuests(const std::vector<QuestEntry>& a_quests, std::string_view a_tabText, std::string& a_detail);
+	}
+}

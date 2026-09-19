@@ -333,14 +333,61 @@ package
          return _loc4_;
       }
       
-      public function SetAvailableQuests(param1:Array, param2:String = null) : int
+      public function SetAvailableQuests(param1:String) : int
       {
-         if(param2 != null)
+         var _loc2_:Array = null;
+         var _loc3_:Array = null;
+         var _loc4_:String = null;
+         var _loc5_:int = 0;
+         var _loc6_:int = 0;
+         var _loc7_:int = 0;
+         if(param1 == null)
          {
-            this.SetAvailableTabText(param2);
+            return -1;
          }
-         this.RawAvailableQuests = param1;
-         this.AvailableQuests = this.FilterKnownQuests(param1);
+         _loc2_ = param1.split("\n");
+         _loc3_ = new Array();
+         _loc6_ = 0;
+         while(_loc6_ < _loc2_.length)
+         {
+            _loc4_ = _loc2_[_loc6_];
+            if(_loc4_.length > 2)
+            {
+               if(_loc4_.substr(0,2) == "T\t")
+               {
+                  this.SetAvailableTabText(_loc4_.substr(2));
+               }
+               else if(_loc4_.substr(0,2) == "Q\t")
+               {
+                  _loc5_ = _loc4_.indexOf("\t",2);
+                  if(_loc5_ > 0)
+                  {
+                     _loc7_ = _loc4_.indexOf("\t",_loc5_ + 1);
+                     if(_loc7_ > _loc5_)
+                     {
+                        _loc3_.push({
+                           "uID":parseInt(_loc4_.substring(2,_loc5_)),
+                           "uInstanceID":0,
+                           "iType":parseInt(_loc4_.substring(_loc5_ + 1,_loc7_)),
+                           "iFaction":0,
+                           "sName":_loc4_.substring(_loc7_ + 1),
+                           "bActive":false,
+                           "bComplete":false,
+                           "bFailed":false,
+                           "bIsMiscQuest":false,
+                           "bIsMiscObjective":false,
+                           "bCanShowOnMap":false,
+                           "iRemainingTime":-1,
+                           "aObjectives":new Array()
+                        });
+                     }
+                  }
+               }
+            }
+            _loc6_++;
+         }
+         this.RawAvailableQuests = _loc3_;
+         this.AvailableQuests = this.FilterKnownQuests(_loc3_);
          if(this.QuestData != null && this.MissionsList_mc != null)
          {
             this.MissionsList_mc.InitializeEntries(this.BuildMergedList());

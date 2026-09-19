@@ -7,22 +7,25 @@
 //
 //  数据流：
 //    UI 打开 BSMissionMenu
-//      -> 本文件收集可接任务（遍历 TESDataHandler 的 QUST 数组 + 运行时过滤）
-//      -> 组装 GFxValue 数组
-//      -> asMovieRoot->Invoke("SetAvailableQuests", ...) 推给 AS3 侧
-//      -> AS3 侧并入任务列表，tab 过滤显示
+//      -> 本文件收集可接任务（静态任务表 + 引擎侧存在性校验）
+//      -> SAQ_UI（自己按反汇编出来的算法查菜单表）拿到 ASMovieRoot
+//      -> Invoke("SetAvailableQuests", <一行行文本>)（见 SAQ_UI.cpp 的协议）
+//      -> AS3 侧解析成任务条目，并入任务列表，tab 过滤显示
 //
 //  几个「不要再踩」的坑（来自上一代项目 always scan 的实测）：
 //    ① **绝不缓存 BSTArray 的 data()/capacity()**：清表可能释放/搬移缓冲，
 //       缓存下来就是悬空指针。本文件每次现读。
 //    ② **只看主线程**：读档期间加载线程也会跑到这里；加主线程判定。
-//    ③ GFx 的 Value 在 `Invoke` 之后即可释放（AS 侧已拷贝），
-//       但构造时依赖 root->CreateObject/CreateArray 设置的 objectInterface。
+//    ③ ★ **不要用 UI::GetMenuMovie()**：1.16.244.0 上它查的表（0x470）是错的，
+//       真实菜单表在 UI+0x450（反汇编 UI::IsMenuOpen 实证）—— 详见 SAQ_UI.cpp。
+//    ④ ★ **不要用 TESDataHandler::formArrays 数任务**：本机实测读到空表（见 docs/02），
+//       改用 TESForm::LookupByID 按 FormID 问引擎。
 // ============================================================================
 
 #include "PCH.h"
 
 #include "SAQ.h"
+#include "SAQ_UI.h"          // UI 通道（菜单表 → IMenu → Movie → ASMovieRoot）
 #include "SAQ_QuestTable.h"  // 生成物：FormID -> 中/英文名 + 类型（tools/esm/gen_quest_table.py）
 
 #include "RE/B/BSFixedString.h"
@@ -31,12 +34,6 @@
 #include "RE/IDs.h"  // 编译期 ID 审计要用（见下方 kIdUsable）
 #include "RE/I/INISettingCollection.h"
 #include "RE/S/Setting.h"
-// 注意 include 顺序：ASMovieRootBase.h 不自包含（Value/Movie/FunctionHandler 都要先有），
-// 顺序错了会报 C4430/C2061 一连串语法错误。
-#include "RE/S/ScaleformGFxMovie.h"
-#include "RE/S/ScaleformGFxValue.h"
-#include "RE/S/ScaleformGFxFunctionHandler.h"
-#include "RE/S/ScaleformGFxASMovieRootBase.h"
 #include "RE/T/TESDataHandler.h"
 #include "RE/T/TESForm.h"
 #include "RE/U/UI.h"
@@ -57,9 +54,8 @@ namespace SAQ
 
 	namespace
 	{
-		constexpr const char* kMenuName = "BSMissionMenu";       // 原版任务菜单
-		constexpr const char* kPushFunc = "SetAvailableQuests";  // AS3 侧接收函数（SAQ 新增）
-		constexpr std::int32_t kAvailableQuestType = 6;          // QuestUtils.AVAILABLE_QUEST_TYPE
+		constexpr const char* kMenuName = "BSMissionMenu";  // 原版任务菜单
+		constexpr std::int32_t kAvailableQuestType = 6;     // AS3：QuestUtils.AVAILABLE_QUEST_TYPE
 
 		// ==================================================================
 		// 编译期 ID 审计（别删！）
@@ -78,30 +74,33 @@ namespace SAQ
 
 		constexpr bool kIdUsable(REL::ID a_id) noexcept { return a_id.id() != 0; }
 
-		static_assert(kIdUsable(RE::ID::UI::Singleton));                 // UI::GetSingleton / GetMenuMovie
+		static_assert(kIdUsable(RE::ID::UI::Singleton));                 // UI::GetSingleton
 		static_assert(kIdUsable(RE::ID::UI::IsMenuOpen));                // UI::IsMenuOpen
-		static_assert(kIdUsable(RE::ID::TESDataHandler::Singleton));     // TESDataHandler::GetSingleton
+		static_assert(kIdUsable(RE::ID::TESDataHandler::Singleton));     // TESDataHandler::GetSingleton（自检用）
+		static_assert(kIdUsable(RE::ID::TESForm::LookupByID));           // 按 FormID 问引擎要表单
 		static_assert(kIdUsable(RE::ID::INISettingCollection::Singleton));  // 读 sLanguage:General
 		static_assert(kIdUsable(RE::ID::BSStringPool::GetEntry));        // BSFixedString 构造
 		static_assert(kIdUsable(RE::ID::BSStringPool::Entry::Release));  // BSFixedString 析构
-		// GFx Value 的对象/数组操作（C++ -> AS3 推送）
-		static_assert(kIdUsable(RE::ID::Scaleform::GFx::Value::ObjectInterface::SetMember));
-		static_assert(kIdUsable(RE::ID::Scaleform::GFx::Value::ObjectInterface::PushBack));
-		static_assert(kIdUsable(RE::ID::Scaleform::GFx::Value::ObjectInterface::ObjectAddRef));
-		static_assert(kIdUsable(RE::ID::Scaleform::GFx::Value::ObjectInterface::ObjectRelease));
-
-		struct QuestEntry
-		{
-			RE::TESFormID formID{};
-			std::uint32_t faction{};
-			std::int32_t  type = kAvailableQuestType;
-			std::string   name;
-		};
 
 		std::atomic_bool g_installed{ false };
 		std::atomic_bool g_firstMenuLogged{ false };
 		std::atomic<std::uint64_t> g_pushCount{ 0 };
 		std::atomic_uint32_t g_mainThreadId{ 0 };
+
+		// 推送重试状态（只在主线程读写，不需要锁）。
+		// 菜单刚打开的那一两帧 SWF 可能还没初始化完，Invoke 会失败 —— 隔几帧再试。
+		struct PendingPush
+		{
+			std::vector<QuestEntry> quests;
+			std::string             tabText;
+			std::size_t             total{};
+			std::size_t             live{};
+			std::uint32_t           attempts{};
+			std::uint64_t           lastAttemptMs{};
+		};
+		PendingPush g_pending;
+		constexpr std::uint32_t kMaxPushAttempts = 10;
+		constexpr std::uint64_t kPushRetryIntervalMs = 400;
 
 		// ------------------------------------------------------------------
 		// 本地化
@@ -124,7 +123,12 @@ namespace SAQ
 			if (lang.starts_with("zh")) {
 				return "可接任务";
 			}
-			return "AVAILABLE";
+			return "Available";
+		}
+
+		std::uint64_t NowMs()
+		{
+			return ::GetTickCount64();
 		}
 
 		// ------------------------------------------------------------------
@@ -145,66 +149,63 @@ namespace SAQ
 		//   （下一代产品：若哪天 commonlibsf 补上 BGSStoryTeller 的 ID，或我们自己
 		//   挖到正确 ID，再考虑把「已开始但没进日志」的任务也滤掉。）
 
-		// FormID -> 静态信息 索引（只建一次）
-		const std::unordered_map<RE::TESFormID, const StaticQuestInfo*>& QuestIndex()
-		{
-			static const std::unordered_map<RE::TESFormID, const StaticQuestInfo*> index = [] {
-				std::unordered_map<RE::TESFormID, const StaticQuestInfo*> m;
-				m.reserve(kQuestTableSize * 2);
-				for (std::size_t i = 0; i < kQuestTableSize; ++i) {
-					m.emplace(kQuestTable[i].formID, std::addressof(kQuestTable[i]));
-				}
-				return m;
-			}();
-			return index;
-		}
-
 		// 收集"可接任务"候选。
 		//
 		// 规则（MVP）：
 		//   * 必须命中静态表 => 有 QTYP（玩家可见任务）且非主线
-		//   * 属于 Starfield.esm（load order 0；静态表只收录了它的记录）
+		//   * 引擎里确实存在这个 FormID（★ 用 TESForm::LookupByID 问引擎，
+		//     **不再用 TESDataHandler::formArrays** —— 1.16.244.0 上实测那里读到空表，
+		//     结果"quest 总数=0"、列表当然是空的，见 docs/02）
 		//   * 名称按游戏语言从静态表取
 		//
 		// "玩家已知任务"（进行中/已完成）由 AS3 侧用引擎推送的 QuestData 再过滤一次。
-		void CollectAvailableQuests(std::vector<QuestEntry>& a_out, std::size_t& a_totalQuests)
+		void CollectAvailableQuests(std::vector<QuestEntry>& a_out, std::size_t& a_totalQuests, std::size_t& a_liveQuests)
 		{
-			a_totalQuests = 0;
-			auto* dataHandler = RE::TESDataHandler::GetSingleton();
-			if (!dataHandler) {
-				REX::WARN("TESDataHandler 不可用");
-				return;
-			}
+			a_out.reserve(kQuestTableSize);
+			a_totalQuests = kQuestTableSize;
+			a_liveQuests = 0;
 
-			const auto& index = QuestIndex();
 			const bool zh = GetGameLanguage().starts_with("zh");
-
-			// 每次现读，绝不缓存数组指针（见文件头说明）
-			const auto& formArray = dataHandler->formArrays[std::to_underlying(RE::FormType::kQUST)].formArray;
-			a_out.reserve(512);
-
-			for (const auto& ptr : formArray) {
-				auto* form = ptr.get();
-				if (!form || form->IsDeleted()) {
-					continue;
+			for (std::size_t i = 0; i < kQuestTableSize; ++i) {
+				const auto& info = kQuestTable[i];
+				if (!RE::TESForm::LookupByID(static_cast<RE::TESFormID>(info.formID))) {
+					continue;  // 这个 FormID 在当前加载顺序里不存在（理论上 Starfield.esm 必有）
 				}
-				++a_totalQuests;
-				const auto formID = form->GetFormID();
-				if ((formID & 0xFF000000u) != 0) {
-					continue;  // 非 Starfield.esm（静态表暂只覆盖 master）
-				}
-				const auto it = index.find(formID);
-				if (it == index.end()) {
-					continue;  // 不在表里 => 不是"玩家可见的非主线任务"
-				}
-				const auto* info = it->second;
+				++a_liveQuests;
 				QuestEntry entry;
-				entry.formID = formID;
-				entry.type = kAvailableQuestType;  // 统一放到我们的 tab；原类型由前缀图标体现
-				entry.faction = 0;
-				entry.name = zh ? info->nameZh : info->nameEn;
+				entry.formID = info.formID;
+				entry.type = kAvailableQuestType;  // 统一放到我们的 tab
+				entry.name = zh ? info.nameZh : info.nameEn;
 				a_out.push_back(std::move(entry));
 			}
+		}
+
+		// 一次性自检：把几个 form 数组的长度打出来（只读长度、不迭代）。
+		// 目的是把「为什么 TESDataHandler 那条路读到 0」这件事钉死（偏移过时 / 索引不对）。
+		void LogFormArrayProbe()
+		{
+			auto* dataHandler = RE::TESDataHandler::GetSingleton();
+			if (!dataHandler) {
+				REX::INFO("自检: TESDataHandler = null");
+				return;
+			}
+			const RE::FormType probe[] = {
+				RE::FormType::kQUST,
+				RE::FormType::kNPC_,
+				RE::FormType::kARMO,
+				RE::FormType::kWEAP,
+				RE::FormType::kMESG,
+				RE::FormType::kFLST,
+			};
+			std::string line;
+			for (const auto type : probe) {
+				const auto& arr = dataHandler->formArrays[std::to_underlying(type)].formArray;
+				line += std::to_string(std::to_underlying(type));
+				line += '=';
+				line += std::to_string(arr.size());
+				line += ' ';
+			}
+			REX::INFO("自检: TESDataHandler={:p} formArrays[类型=数量] {}", static_cast<const void*>(dataHandler), line);
 		}
 
 		// ------------------------------------------------------------------
@@ -213,70 +214,12 @@ namespace SAQ
 
 		bool PushToUI(const std::vector<QuestEntry>& a_quests)
 		{
-			auto* ui = RE::UI::GetSingleton();
-			if (!ui) {
-				return false;
-			}
-			auto movie = ui->GetMenuMovie(RE::BSFixedString{ kMenuName });
-			if (!movie) {
-				return false;
-			}
-			auto* root = movie->asMovieRoot.get();
-			if (!root) {
-				return false;
-			}
-
-			RE::Scaleform::GFx::Value args[2];
-			root->CreateArray(&args[0]);
-			if (!args[0].IsArray()) {
-				REX::WARN("推送失败：CreateArray 未返回数组");
-				return false;
-			}
-			// 字符串一律走 CreateString（UTF-8 -> AS3 UTF-16），
-			// 直接用 Value(const char*) 只是裸指针，含中文时不保险。
-			root->CreateString(&args[1], GetTabText());
-
-			std::size_t pushed = 0;
-			for (const auto& q : a_quests) {
-				RE::Scaleform::GFx::Value obj;
-				root->CreateObject(&obj);
-				if (!obj.IsObject()) {
-					continue;
-				}
-				obj.SetMember("uID"sv, RE::Scaleform::GFx::Value(static_cast<std::uint32_t>(q.formID)));
-				obj.SetMember("uInstanceID"sv, RE::Scaleform::GFx::Value(static_cast<std::uint32_t>(0)));
-				obj.SetMember("iType"sv, RE::Scaleform::GFx::Value(q.type));
-				obj.SetMember("iFaction"sv, RE::Scaleform::GFx::Value(static_cast<std::uint32_t>(q.faction)));
-				RE::Scaleform::GFx::Value nameVal;
-				root->CreateString(&nameVal, q.name.c_str());
-				obj.SetMember("sName"sv, nameVal);
-				obj.SetMember("bActive"sv, RE::Scaleform::GFx::Value(false));
-				obj.SetMember("bComplete"sv, RE::Scaleform::GFx::Value(false));
-				obj.SetMember("bFailed"sv, RE::Scaleform::GFx::Value(false));
-				obj.SetMember("bIsMiscQuest"sv, RE::Scaleform::GFx::Value(false));
-				obj.SetMember("bIsMiscObjective"sv, RE::Scaleform::GFx::Value(false));
-				obj.SetMember("bCanShowOnMap"sv, RE::Scaleform::GFx::Value(false));
-				obj.SetMember("iRemainingTime"sv, RE::Scaleform::GFx::Value(static_cast<std::int32_t>(-1)));
-
-				// MissionsListEntry.IsMission() 用 hasOwnProperty("aObjectives") 判定，
-				// 所以必须给一个（此刻为空的）目标数组。
-				RE::Scaleform::GFx::Value objectives;
-				root->CreateArray(&objectives);
-				obj.SetMember("aObjectives"sv, objectives);
-
-				if (!args[0].PushBack(obj)) {
-					continue;
-				}
-				++pushed;
-			}
-
-			RE::Scaleform::GFx::Value ret;
-			const bool ok = root->Invoke(kPushFunc, &ret, args, 2);
-			if (!ok) {
-				REX::WARN("Invoke(\"{}\") 失败：AS3 侧可能还没有这个函数", kPushFunc);
-			} else if (ret.IsNumber() || ret.IsInt() || ret.IsUInt()) {
-				// AS3 侧返回它实际收到的条目数（-1 = null）——最直接的成功判据
-				REX::DEBUG("AS3 侧确认收到 {} 条", static_cast<int>(ret.GetNumber()));
+			std::string detail;
+			const bool ok = UI::PushAvailableQuests(a_quests, GetTabText(), detail);
+			if (ok) {
+				REX::INFO("推送成功：{} | {}", detail, a_quests.size());
+			} else {
+				REX::WARN("推送失败：{}", detail);
 			}
 			return ok;
 		}
@@ -299,21 +242,51 @@ namespace SAQ
 
 		std::atomic_bool g_menuWasOpen{ false };
 
+		// 尝试把待推送的数据送进 SWF；失败就隔 400ms 再试（菜单刚开那一两帧 SWF 可能还没就绪）。
+		void TryPushPending()
+		{
+			if (g_pending.quests.empty() || g_pending.attempts >= kMaxPushAttempts) {
+				return;
+			}
+			const auto now = NowMs();
+			if (g_pending.attempts > 0 && now - g_pending.lastAttemptMs < kPushRetryIntervalMs) {
+				return;
+			}
+			g_pending.lastAttemptMs = now;
+			++g_pending.attempts;
+
+			// 第一次打开菜单时做一次性自检 + UI 桥解析日志（只打一次，不刷屏）
+			if (!g_firstMenuLogged.exchange(true)) {
+				LogFormArrayProbe();
+				std::string bridgeDetail;
+				if (UI::EnsureResolved(bridgeDetail)) {
+					REX::INFO("UI 桥解析：{}", bridgeDetail);
+				} else {
+					REX::WARN("UI 桥解析失败：{}", bridgeDetail);
+				}
+			}
+
+			if (PushToUI(g_pending.quests)) {
+				const auto n = ++g_pushCount;
+				REX::INFO("菜单打开：静态表={} 引擎里存在={} 推送条数={} (第{}次)",
+					g_pending.total, g_pending.live, g_pending.quests.size(), n);
+				g_pending.quests.clear();
+				g_pending.attempts = kMaxPushAttempts;  // 本次不再重试
+			} else if (g_pending.attempts >= kMaxPushAttempts) {
+				REX::WARN("推送放弃：重试 {} 次仍未成功（下次打开菜单会再试）", g_pending.attempts);
+				g_pending.quests.clear();
+			}
+		}
+
 		void OnMissionMenuOpened()
 		{
-			std::vector<QuestEntry> quests;
-			std::size_t total = 0;
-			CollectAvailableQuests(quests, total);
-
-			const bool pushed = PushToUI(quests);
-			const auto n = ++g_pushCount;
-			if (!g_firstMenuLogged.exchange(true)) {
-				REX::INFO("首次菜单打开：quest 总数={} 可接候选={} 推送={} (第{}次)",
-					total, quests.size(), pushed ? "成功" : "失败", n);
-			} else {
-				REX::DEBUG("菜单打开：quest 总数={} 可接候选={} 推送={} (第{}次)",
-					total, quests.size(), pushed ? "成功" : "失败", n);
-			}
+			g_pending.quests.clear();
+			g_pending.attempts = 0;
+			g_pending.tabText = GetTabText();
+			g_pending.total = 0;
+			g_pending.live = 0;
+			CollectAvailableQuests(g_pending.quests, g_pending.total, g_pending.live);
+			TryPushPending();
 		}
 
 		void Tick()
@@ -330,6 +303,8 @@ namespace SAQ
 			const bool wasOpen = g_menuWasOpen.exchange(open);
 			if (open && !wasOpen) {
 				OnMissionMenuOpened();
+			} else if (open) {
+				TryPushPending();  // 上一轮没成功的话接着重试
 			}
 		}
 	}
