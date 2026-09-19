@@ -345,6 +345,33 @@ package
          }
       }
       
+      // ★ SAQ（第 14 轮）：按任务 uID 把当前**显示列表**里的行就地重渲染。
+      // 用途：可接任务的「引导中」状态变化（点子项 / 按 X）时，点亮或熄灭主标题左侧
+      // 那条竖条（TrackIndicator）—— 即原版「追踪中」的视觉。
+      //
+      // 为什么要有这个函数：显示下标 ≠ 数据下标（InitializeEntries 会把已完成/misc 条目
+      // 挪位置，展开时子项还会插进来），外部按数据下标算刷新位置必然错；
+      // 而 entryList / UpdateEntryClip 只有本类（列表内部）能访问。
+      // 只重渲染找到的那几行，不重建列表、不动滚动与展开状态；行还没渲染出来（不在可视区）
+      // 时 FindClipForEntry 返回 null，数据已改，滚到它时自然是对的。
+      public function SAQ_RefreshQuestRow(param1:Number) : void
+      {
+         var _loc2_:int = 0;
+         while(_loc2_ < entryCount)
+         {
+            var _loc3_:Object = entryList[_loc2_];
+            if(_loc3_ != null && _loc3_.uID == param1)
+            {
+               var _loc4_:BSContainerEntry = this.FindClipForEntry(_loc2_);
+               if(_loc4_ != null)
+               {
+                  this.UpdateEntryClip(_loc4_,_loc3_);
+               }
+            }
+            _loc2_++;
+         }
+      }
+      
       override public function onEntryRollover(param1:Event) : *
       {
          if(this.bMouseRolloverEnabled)

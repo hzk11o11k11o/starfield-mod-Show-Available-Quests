@@ -575,7 +575,10 @@ package
             "bActive":false,
             "bIsMiscObjective":false,
             "bCanShowOnMap":false,
-            "iRemainingTime":-1
+            "iRemainingTime":-1,
+            // ★ 第 14 轮：子项也带 SAQ 标记 —— 让 SaqIsOurEntry() 对主标题与子项**都**成立，
+            //   交互才能与原版对齐（原版：点子项 = 追踪切换；点主标题 = 展开/收起）。
+            "bSaqAvailable":true
          };
       }
       
@@ -583,8 +586,8 @@ package
       private function SaqDescriptionText() : String
       {
          return this.SaqUseChinese()
-            ? "这条任务当前可以接取。选中后按 X 键（SET COURSE）可引导到接取地点。"
-            : "This quest is currently available. Press X (SET COURSE) to be guided to the pickup location.";
+            ? "这条任务当前可以接取。展开后选中目标（或按 X 键 / SET COURSE）即可引导到接取地点。"
+            : "This quest is currently available. Expand it and select the objective (or press X / SET COURSE) to be guided to the pickup location.";
       }
       
       private function SaqBuildEntry(param1:Object) : Object
@@ -845,6 +848,22 @@ package
          return param1 != null && param1.bSaqAvailable == true;
       }
       
+      // 条目的显示名：选中的如果是**子项**（「前往接取地点」），名字取它的父任务名 ——
+      // 日志/提示里说「已设为引导:<任务名>」才有意义（子项的名字对玩家没有信息量）。
+      private function SaqQuestName(param1:Object) : String
+      {
+         if(param1 == null)
+         {
+            return "?";
+         }
+         if(MissionsListEntry.IsMission(param1))
+         {
+            return param1.sName;
+         }
+         var _loc2_:Object = this.FindQuestEntryByID(this.AvailableQuests, param1.uID);
+         return _loc2_ != null ? _loc2_.sName : param1.sName;
+      }
+      
       // 切换引导：同一条再按一次 = 取消（返回 true 表示现在是「已设为引导」）。
       private function SaqToggleGuide(param1:Object) : Boolean
       {
@@ -859,7 +878,7 @@ package
          if(_loc2_ != 0)
          {
             GlobalFunc.PlayMenuSound(MISSION_TRACKING_TOGGLE_ON_SOUND);
-            this.SaqGuideNote = "已设为引导:" + param1.sName;
+            this.SaqGuideNote = "已设为引导:" + this.SaqQuestName(param1);
          }
          else
          {
@@ -874,34 +893,30 @@ package
       }
       
       // 把「当前引导的任务」写进条目的 bActive，并就地刷新受影响的条目。
-      // 刷新用 BSScrollingList.UpdateEntry(下标)：只重渲染指定的那一行，
-      // 不动滚动位置、也不重建列表（比 SaqRefresh 全量重建温和得多）。
-      // 下标 = QuestData.length + 在 AvailableQuests 里的下标 —— 因为列表数据就是
-      // BuildMergedList()（QuestData.concat(AvailableQuests)）。
-      // 用 try 包住：下标万一因为过滤/展开而对不上，最坏是这一行没刷新，不能把界面带崩。
+      //
+      // ★ 第 14 轮修正刷新方式：原来按「数据下标」调 UpdateEntry(QuestData.length + i)，
+      //   但列表的**显示下标**并不等于数据下标 —— MissionsList.InitializeEntries 会把
+      //   「已完成」条目挪到最后、把 misc 条目挪到末尾，展开时子项还会插进来；
+      //   而且 BSScrollingList 根本没有 UpdateEntry 这个接口（那次调用实际被 try 吞掉了）。
+      //   现在改成把「要刷新的任务 uID」交给 MissionsList.SAQ_RefreshQuestRow()：
+      //   它在**当前显示列表**里按 uID 找行（含已展开的子项），只重渲染找到的那几行，
+      //   不动滚动位置、不动展开状态。
       private function SaqApplyTrackedMarker(param1:Number, param2:Number) : void
       {
          if(this.AvailableQuests == null || this.MissionsList_mc == null)
          {
             return;
          }
-         var _loc3_:int = this.QuestData != null ? int(this.QuestData.length) : 0;
-         var _loc4_:int = 0;
-         while(_loc4_ < this.AvailableQuests.length)
+         var _loc3_:int = 0;
+         while(_loc3_ < this.AvailableQuests.length)
          {
-            var _loc5_:Object = this.AvailableQuests[_loc4_];
-            if(_loc5_ != null && (_loc5_.uID == param1 || _loc5_.uID == param2))
+            var _loc4_:Object = this.AvailableQuests[_loc3_];
+            if(_loc4_ != null && (_loc4_.uID == param1 || _loc4_.uID == param2))
             {
-               _loc5_.bActive = param2 != 0 && _loc5_.uID == param2;
-               try
-               {
-                  this.MissionsList_mc.UpdateEntry(_loc3_ + _loc4_);
-               }
-               catch(e:Error)
-               {
-               }
+               _loc4_.bActive = param2 != 0 && _loc4_.uID == param2;
+               this.MissionsList_mc.SAQ_RefreshQuestRow(_loc4_.uID);
             }
-            _loc4_++;
+            _loc3_++;
          }
       }
       
@@ -1049,29 +1064,46 @@ package
          BSUIDataManager.dispatchEvent(new Event("MissionMenu_ToggleQTDisplay"));
       }
       
+      // 按 uID 在一份条目数组里找主条目（找不到给 null）。
+      private function FindQuestEntryByID(param1:Array, param2:Number) : Object
+      {
+         if(param1 == null)
+         {
+            return null;
+         }
+         var _loc3_:int = 0;
+         while(_loc3_ < param1.length)
+         {
+            if(param1[_loc3_] != null && param1[_loc3_].uID == param2)
+            {
+               return param1[_loc3_];
+            }
+            _loc3_++;
+         }
+         return null;
+      }
+      
       private function GetParentMissionData(param1:Object) : Object
       {
-         var _loc3_:uint = 0;
-         var _loc2_:* = null;
-         if(param1)
+         if(param1 == null)
          {
-            if(MissionsListEntry.IsMission(param1))
-            {
-               _loc2_ = param1;
-            }
-            else if(param1.bIsMiscObjective == null || param1.bIsMiscObjective === false)
-            {
-               _loc3_ = 0;
-               while(_loc3_ < this.QuestData.length)
-               {
-                  if(this.QuestData[_loc3_].uID == param1.uOwnerQuestFormID)
-                  {
-                     _loc2_ = this.QuestData[_loc3_];
-                     break;
-                  }
-                  _loc3_++;
-               }
-            }
+            return null;
+         }
+         if(MissionsListEntry.IsMission(param1))
+         {
+            return param1;
+         }
+         if(param1.bIsMiscObjective != null && param1.bIsMiscObjective !== false)
+         {
+            return null;
+         }
+         var _loc2_:Object = this.FindQuestEntryByID(this.QuestData,param1.uOwnerQuestFormID);
+         // ★ 第 14 轮：我们的可接任务在引擎/玩家日志里都不存在（还没接取），
+         //   只在本菜单的 AvailableQuests 里 —— 子项要能找到父任务，右侧详情面板
+         //   才会像原版那样显示这条任务的内容。
+         if(_loc2_ == null)
+         {
+            _loc2_ = this.FindQuestEntryByID(this.AvailableQuests,param1.uOwnerQuestFormID);
          }
          return _loc2_;
       }
@@ -1248,11 +1280,19 @@ package
          var _loc1_:* = undefined;
          var _loc2_:Boolean = false;
          var _loc3_:Object = null;
-         // 「可接任务」条目：原版追踪不了（引擎里这条任务还没开始），改走我们的引导。
-         // 注意这一步必须在 CanTrackOrUntrack 判定**之前** —— 我们的条目那个值恒为 false。
+         // 「可接任务」条目的 Enter / 鼠标点击 —— 交互与原版对齐（第 14 轮修正）：
+         //   · 主标题（有子项）：**不**切换引导 —— 这一步只做「展开/收起」，由
+         //     BSScrollingTree.onEntryPress 自己完成（原版点任务主标题也是展开）；
+         //   · 子项（「前往接取地点」）：切换引导 —— 对应原版「点目标切换追踪」，
+         //     主标题左侧的竖条（TrackIndicator）随之点亮（引导中 = 追踪中的视觉）。
+         // 必须在 CanTrackOrUntrack 判定**之前**处理：我们的条目在引擎侧不存在，
+         // 落进原版分支会往数据层发一条引擎找不到的任务 ID。
          if(this.SaqIsOurEntry(this.MissionsList_mc.selectedEntry))
          {
-            this.SaqToggleGuide(this.MissionsList_mc.selectedEntry);
+            if(!MissionsListEntry.IsMission(this.MissionsList_mc.selectedEntry))
+            {
+               this.SaqToggleGuide(this.MissionsList_mc.selectedEntry);
+            }
             return;
          }
          if(this.CanTrackOrUntrack)
