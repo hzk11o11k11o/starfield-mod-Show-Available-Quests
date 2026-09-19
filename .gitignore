@@ -2,11 +2,14 @@
 plugin/build/
 plugin/.xmake/
 ui/missionmenu/build/
+ui/missionmenu_lrg/build/
+scripts/build/
 
 # --- 第三方依赖（体积大，按 docs/01 说明自行获取） ---
 tools/commonlibsf-main/
 tools/ffdec/
 tools/ffdec.zip
+tools/vendor/
 Interface-main.zip
 
 # --- 逆向 / 分析中间产物（都可由 tools 重新生成） ---

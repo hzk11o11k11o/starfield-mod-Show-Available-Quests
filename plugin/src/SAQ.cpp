@@ -25,10 +25,10 @@
 #include "SAQ.h"
 #include "SAQ_QuestTable.h"  // 生成物：FormID -> 中/英文名 + 类型（tools/esm/gen_quest_table.py）
 
-#include "RE/B/BGSStoryTeller.h"
 #include "RE/B/BSFixedString.h"
 #include "RE/B/BSTEvent.h"
 #include "RE/F/FormTypes.h"
+#include "RE/IDs.h"  // 编译期 ID 审计要用（见下方 kIdUsable）
 #include "RE/I/INISettingCollection.h"
 #include "RE/S/Setting.h"
 // 注意 include 顺序：ASMovieRootBase.h 不自包含（Value/Movie/FunctionHandler 都要先有），
@@ -48,7 +48,6 @@
 #include <memory>
 #include <string>
 #include <unordered_map>
-#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -61,6 +60,35 @@ namespace SAQ
 		constexpr const char* kMenuName = "BSMissionMenu";       // 原版任务菜单
 		constexpr const char* kPushFunc = "SetAvailableQuests";  // AS3 侧接收函数（SAQ 新增）
 		constexpr std::int32_t kAvailableQuestType = 6;          // QuestUtils.AVAILABLE_QUEST_TYPE
+
+		// ==================================================================
+		// 编译期 ID 审计（别删！）
+		//
+		// commonlibsf 的 RE/IDs.h 里，**这一版还没移植的接口其 REL::ID 值就是 0**。
+		// 0 不是「未初始化」，运行时一碰就炸：REL::IDDB::offset() 查 Address
+		// Library 查到 0 会直接 REX::FAIL，游戏里弹出
+		//   "Failed to find offset for Address Library ID! ... Invalid ID: 0"
+		// 的模态框（实测踩过：BGSStoryTeller::Singleton 就是 0）。
+		//
+		// 所以本插件依赖的每个 REL::ID 都在这里静态断言一次，把这类地雷
+		// 挡在**编译期**。新增接口时把用到的 ID 一并登记。
+		// （间接用到的也要登记：commonlibsf 里 inline 函数内部藏的 REL::ID
+		// 一样会炸，例如 BSFixedString 的构造/析构走 BSStringPool。）
+		// ==================================================================
+
+		constexpr bool kIdUsable(REL::ID a_id) noexcept { return a_id.id() != 0; }
+
+		static_assert(kIdUsable(RE::ID::UI::Singleton));                 // UI::GetSingleton / GetMenuMovie
+		static_assert(kIdUsable(RE::ID::UI::IsMenuOpen));                // UI::IsMenuOpen
+		static_assert(kIdUsable(RE::ID::TESDataHandler::Singleton));     // TESDataHandler::GetSingleton
+		static_assert(kIdUsable(RE::ID::INISettingCollection::Singleton));  // 读 sLanguage:General
+		static_assert(kIdUsable(RE::ID::BSStringPool::GetEntry));        // BSFixedString 构造
+		static_assert(kIdUsable(RE::ID::BSStringPool::Entry::Release));  // BSFixedString 析构
+		// GFx Value 的对象/数组操作（C++ -> AS3 推送）
+		static_assert(kIdUsable(RE::ID::Scaleform::GFx::Value::ObjectInterface::SetMember));
+		static_assert(kIdUsable(RE::ID::Scaleform::GFx::Value::ObjectInterface::PushBack));
+		static_assert(kIdUsable(RE::ID::Scaleform::GFx::Value::ObjectInterface::ObjectAddRef));
+		static_assert(kIdUsable(RE::ID::Scaleform::GFx::Value::ObjectInterface::ObjectRelease));
 
 		struct QuestEntry
 		{
@@ -103,27 +131,19 @@ namespace SAQ
 		// 数据收集
 		// ------------------------------------------------------------------
 
-		std::unordered_set<RE::TESFormID> CollectRunningQuestIDs()
-		{
-			std::unordered_set<RE::TESFormID> out;
-			auto* storyteller = RE::BGSStoryTeller::GetSingleton();
-			if (!storyteller) {
-				return out;
-			}
-			// 注意：TESQuest 在 commonlibsf 中只有前置声明，这里只取 FormID，
-			// 指针地址与首基类 TESForm 相同（reinterpret_cast 是安全的）。
-			for (auto* quest : storyteller->runningQuests) {
-				if (quest) {
-					out.insert(reinterpret_cast<RE::TESForm*>(quest)->GetFormID());
-				}
-			}
-			for (auto* quest : storyteller->queuedStartQuests) {
-				if (quest) {
-					out.insert(reinterpret_cast<RE::TESForm*>(quest)->GetFormID());
-				}
-			}
-			return out;
-		}
+		// ★ 关于「已经开始的 quest 怎么排除」：
+		//   上一版用 RE::BGSStoryTeller::GetSingleton() 读 runningQuests /
+		//   queuedStartQuests，结果游戏里一开任务菜单就弹
+		//   "Invalid ID: 0" 的框 —— commonlibsf 的
+		//   RE::ID::BGSStoryTeller::Singleton 就是 0（见文件上方 ID 审计）。
+		//
+		//   现在这条线索整个砍掉，改由 AS3 侧用**引擎自己推给 UI 的 QuestData**
+		//   过滤（MissionMenu.FilterKnownQuests）：玩家已经拿到的任务（进行中/
+		//   已完成）必然在 QuestData 里，这比 C++ 侧猜更准。C++ 只负责
+		//   「静态表里的可接候选」这一层。
+		//
+		//   （下一代产品：若哪天 commonlibsf 补上 BGSStoryTeller 的 ID，或我们自己
+		//   挖到正确 ID，再考虑把「已开始但没进日志」的任务也滤掉。）
 
 		// FormID -> 静态信息 索引（只建一次）
 		const std::unordered_map<RE::TESFormID, const StaticQuestInfo*>& QuestIndex()
@@ -143,7 +163,6 @@ namespace SAQ
 		//
 		// 规则（MVP）：
 		//   * 必须命中静态表 => 有 QTYP（玩家可见任务）且非主线
-		//   * 不在运行中/排队启动（BGSStoryTeller）
 		//   * 属于 Starfield.esm（load order 0；静态表只收录了它的记录）
 		//   * 名称按游戏语言从静态表取
 		//
@@ -157,7 +176,6 @@ namespace SAQ
 				return;
 			}
 
-			const auto running = CollectRunningQuestIDs();
 			const auto& index = QuestIndex();
 			const bool zh = GetGameLanguage().starts_with("zh");
 
@@ -174,9 +192,6 @@ namespace SAQ
 				const auto formID = form->GetFormID();
 				if ((formID & 0xFF000000u) != 0) {
 					continue;  // 非 Starfield.esm（静态表暂只覆盖 master）
-				}
-				if (running.contains(formID)) {
-					continue;
 				}
 				const auto it = index.find(formID);
 				if (it == index.end()) {
