@@ -148,7 +148,7 @@ package
       private var SaqOurTabMaxList:int = -1;
 
       // ---- 引导（第 10 轮）------------------------------------------------
-      // 玩家在「可接任务」tab 里选中一条、按 Enter 或 X（SET COURSE）时：
+      // 玩家在「可接任务」tab 里选中一条、按 Enter 或 SET COURSE（键盘 R / 手柄 X）时：
       //   SaqGuideSeq++ / SaqGuideQuest = 任务 FormID（0 = 取消）
       //   → C++ 侧（SAQ.cpp::PollGuideRequest）读到序号变化 → 把「引导目标引用」写进 ESM 的
       //     GLOB → Papyrus（SAQ_Main.psc）在那条代理任务上 ForceRefTo + 显示目标 + 设为追踪
@@ -581,11 +581,32 @@ package
       }
       
       // 右侧详情面板里的描述文案（固定内容，告诉玩家这条记录怎么用）。
+      // 键名从当前控制映射动态取（与底部按钮栏同一来源：键盘 = R「设定航线」，手柄 = 手柄 X 键）。
+      // ★ 第 15 轮修正：不要写死键名 —— 事件名 "XButton" 是**手柄 X 按钮**，键盘下它映射到 R，
+      //   写死「X 键」会让提示指向一个游戏里不存在的交互。
       private function SaqDescriptionText() : String
       {
+         var _loc1_:String = "";
+         try
+         {
+            if(this.KeyHelper != null)
+            {
+               _loc1_ = this.KeyHelper.GetButtonNameForEvent("XButton","");
+            }
+         }
+         catch(_loc2_:Error)
+         {
+            _loc1_ = "";
+         }
+         if(_loc1_.length == 0)
+         {
+            return this.SaqUseChinese()
+               ? "这条任务当前可以接取。展开后选中目标，或使用底部的「设定航线」即可引导到接取地点。"
+               : "This quest is currently available. Expand it, then select the objective or use SET COURSE to be guided to the pickup location.";
+         }
          return this.SaqUseChinese()
-            ? "这条任务当前可以接取。展开后选中目标（或按 X 键 / SET COURSE）即可引导到接取地点。"
-            : "This quest is currently available. Expand it and select the objective (or press X / SET COURSE) to be guided to the pickup location.";
+            ? "这条任务当前可以接取。展开后选中目标，或按 " + _loc1_ + "（设定航线）即可引导到接取地点。"
+            : "This quest is currently available. Expand it, then select the objective or press " + _loc1_ + " (SET COURSE) to be guided to the pickup location.";
       }
       
       private function SaqBuildEntry(param1:Object) : Object
@@ -1135,7 +1156,7 @@ package
             if(this.SaqIsOurEntry(_loc1_))
             {
                // 「可接任务」条目：原版没有它的位置数据（Y 显示在地图上不给用），
-               // X（SET COURSE）改用我们自己的引导 —— 见 OnPlotCourseEvent。
+               // SET COURSE（键盘 R / 手柄 X）改用我们自己的引导 —— 见 OnPlotCourseEvent。
                this.ShowOnMapButton.Enabled = false;
                this.PlotToLocationButton.Enabled = true;
             }
@@ -1249,7 +1270,7 @@ package
       
       private function OnPlotCourseEvent() : void
       {
-         // 「可接任务」条目：X 键（SET COURSE）改成我们自己的引导请求，
+         // 「可接任务」条目：SET COURSE（键盘 R / 手柄 X）改成我们自己的引导请求，
          // 不把不存在的任务 ID 丢给原版的数据层（那样只会静默失败）。
          if(this.SaqIsOurEntry(this.MissionsList_mc.selectedEntry))
          {
