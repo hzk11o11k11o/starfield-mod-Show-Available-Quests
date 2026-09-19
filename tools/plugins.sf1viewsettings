@@ -1,0 +1,14 @@
+[frmMain]
+pnlNavWidth=640
+vstNavColumnWidth0=282
+vstNavColumnWidth1=176
+vstNavColumnWidth2=178
+WindowState=0
+Left=0
+Top=80
+Width=1942
+Height=980
+
+[Init]
+FirstStart=1
+
