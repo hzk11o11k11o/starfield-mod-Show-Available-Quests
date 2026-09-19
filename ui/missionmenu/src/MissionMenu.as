@@ -772,6 +772,25 @@ package
             + " visible=" + (this.visible ? "1" : "0");
          _loc8_ += " last=" + this.SaqTabProbe + " ourTab=" + this.SaqOurTabProbe + " ourTabMax=" + this.SaqOurTabMaxList;
          _loc8_ += " guide=" + this.SaqGuideSeq + "|" + this.SaqGuideQuest + "|" + this.SaqGuideNote;
+         // 玩家任务日志名单（第 11 轮，诊断用）：QuestData 的「FormID:名字」，最多 12 条。
+         // 用途：玩家说「某条可接任务没找到」时，先看它是不是**已经在玩家日志里**
+         // （那样它被 C++/AS3 两层过滤中的某一层正当挡掉）—— 在这个名单里一查便知。
+         // 例：qdata[9]=[2ad3d5:全数到期,...] ⇒ 玩家其实已经接过这条任务。
+         var _loc9_:String = "";
+         if(this.QuestData != null)
+         {
+            var _loc10_:int = 0;
+            while(_loc10_ < this.QuestData.length && _loc10_ < 12)
+            {
+               if(_loc10_ > 0)
+               {
+                  _loc9_ += ",";
+               }
+               _loc9_ += this.QuestData[_loc10_].uID.toString(16) + ":" + this.QuestData[_loc10_].sName;
+               _loc10_++;
+            }
+         }
+         _loc8_ += " qdata[" + _loc3_ + "]=[" + _loc9_ + "]";
          return _loc8_;
       }
       

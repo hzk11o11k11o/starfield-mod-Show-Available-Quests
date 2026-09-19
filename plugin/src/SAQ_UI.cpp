@@ -300,8 +300,11 @@ namespace SAQ::UI
 		constexpr int kFindHashHit = 2;    // 哈希命中
 		constexpr int kFindLinearHit = 3;  // 哈希没中、线性扫全表命中
 
-		// 线性兜底最多扫多少个槽（真实菜单表只有几十~几百槽；这一层只是保险）
-		constexpr std::uint64_t kMaxLinearSlots = 0x4000;
+		// 线性兜底最多扫多少个槽（真实菜单表只有几十~几百槽；这一层只是保险）。
+		// ★ 第 11 轮：0x4000 → 0x1000。排查「打开菜单卡顿」时审过这段：形状检查只看
+		//   capacity/entries 两个字段，**误判成本 = 全表扫一遍**（每槽 stride 0x38，
+		//   0x4000 槽要碰 917KB 内存）；0x1000 仍远大于真实表规模（0x200），兜底能力不减。
+		constexpr std::uint64_t kMaxLinearSlots = 0x1000;
 
 		// 在 a_map 里找 key = a_entryKey 的条目，返回**指向值的指针**（0 = 没找到）。
 		//
@@ -468,8 +471,9 @@ namespace SAQ::UI
 
 			std::string shapes;  // 诊断：形状通过的表偏移 + 查找结果
 			std::string menus;   // 诊断：值里各 qword 指向对象的 RTTI（只有形状通过时才值得看）
-			bool found = false;
-			ForEachCandidate(0x3C0, 0x4C0, 8, [&](std::size_t mapOffset) {
+
+			// 试一个候选偏移：形状对了 + 值里拿到「名字指针对得上」的 IMenu 才算命中。
+			const auto tryOffset = [&](std::size_t mapOffset) -> bool {
 				const auto outcome = ScatterFindValue(uiBase + mapOffset, entryKey, charsPtr);
 				if (!outcome.capacity) {
 					return false;  // 这个偏移上根本不是散列表
@@ -505,11 +509,25 @@ namespace SAQ::UI
 					hit = true;
 					break;
 				}
-				if (hit) {
-					found = true;
-				}
 				return hit;
-			});
+			};
+
+			// ★ 第 11 轮：**实测值先试**（UI+0x450 = IsMenuOpen 反汇编 + 多轮实测的正确偏移），
+			//   不命中才扫邻域 0x3C0~0x4C0 兜底 —— 原来顺序扫描时 0x450 排在第 19 个，
+			//   前面 18 个偏移每次都要白跑「形状检查 + 可能的兜底线性扫描」。
+			bool found = tryOffset(kMenuMapOffset);
+			if (!found) {
+				ForEachCandidate(0x3C0, 0x4C0, 8, [&](std::size_t mapOffset) {
+					if (mapOffset == kMenuMapOffset) {
+						return false;  // 已经试过
+					}
+					const bool hit = tryOffset(mapOffset);
+					if (hit) {
+						found = true;
+					}
+					return hit;
+				});
+			}
 
 			if (!found) {
 				a_out.detail = "UI 里没找到 BSMissionMenu 的菜单表条目｜候选表:" +

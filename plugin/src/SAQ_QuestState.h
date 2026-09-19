@@ -64,8 +64,13 @@ namespace SAQ
 	// 但函数自己会用虚表再核验一次）。
 	QuestRuntimeState ReadQuestRuntimeState(const RE::TESForm* a_form);
 
-	// 「不再是可接任务」的判据：引擎已经开始（含已完成）。
-	// 注：仅被追踪（active）但引擎没开始的情况按「未开始」处理 —— 那时它仍是可接的。
+	// 「引擎侧已介入」的判据：已经开始（含已完成）。
+	//
+	// ★ 第 11 轮起**不再用作「可接」过滤**（实测反例：RAD05「全数到期」）：
+	//   引擎会把「玩家仍能从 NPC 接到」的任务提前置成 running ——
+	//   「已开始」≠「已接取」。现在可接列表的判据是：
+	//     C++ 只挡「已完成」；「已接取」只认玩家任务日志（AS3 侧的 QuestData 比对）。
+	//   本函数保留给诊断与将来的新用途。
 	bool IsAlreadyEngaged(const QuestRuntimeState& a_state);
 
 	// 日志用的一行摘要，例如 "开始+追踪 flags=0x401" 。

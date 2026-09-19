@@ -119,11 +119,16 @@ namespace SAQ
 			std::size_t             total{};
 			std::uint32_t           attempts{};
 			std::uint64_t           lastAttemptMs{};
+			// ★ 第 11 轮：失败退避间隔（400 → 800 → 1600 → …封顶 4000）。
+			//   实测「菜单打开后 40 秒才就绪」的场景（日志：重试间隔 15 秒 × 2 次），
+			//   固定 400ms 会把 10 次机会在 4 秒内烧完；退避后覆盖 ~40 秒。
+			std::uint64_t           backoffMs{ 400 };
 			RuntimeFilterStats      stats;
 		};
 		PendingPush g_pending;
-		constexpr std::uint32_t kMaxPushAttempts = 10;
+		constexpr std::uint32_t kMaxPushAttempts = 14;
 		constexpr std::uint64_t kPushRetryIntervalMs = 400;
+		constexpr std::uint64_t kPushRetryMaxMs = 4000;
 
 		// ------------------------------------------------------------------
 		// 本地化
@@ -226,7 +231,9 @@ namespace SAQ
 			std::vector<const RE::TESForm*> forms(kQuestTableSize, nullptr);
 			std::vector<QuestRuntimeState>  states(kQuestTableSize);
 			std::size_t hiddenByRuntime = 0;
-			constexpr std::size_t kMaxSamples = 5;
+			// 第 11 轮：从 5 提到 40 —— 「某条任务为什么不在列表里」要能直接从日志里
+			// 查到答案（被隐藏的通常 30 条上下，全列出来 ~1.5KB / 次打开菜单，可接受）。
+			constexpr std::size_t kMaxSamples = 40;
 			std::size_t sampleCount = 0;
 
 			for (std::size_t i = 0; i < kQuestTableSize; ++i) {
@@ -268,11 +275,26 @@ namespace SAQ
 					++a_stats.tracked;
 				}
 
-				if (IsAlreadyEngaged(state) && state.vtableKnown) {
+				// ★ 第 11 轮修正（实测驱动）：**只挡「已完成」**，不再挡「已开始」。
+				//
+				//   证据：玩家在 GalBank 里报告「和 NPC 对话就能接到『全数到期』，但列表里没有」。
+				//   完整隐藏名单日志（第 11 轮）证明它被这里挡掉了，状态是 `运行中 flags=0x8001`
+				//   （TESQuest bit0=已开始）—— 但玩家任务日志（AS3 的 qdata=）里根本没有它：
+				//     • 全数到期 = RAD05，**可重复接取**的辐射任务（GalBank 的 Landry Hollifeld 给）；
+				//     • 引擎把这类任务提前置成 running（对话链/事件准备），并不代表玩家已接。
+				//   当时的 30 条「隐藏」里只有 3 条在玩家日志里（玩家真正接了的），其余 27 条
+				//   全是这种「引擎自启、玩家没接」的 —— 「已开始」不能当「已接取」用。
+				//
+				//   分工修正：**「已接取」的判据只认玩家任务日志**（AS3 侧的 FilterKnownQuests，
+				//   用引擎推来的 QuestData 逐个比 uID）—— 那是显示层的权威数据。C++ 这层只挡
+				//   「已完成」：做过的任务不该再出现在「可接」里（可重复任务除外，见下一步计划）。
+				if (state.completed && state.vtableKnown) {
 					++hiddenByRuntime;
 					if (sampleCount < kMaxSamples) {
 						++sampleCount;
-						a_stats.samples += std::format("{}（{}） ", info.nameZh, Describe(state));
+						// FormID 必须带上：名字可能与玩家的叫法不一致（玩家反馈「某条没显示」
+						// 时，靠 FormID 精确核对，而不是靠名字猜）。
+						a_stats.samples += std::format("{}[0x{:08X} {}] ", info.nameZh, info.formID, Describe(state));
 					}
 					continue;  // forms[i] 保持 nullptr ⇒ 第二遍不出条目
 				}
@@ -334,14 +356,22 @@ namespace SAQ
 		// UI 推送
 		// ------------------------------------------------------------------
 
-		bool PushToUI(const std::vector<QuestEntry>& a_quests)
+		bool PushToUI(const std::vector<QuestEntry>& a_quests, bool a_verbose)
 		{
 			std::string detail;
+			const auto t0 = NowMs();
 			const bool ok = UI::PushAvailableQuests(a_quests, detail);
+			const auto cost = NowMs() - t0;
+			// ★ 第 11 轮：耗时进日志。玩家报「打开任务菜单假死很久」——这一行能直接区分
+			//   「我们这层慢」还是「主线程被别的东西占着」（后者见 Tick 里的停顿检测）。
 			if (ok) {
-				REX::INFO("推送成功：{} | {} 条", detail, a_quests.size());
+				REX::INFO("推送成功：{} | {} 条 | 耗时 {} ms", detail, a_quests.size(), cost);
+			} else if (a_verbose) {
+				REX::WARN("推送失败（第 1 次，完整诊断）：{} | 耗时 {} ms", detail, cost);
 			} else {
-				REX::WARN("推送失败：{}", detail);
+				// 重试时的失败只记前 240 字符：一次失败的完整诊断能带 30 个指针的 RTTI，
+				// 重试几次就把日志淹了（定位卡顿时反而看不清）。
+				REX::WARN("推送失败（重试）：{}… | 耗时 {} ms", detail.substr(0, 240), cost);
 			}
 			return ok;
 		}
@@ -374,7 +404,10 @@ namespace SAQ
 				a_stats.started, a_stats.completed, a_stats.tracked, a_stats.hidden,
 				a_stats.filterApplied ? "生效" : "跳过(识别率<80%)");
 			if (!a_stats.samples.empty()) {
-				out += " 隐藏例: " + a_stats.samples;
+				// 完整名单（第 11 轮起不再只记前几条）：玩家反馈「某条任务没显示」时，
+				// 先在 `隐藏:` 这一段里搜 FormID —— 在 = 被运行时状态挡住（看它后面括号里的状态）；
+				// 不在 = 它已经被推送给 UI（详见 AS3 侧的 `qdata=` 名单）。
+				out += " 隐藏: " + a_stats.samples;
 			}
 			if (!a_stats.vtableSamples.empty()) {
 				out += " 未识别例: " + a_stats.vtableSamples;
@@ -403,14 +436,14 @@ namespace SAQ
 			return out;
 		}
 
-		// 尝试把待推送的数据送进 SWF；失败就隔 400ms 再试（菜单刚开那一两帧 SWF 可能还没就绪）。
+		// 尝试把待推送的数据送进 SWF；失败按退避间隔再试（菜单刚开时 SWF 可能还没就绪）。
 		void TryPushPending()
 		{
 			if (g_pending.quests.empty() || g_pending.attempts >= kMaxPushAttempts) {
 				return;
 			}
 			const auto now = NowMs();
-			if (g_pending.attempts > 0 && now - g_pending.lastAttemptMs < kPushRetryIntervalMs) {
+			if (g_pending.attempts > 0 && now - g_pending.lastAttemptMs < g_pending.backoffMs) {
 				return;
 			}
 			g_pending.lastAttemptMs = now;
@@ -420,22 +453,28 @@ namespace SAQ
 			if (!g_firstMenuLogged.exchange(true)) {
 				LogFormArrayProbe();
 				std::string bridgeDetail;
+				const auto t0 = NowMs();
 				if (UI::EnsureResolved(bridgeDetail)) {
 					REX::INFO("UI 桥解析：{}", bridgeDetail);
 				} else {
-					REX::WARN("UI 桥解析失败：{}", bridgeDetail);
+					REX::WARN("UI 桥解析失败（耗时 {} ms）：{}", NowMs() - t0, bridgeDetail);
 				}
 			}
 
-			if (PushToUI(g_pending.quests)) {
+			if (PushToUI(g_pending.quests, g_pending.attempts == 1)) {
 				const auto n = ++g_pushCount;
-				REX::INFO("菜单打开：静态表={} 引擎里存在={} 推送条数={} (第{}次)",
-					g_pending.total, g_pending.stats.live, g_pending.quests.size(), n);
+				REX::INFO("菜单打开：静态表={} 引擎里存在={} 推送条数={} (第 {} 次尝试成功)",
+					g_pending.total, g_pending.stats.live, g_pending.quests.size(), g_pending.attempts);
 				g_pending.quests.clear();
 				g_pending.attempts = kMaxPushAttempts;  // 本次不再重试
-			} else if (g_pending.attempts >= kMaxPushAttempts) {
-				REX::WARN("推送放弃：重试 {} 次仍未成功（下次打开菜单会再试）", g_pending.attempts);
-				g_pending.quests.clear();
+			} else {
+				// 失败 ⇒ 退避加倍（封顶 kPushRetryMaxMs）：菜单加载慢时别把机会烧光。
+				const auto doubled = g_pending.backoffMs * 2;
+				g_pending.backoffMs = doubled < kPushRetryMaxMs ? doubled : kPushRetryMaxMs;
+				if (g_pending.attempts >= kMaxPushAttempts) {
+					REX::WARN("推送放弃：重试 {} 次仍未成功（下次打开菜单会再试）", g_pending.attempts);
+					g_pending.quests.clear();
+				}
 			}
 		}
 
@@ -635,13 +674,16 @@ namespace SAQ
 				return;
 			}
 			const auto state = ReadQuestRuntimeState(form);
-			if (!state.vtableKnown || !IsAlreadyEngaged(state)) {
+			// ★ 第 11 轮修正：原来用 IsAlreadyEngaged（已开始 **或** 已完成）——「已开始」
+			//   会误伤 RAD05「全数到期」这类「引擎自启、玩家还没接」的任务：引导刚设上，
+			//   下次菜单一开就被这里自动取消。只有「已完成」是明确的「不再需要引导」。
+			if (!state.vtableKnown || !state.completed) {
 				return;
 			}
 			std::string detail;
 			const auto* entry = FindStaticQuest(g_guide.questFormID);
 			if (Guide::SetGuideTarget(0, detail)) {
-				REX::INFO("引导自动取消：{}（0x{:08X}）已经被引擎开始（{}）｜{}",
+				REX::INFO("引导自动取消：{}（0x{:08X}）已完成（{}）｜{}",
 					entry ? entry->nameZh : "?", g_guide.questFormID, Describe(state), detail);
 			}
 			g_guide.questFormID = 0;
@@ -674,12 +716,16 @@ namespace SAQ
 			g_pending.quests.clear();
 			g_pending.attempts = 0;
 			g_pending.total = 0;
+			g_pending.backoffMs = kPushRetryIntervalMs;  // 新一轮重试：退避复位
+			const auto t0 = NowMs();
 			CollectAvailableQuests(g_pending.quests, g_pending.total, g_pending.stats);
+			const auto collectCost = NowMs() - t0;
 			REX::INFO("{}", FormatRuntimeStats(g_pending.stats));
 			REX::INFO("{}", FormatStaticFlagStats(g_pending.stats));
 			// 语言这一项只是**日志参考**：实际显示语言由 AS3 侧按引擎推来的任务名判定。
-			REX::INFO("菜单打开：静态表={} 引擎里存在={} 待推送={} INI语言={}(仅供参考) 标题=可接任务/Available(中英都推，由 UI 选)",
-				g_pending.total, g_pending.stats.live, g_pending.quests.size(), GetGameLanguage());
+			// 收集耗时进日志（第 11 轮）：正常应为毫秒级；若出现几百 ms，就是查询本身有问题。
+			REX::INFO("菜单打开：静态表={} 引擎里存在={} 待推送={} 收集耗时={} ms INI语言={}(仅供参考) 标题=可接任务/Available(中英都推，由 UI 选)",
+				g_pending.total, g_pending.stats.live, g_pending.quests.size(), collectCost, GetGameLanguage());
 
 			// 引导（第 10 轮）：ESM 通道自证 + 已接取任务的引导自动取消 + 当前引导状态
 			LogEsmChannel();
@@ -688,6 +734,12 @@ namespace SAQ
 
 			TryPushPending();
 		}
+
+		// Tick 停顿检测（第 11 轮）：只在菜单开着时统计（读档/加载时的长停顿不记，免得刷屏）。
+		// 正常帧间隔 ~16ms；若日志里出现「主线程停顿：距上次 Tick 15000 ms」，
+		// 说明阻塞发生在**我们之外**（引擎/Scaleform/其它插件），我们的重试只是被拖慢的受害者。
+		std::uint64_t s_tickWatermark = 0;
+		constexpr std::uint64_t kTickStallMs = 1000;
 
 		void Tick()
 		{
@@ -701,6 +753,19 @@ namespace SAQ
 			}
 			const bool open = ui->IsMenuOpen(MenuName());
 			const bool wasOpen = g_menuWasOpen.exchange(open);
+
+			// 停顿检测：菜单开着时，两次 Tick 的间隔超过 1 秒就记一行（含被卡了多久）。
+			if (open) {
+				const auto now = NowMs();
+				if (s_tickWatermark != 0 && now - s_tickWatermark >= kTickStallMs) {
+					REX::WARN("主线程停顿：距上次 Tick {} ms（菜单开着；本行由 SAQ 记录，但停顿多半来自引擎/其它插件）",
+						now - s_tickWatermark);
+				}
+				s_tickWatermark = now;
+			} else {
+				s_tickWatermark = 0;
+			}
+
 			if (open && !wasOpen) {
 				OnMissionMenuOpened();
 			} else if (open) {
