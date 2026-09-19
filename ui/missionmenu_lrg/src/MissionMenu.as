@@ -621,6 +621,8 @@ package
             if(_loc1_ != null && _loc1_ != this)
             {
                _loc1_["SAQ_SetAvailableQuests"] = this.SetAvailableQuests;
+               _loc1_["SAQ_Probe"] = this.SAQ_Probe;
+               _loc1_["SAQ_ApplyPayload"] = this.SAQ_ApplyPayload;
             }
          }
          catch(e:Error)
@@ -629,9 +631,12 @@ package
       }
       
       // C++ 插件入口：Invoke("SetAvailableQuests", <载荷>)。
-      // 返回「**解析出来的**条数」（不是过滤后剩下的条数）：C++ 侧用 >0 判定
-      // 「字符串协议通了」。若返回过滤后的数量，一旦任务全被 QuestData 滤掉就成 0，
-      // C++ 会以为编码/路径不对，白试剩下 5 种组合。
+      // 返回值约定（C++ 侧据此判断协议有没有通）：
+      //   >0  = 解析成功（值是解析到的条数）
+      //   -1  = 参数是 null/空串（★ 参数没传过来 / 传成空）
+      //   -2  = 参数非空但解析不出条目（编码/格式问题）★ 此时自动回退内嵌表
+      // 返回「解析出来的」条数而不是过滤后的数量：一旦任务全被 QuestData 滤掉就成 0，
+      // C++ 会误判「协议没通」，白试剩下几种组合。
       public function SetAvailableQuests(param1:String) : int
       {
          if(param1 == null || param1.length == 0)
@@ -641,7 +646,38 @@ package
          this.SaqSourcePayload = param1;
          this.SaqSourceIsCpp = true;
          this.SaqRawQuests = null;
-         return this.SaqRefresh();
+         var _loc2_:int = this.SaqRefresh();
+         if(_loc2_ <= 0)
+         {
+            this.SaqSourceIsCpp = false;
+            this.SaqRawQuests = null;
+            this.SaqRefresh();
+            return -2;
+         }
+         return _loc2_;
+      }
+      
+      // C++ 诊断入口：把收到的字符串长度 + 前缀原样返回。
+      // 用途：Invoke 的参数如果没传对（编码/截断/NUL），这条一眼能看出来。
+      public function SAQ_Probe(param1:String) : String
+      {
+         if(param1 == null)
+         {
+            return "null";
+         }
+         return param1.length + "|" + param1.substr(0,24);
+      }
+      
+      // C++ 备用入口（SetVariable 通路）：载荷先放到 root 的 SAQ_Payload 变量上，
+      // 这里无参调用 —— 绕开「Invoke 带参数」这条链路的潜在问题。
+      public function SAQ_ApplyPayload() : int
+      {
+         var _loc1_:* = this.root["SAQ_Payload"];
+         if(_loc1_ == null)
+         {
+            return -1;
+         }
+         return this.SetAvailableQuests(String(_loc1_));
       }
       
       private function OnQuestDataUpdate(param1:FromClientDataEvent) : void

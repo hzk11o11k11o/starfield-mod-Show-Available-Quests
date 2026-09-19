@@ -115,8 +115,10 @@ namespace SAQ::UI
 		constexpr std::uintptr_t kMovieImplVtableRva = 0x3BCFEE8;
 
 		// ASMovieRootBase 虚函数槽（**槽序号**，不是字节偏移）：
+		//   vtable[0x31] = SetVariable(const char*, const Value&, SetVarType)
 		//   vtable[0x39] = Invoke(const char*, Value*, const Value*, u32)
 		constexpr std::size_t kSlotAsRootCreateString = 0x2C;  // CreateString(Value*, const char*)
+		constexpr std::size_t kSlotAsRootSetVariable = 0x31;   // SetVariable(const char*, const Value&)
 		constexpr std::size_t kSlotAsRootInvoke = 0x39;        // Invoke(const char*, Value*, const Value*, u32)
 		constexpr std::uintptr_t kInvokeRva = 0x3368DC0;       // 上面那个槽指向的函数（1.16.244.0 实测）
 
@@ -712,6 +714,38 @@ namespace SAQ::UI
 			}
 		}
 
+		// SetVariable 通路用（载荷先放 root 变量，再无参 Invoke；见 kAttempts 注释）。
+		bool SafeSetVariable(RE::Scaleform::GFx::ASMovieRootBase* a_root, const char* a_path,
+			const RE::Scaleform::GFx::Value& a_value)
+		{
+			__try {
+				return a_root->SetVariable(a_path, a_value);
+			} __except (EXCEPTION_EXECUTE_HANDLER) {
+				return false;
+			}
+		}
+
+		// 读 GFx 返回值里的字符串（POD 输出，避免 C2712）。
+		bool SafeReadValueString(const RE::Scaleform::GFx::Value& a_value, char* a_out, std::size_t a_outSize)
+		{
+			a_out[0] = '\0';
+			__try {
+				if (a_value.IsString()) {
+					const char* s = a_value.GetString();
+					if (s) {
+						std::size_t i = 0;
+						for (; i + 1 < a_outSize && s[i] != '\0'; ++i) {
+							a_out[i] = s[i];
+						}
+						a_out[i] = '\0';
+						return true;
+					}
+				}
+			} __except (EXCEPTION_EXECUTE_HANDLER) {
+			}
+			return false;
+		}
+
 		std::string Describe(const Bridge& a_bridge)
 		{
 			std::string s;
@@ -839,27 +873,38 @@ namespace SAQ::UI
 			}
 		}
 
-		// 一次尝试 = 一种「参数编码」× 一种「函数路径」。
-		// 数组参数那一版已经废掉了（要 CreateArray/CreateObject/PushBack 三个 vfunc 槽，
-		// 槽号猜错的风险比字符串大得多），统一走「一整个字符串 + AS3 侧自己解析」。
+		// 一次尝试 = 一种「载荷通路」× 一种「参数编码」× 一种「函数路径」。
+		//
+		// 通路有两种（kind 1 是第 7 轮新增）：
+		//   kind 0：Invoke(path, 载荷)                        —— 载荷当参数传；
+		//   kind 1：SetVariable("SAQ_Payload", 载荷) + Invoke(path)（无参）—— 载荷放 root 变量。
+		//
+		// 为什么加 kind 1：第 6 轮实测「调用 ok、返回值却是 0」，而返回值 0 在 AS3 侧
+		// 只有一种解释（参数非空但解析不出条目）。Invoke 的**传参链路**是唯一可疑环节，
+		// SetVariable 是另一条完全不同的代码路径，既能当对照组、也能当兜底。
 		struct Attempt
 		{
+			int         kind;  // 0 = Invoke(带参)；1 = SetVariable + Invoke(无参)
 			bool        wide;  // true = 宽字符 Value（UTF-16）；false = CreateString(UTF-8)
 			const char* path;
 		};
 		constexpr Attempt kAttempts[] = {
 			// ★ SWF 侧在 root 上挂的入口放最前（MissionMenu 是舞台子元件、不是 root，
 			//   所以老的三条路径实测全 fail；见 MissionMenu.SaqPublishEntryPoint）。
-			{ true, "SAQ_SetAvailableQuests" },
-			{ true, "_root.SAQ_SetAvailableQuests" },
-			{ true, "SetAvailableQuests" },
-			{ true, "_root.SetAvailableQuests" },
-			{ true, "_root.root.SetAvailableQuests" },
-			{ false, "SAQ_SetAvailableQuests" },
-			{ false, "_root.SAQ_SetAvailableQuests" },
-			{ false, "SetAvailableQuests" },
-			{ false, "_root.SetAvailableQuests" },
-			{ false, "_root.root.SetAvailableQuests" },
+			{ 0, true, "SAQ_SetAvailableQuests" },
+			{ 0, true, "_root.SAQ_SetAvailableQuests" },
+			{ 1, true, "SAQ_ApplyPayload" },
+			{ 1, true, "_root.SAQ_ApplyPayload" },
+			{ 0, true, "SetAvailableQuests" },
+			{ 0, true, "_root.SetAvailableQuests" },
+			{ 0, true, "_root.root.SetAvailableQuests" },
+			{ 0, false, "SAQ_SetAvailableQuests" },
+			{ 0, false, "_root.SAQ_SetAvailableQuests" },
+			{ 1, false, "SAQ_ApplyPayload" },
+			{ 1, false, "_root.SAQ_ApplyPayload" },
+			{ 0, false, "SetAvailableQuests" },
+			{ 0, false, "_root.SetAvailableQuests" },
+			{ 0, false, "_root.root.SetAvailableQuests" },
 		};
 	}
 
@@ -885,6 +930,44 @@ namespace SAQ::UI
 			return "数组";
 		}
 		return "其它";
+	}
+
+	// 诊断：调 AS3 的 SAQ_Probe，让它把「收到的字符串长度+前缀」原样回读回来。
+	// 这条日志把三种情况一次分清楚：
+	//   正常（`<长度>|SAQ1 Q ...`）→ 参数传输没问题，问题在解析/逻辑；
+	//   `null` / 长度 0          → 参数根本没送到；
+	//   别的形状                 → 编码/截断问题。
+	// （SWF 还是旧版时会 `=fail`，恰好也能告出「SWF 没更新」。）
+	std::string ProbeAs3String(RE::Scaleform::GFx::ASMovieRootBase* a_root, const char* a_path,
+		const std::wstring& a_wide, const std::string& a_utf8, bool a_useWide)
+	{
+		RE::Scaleform::GFx::Value arg;
+		bool argReady = false;
+		if (a_useWide) {
+			arg = RE::Scaleform::GFx::Value(a_wide.c_str());
+			argReady = true;
+		} else if (VtableSlotInModule(a_root, kSlotAsRootCreateString)) {
+			argReady = SafeCreateString(a_root, &arg, a_utf8.c_str());
+		}
+		if (!argReady) {
+			return std::string{ a_path } + "=arg失败";
+		}
+		RE::Scaleform::GFx::Value ret;
+		if (!SafeInvoke(a_root, a_path, &ret, &arg, 1)) {
+			return std::string{ a_path } + "=fail";
+		}
+		char buf[160]{};
+		if (SafeReadValueString(ret, buf, sizeof(buf))) {
+			std::string s{ a_path };
+			s += "=";
+			s += buf;
+			return s;
+		}
+		std::string s{ a_path };
+		s += "=(非字符串:";
+		s += DescribeValueType(ret);
+		s += ")";
+		return s;
 	}
 
 	bool PushAvailableQuests(const std::vector<QuestEntry>& a_quests, std::string& a_detail)
@@ -920,6 +1003,12 @@ namespace SAQ::UI
 			return false;
 		}
 
+		// ★ 诊断（第 7 轮）：先问 AS3「你收到的字符串长什么样」（见 ProbeAs3String）。
+		//   上一次实测「调用 ok 但返回 0」的谜团靠这条日志定音：
+		//   探针正常 ⇒ 参数没问题，往解析/逻辑侧找；探针为 null/0 ⇒ 参数没送到。
+		const std::string probeW = ProbeAs3String(root, "SAQ_Probe", payloadWide, payloadUtf8, true);
+		const std::string probeS = ProbeAs3String(root, "_root.SAQ_Probe", payloadWide, payloadUtf8, false);
+
 		bool ok = false;
 		std::string trail;
 		for (const auto& attempt : kAttempts) {
@@ -937,7 +1026,15 @@ namespace SAQ::UI
 			}
 
 			RE::Scaleform::GFx::Value ret;
-			const bool called = SafeInvoke(root, attempt.path, &ret, args, 1);
+			bool called = false;
+			if (attempt.kind == 1) {
+				// SetVariable 通路：先把载荷放进 root 的 SAQ_Payload，再**无参** Invoke。
+				if (VtableSlotInModule(root, kSlotAsRootSetVariable) && SafeSetVariable(root, "SAQ_Payload", args[0])) {
+					called = SafeInvoke(root, attempt.path, &ret, nullptr, 0);
+				}
+			} else {
+				called = SafeInvoke(root, attempt.path, &ret, args, 1);
+			}
 
 			double reported = -1.0;
 			bool hasNumber = false;
@@ -946,7 +1043,7 @@ namespace SAQ::UI
 				hasNumber = true;
 			}
 
-			trail += std::string{ trail.empty() ? "" : " | " } + (attempt.wide ? "W:" : "S:") + attempt.path;
+			trail += std::string{ trail.empty() ? "" : " | " } + (attempt.kind == 1 ? "V" : "") + (attempt.wide ? "W:" : "S:") + attempt.path;
 			trail += called ? "=ok" : "=fail";
 			if (hasNumber) {
 				trail += std::format("(返回 {:.0f})", reported);
@@ -955,7 +1052,8 @@ namespace SAQ::UI
 			}
 
 			// AS3 侧返回「解析到的条数」：>0 才算成功。
-			// （=ok(返回 0) ⇒ 调用到了但字符串没解析出来；=ok(返回 undefined) ⇒ 没这个方法/路径不对。）
+			// （=ok(返回 -1) ⇒ 参数是空/null；=ok(返回 -2) ⇒ 参数非空但解析不出条目。
+			//   AS3 侧在这两种情况下都会回退内嵌表，所以界面不会空。）
 			if (called && reported > 0.0) {
 				ok = true;
 				break;
@@ -966,12 +1064,12 @@ namespace SAQ::UI
 		const std::string bridgeDetail = bridge.detail;
 
 		if (!ok) {
-			// 六种组合全失败：把缓存清掉，下一次重试（或下次开菜单）从「找菜单表」重新来一遍
+			// 全部组合失败：把缓存清掉，下一次重试（或下次开菜单）从「找菜单表」重新来一遍
 			// —— 菜单刚开那一两帧 Movie 可能还在换代的中间态，缓存住就没救了。
 			Reset();
 		}
 
-		a_detail = bridgeDetail + slotNote + " 调用: " + trail +
+		a_detail = bridgeDetail + slotNote + " 探针: " + probeW + " | " + probeS + " 调用: " + trail +
 			std::format(" 载荷={} 字节/{} 条", payloadUtf8.size(), a_quests.size());
 		return ok;
 	}

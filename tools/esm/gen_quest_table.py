@@ -12,6 +12,9 @@
 规则：
   * 只保留带 QTYP 的任务（玩家可见任务）
   * 排除主线（QuestTypeMainQuest）—— MOD 需求：只关注非主线
+  * 排除「内部任务」：无本地化名 / 名称带 [] / 指示器 / 地标 / 教学 / 同伴系统 /
+    任务板(MB_) / 别名生成模板 / 对话容器 / 系统管理任务等（见 filter_reason，
+    分析过程在 ref/table_review.txt 与 ref/filter_preview_kept.txt）
   * 名称里的 <Alias=xxx> 占位符替换为通用词（引擎运行时会替换，静态表不能）
   * 没有名称的任务用 EDID 兜底
 """
@@ -59,6 +62,46 @@ def clean_name(raw: str, zh: bool) -> str:
     out = ALIAS_RE.sub(lambda m: alias_to_text(m.group(1), zh), raw)
     out = out.replace("  ", " ").strip()
     return out
+
+
+def filter_reason(row: dict, raw_en: str, raw_zh: str) -> str | None:
+    """判断一条任务是不是「内部任务」（不该出现在可接列表里）。
+
+    返回 None = 保留；否则返回被排除的原因标签（统计/日志用）。
+    所有判据都是**离线可验证**的显示层信号；运行时状态过滤（已接/条件）在 C++/AS3 侧。
+    """
+    edid = row.get("edid") or ""
+    edid_l = edid.lower()
+    en = row["name_en"] or ""
+    zh = row["name_zh"] or ""
+    en_l = en.lower()
+
+    if en == edid or zh == edid:
+        return "无本地化名"           # B 社没给正式名字 = 内部任务
+    if "[" in en or "]" in en or "[" in zh or "]" in zh:
+        return "方括号"               # [BE - xxx] / [杂项目标提示] 等开发标记
+    if edid.startswith("MB_"):
+        return "任务板生成"           # 任务板上的无限生成任务（入口另行处理）
+    if "pointer" in edid_l or "pointer" in en_l or "指示器" in zh or "指示器" in en:
+        return "指示器"               # Misc pointer 系统
+    if "landmark" in edid_l or "地标任务" in zh or "地标任务" in en:
+        return "地标"                 # 地球地标探索（走近即完成，无从「接」）
+    if "tutorial" in edid_l or "tutorial" in en_l:
+        return "教学"
+    if edid_l.startswith("com_companion"):
+        return "同伴系统"             # 同伴管理主任务（玩家不会「接」）
+    if "<Alias=" in raw_en or "<Alias=" in raw_zh:
+        return "别名模板"             # 名字靠运行时目标拼出来 = 生成任务
+    if "dialogue" in edid_l:
+        return "对话容器"
+    if ("handler" in edid_l or "处理程序" in zh or "的生成和场景任务" in zh
+            or "杂项任务" in zh or zh.endswith("- 处理") or zh.endswith(" - 处理")):
+        return "内部管理"
+    if "各种系统" in zh or "various systems" in en_l:
+        return "系统任务"
+    if zh.endswith("：") or zh.endswith(":") or en.endswith(":"):
+        return "空标题"
+    return None
 
 
 def as3_escape(s: str) -> str:
@@ -146,6 +189,8 @@ def main() -> int:
     ap.add_argument("--out-json", default="ref/quest_table_debug.json")
     ap.add_argument("--out-as3", default="ui/missionmenu/saqdata/SaqEmbeddedPayload.inc")
     ap.add_argument("--include-main", action="store_true")
+    ap.add_argument("--keep-internal", action="store_true",
+                    help="不过滤内部任务（调试用；正常构建不要加）")
     a = ap.parse_args()
 
     sys.path.insert(0, str(Path(__file__).parent))
@@ -159,6 +204,8 @@ def main() -> int:
     rows = []
     skipped_no_type = 0
     skipped_main = 0
+    skipped_reasons: dict[str, int] = {}
+    skipped_samples: dict[str, list[str]] = {}
 
     for q in quests:
         qtyp = q.get("qtyp")
@@ -172,14 +219,16 @@ def main() -> int:
             skipped_main += 1
             continue
         full = q.get("full")
-        name_en = clean_name(en.get(full, "") if full else "", False)
-        name_zh = clean_name(zh.get(full, "") if full else "", True)
+        raw_en = en.get(full, "") if full else ""
+        raw_zh = zh.get(full, "") if full else ""
+        name_en = clean_name(raw_en, False)
+        name_zh = clean_name(raw_zh, True)
         edid = q.get("edid") or ""
         if not name_en:
             name_en = edid
         if not name_zh:
             name_zh = name_en
-        rows.append({
+        row = {
             "formid": q["formid"],
             "edid": edid,
             "itype": itype,
@@ -187,10 +236,23 @@ def main() -> int:
             "name_en": name_en,
             "name_zh": name_zh,
             "dnam": q.get("dnam", ""),
-        })
+        }
+        if not a.keep_internal:
+            reason = filter_reason(row, raw_en, raw_zh)
+            if reason:
+                skipped_reasons[reason] = skipped_reasons.get(reason, 0) + 1
+                samples = skipped_samples.setdefault(reason, [])
+                if len(samples) < 3:
+                    samples.append(f"0x{q['formid']:08X} {edid}")
+                continue
+        rows.append(row)
 
     rows.sort(key=lambda r: r["formid"])
-    print(f"table rows: {len(rows)}（跳过无类型 {skipped_no_type}，跳过主线 {skipped_main}）")
+    print(f"table rows: {len(rows)}（无类型 {skipped_no_type}，主线 {skipped_main}）")
+    if skipped_reasons:
+        print("过滤内部任务:")
+        for reason, n in sorted(skipped_reasons.items(), key=lambda kv: -kv[1]):
+            print(f"  {reason:10s} {n:4d}  例: {', '.join(skipped_samples[reason])}")
 
     # C++ 头文件
     lines = []
