@@ -104,6 +104,24 @@ def filter_reason(row: dict, raw_en: str, raw_zh: str) -> str | None:
     return None
 
 
+def dnam_flags(dnam_hex: str) -> int:
+    """QUST 记录 DNAM 的头 4 字节 = 任务标志位（uint32，小端）。
+
+    ★ 布局是这一版实测出来的（与 commonlibsf 的 QUEST_DATA 声明**不一致**）：
+      DNAM = uint32 flags @0 | uint8 priority @4 | 3 字节未用 @5 | uint8 type @8 | 3 字节未用
+    验证：MQ101 dnam=0005010050… ⇒ flags=0x00010500、priority=byte[4]=0x50=80
+          —— 与 xEdit 树状导出（Flags: Run Once/Warn/Unknown16, Priority = 80）逐字相符。
+
+    目前**只写进表里做诊断**（运行时会打印几个候选位的计数），还没有哪一位被证实是
+    「引擎自动启动」；要看的是「引擎已开始的那几条任务的 DNAM 位」长什么样。
+    """
+    try:
+        b = bytes.fromhex(dnam_hex or "")
+    except ValueError:
+        return 0
+    return int.from_bytes(b[:4], "little") if len(b) >= 4 else 0
+
+
 def as3_escape(s: str) -> str:
     out = []
     for ch in s:
@@ -236,6 +254,7 @@ def main() -> int:
             "name_en": name_en,
             "name_zh": name_zh,
             "dnam": q.get("dnam", ""),
+            "dnam_flags": dnam_flags(q.get("dnam", "")),
         }
         if not a.keep_internal:
             reason = filter_reason(row, raw_en, raw_zh)
@@ -272,6 +291,10 @@ def main() -> int:
     lines.append("\t{")
     lines.append("\t\tstd::uint32_t formID;")
     lines.append("\t\tstd::uint8_t  type;")
+    lines.append("\t\t// QUST DNAM 头 4 字节（uint32，小端）—— 目前**只用于运行时诊断日志**：")
+    lines.append("\t\t// 拿它和「引擎已开始的那几条」对一下，看哪一位才是「引擎自动启动」。")
+    lines.append("\t\t// 布局证据见 tools/esm/gen_quest_table.py::dnam_flags。")
+    lines.append("\t\tstd::uint32_t staticFlags;")
     lines.append("\t\tconst char*   nameEn;")
     lines.append("\t\tconst char*   nameZh;")
     lines.append("\t};")
@@ -279,8 +302,9 @@ def main() -> int:
     lines.append(f"\tinline constexpr StaticQuestInfo kQuestTable[] = {{")
     for r in rows:
         fid = r["formid"] if isinstance(r["formid"], int) else int(r["formid"], 16)
+        flags = int(r.get("dnam_flags", 0))
         lines.append(
-            f'\t\t{{ 0x{fid:08X}u, {r["itype"]}u, "{c_escape(r["name_en"])}", "{c_escape(r["name_zh"])}" }},'
+            f'\t\t{{ 0x{fid:08X}u, {r["itype"]}u, 0x{flags:08X}u, "{c_escape(r["name_en"])}", "{c_escape(r["name_zh"])}" }},'
         )
     lines.append("\t};")
     lines.append(f"\tinline constexpr std::size_t kQuestTableSize = {len(rows)};")

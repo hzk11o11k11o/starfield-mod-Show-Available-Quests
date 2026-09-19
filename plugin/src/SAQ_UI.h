@@ -44,5 +44,10 @@ namespace SAQ
 		// 标题与任务名都是「中英双语」一起推，由 AS3 侧按游戏语言挑。
 		// 返回 true = GFx 侧调用成功（返回值写在 a_detail 里）。
 		bool PushAvailableQuests(const std::vector<QuestEntry>& a_quests, std::string& a_detail);
+
+		// ★ 只读地问一次界面当前状态（AS3 `SAQ_Report` 的返回值，已经是日志转义后的字符串）。
+		// 用途：菜单开着时轮询，把「切到我们 tab 之后列表到底有几条」这类事实写进日志。
+		// 返回 false = 桥没通 / SWF 是旧版 / 菜单正在换代（调用方静默跳过即可，别刷屏）。
+		bool ReadUiReport(std::string& a_report);
 	}
 }

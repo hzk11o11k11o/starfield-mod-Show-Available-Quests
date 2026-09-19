@@ -1151,7 +1151,7 @@ namespace SAQ::UI
 		// 第 7 轮的教训是「日志说成功、却没人能证明界面显示了什么」，只能靠肉眼进游戏核对；
 		// SAQ_Report 一次给出「解析几条/过滤后几条/列表几条/掩码/选中 tab/语言/标题」，
 		// 从此这一层在日志里就能闭环（SWF 还是旧版时会显示 fail，也能一眼看出）。
-		const std::string report = EscapeForLog(CallAs3NoArg(root, "_root.SAQ_Report"), 240);
+		const std::string report = EscapeForLog(CallAs3NoArg(root, "_root.SAQ_Report"), 400);
 
 		// 先把解析信息留一份 —— 失败时下面会 Reset()，缓存里的 detail 会被清掉。
 		const std::string bridgeDetail = bridge.detail;
@@ -1168,5 +1168,29 @@ namespace SAQ::UI
 			std::format(" 载荷={} 字节/{} 条", payloadUtf8.size(), a_quests.size()) +
 			" 状态: " + report;
 		return ok;
+	}
+
+	// ★ 第 9 轮：只读地把界面自报状态取回来（供菜单开着时的「变化即记」轮询用）。
+	//
+	// 与 PushAvailableQuests 里的那次回读是同一入口（`_root.SAQ_Report`），
+	// 区别只是这里**不推送**、也不写自己的日志：桥没通 / SWF 是旧版时返回 false，
+	// 由调用方决定要不要记（这样不会因为轮询把日志刷满）。
+	bool ReadUiReport(std::string& a_report)
+	{
+		std::string detail;
+		if (!EnsureResolved(detail)) {
+			return false;
+		}
+		auto& bridge = Cached();
+		auto* root = reinterpret_cast<RE::Scaleform::GFx::ASMovieRootBase*>(bridge.asRoot);
+		if (!root) {
+			return false;
+		}
+		const std::string raw = CallAs3NoArg(root, "_root.SAQ_Report");
+		if (raw.find("=fail") != std::string::npos) {
+			return false;  // 路径不存在 / 调用失败（SWF 旧版或桥在换代的中间态）
+		}
+		a_report = EscapeForLog(raw, 400);
+		return true;
 	}
 }

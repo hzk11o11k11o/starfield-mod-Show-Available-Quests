@@ -141,6 +141,12 @@ package
       
       private var SaqLangZh:Boolean = false;
       
+      private var SaqTabProbe:String = "-";
+
+      private var SaqOurTabProbe:String = "-";
+
+      private var SaqOurTabMaxList:int = -1;
+
       private var StoredLastOpenedIds:Array = null;
       
       private var StoredLastCategory:uint = 0;
@@ -585,6 +591,7 @@ package
             //   保证重建列表时用的是当前 tab 的真实掩码。）
             this.SaqSyncListMask();
             this.MissionsList_mc.InitializeEntries(this.BuildMergedList());
+            this.SaqSnapshotTab("refresh");
             if(this.visible)
             {
                this.onMissionSelectionChange();
@@ -599,6 +606,34 @@ package
          if(_loc1_ >= 0 && _loc1_ < this.FilterInfoA.length)
          {
             this.MissionsList_mc.filterMask = this.FilterInfoA[_loc1_].flag;
+         }
+      }
+      
+      // 界面快照（第 9 轮）：在「切 tab」和「重建列表」这两个时刻记下
+      // 「tab 序号 / 掩码 / 当前列表条数」。
+      //
+      // 为什么要有它：C++ 侧只能在推送那一刻读一次 SAQ_Report，而那时玩家还没切到
+      // 我们那个 tab（实测 tab=0、mask=0xFFFFFFBF）—— 于是「我们 tab 里到底有几条」
+      // 在日志里始终是空白。加上这个快照后，只要玩家**碰过**我们那个 tab，
+      // 无论他之后切到哪里，SAQ_Report 都会把那一刻的状态带出来。
+      private function SaqSnapshotTab(param1:String) : void
+      {
+         if(this.MissionsList_mc == null || this.TabbedFilterSelection_mc == null || this.FilterInfoA == null)
+         {
+            return;
+         }
+         var _loc2_:int = int(this.TabbedFilterSelection_mc.selectedIndex);
+         var _loc3_:int = int(this.MissionsList_mc.filterMask);
+         var _loc4_:int = int(this.MissionsList_mc.entryCount);
+         var _loc5_:String = "tab=" + _loc2_ + " mask=0x" + (_loc3_ >>> 0).toString(16) + " list=" + _loc4_;
+         this.SaqTabProbe = param1 + "[" + _loc5_ + "]";
+         if(_loc2_ == this.FilterInfoA.length - 1)
+         {
+            this.SaqOurTabProbe = _loc5_;
+            if(_loc4_ > this.SaqOurTabMaxList)
+            {
+               this.SaqOurTabMaxList = _loc4_;
+            }
          }
       }
       
@@ -698,6 +733,9 @@ package
       //   tab       = 当前选中的 tab 序号（我们的是最后一个 = 7）
       //   lang      = 语言判定结果
       //   title     = 我们那个 tab 此刻的标题
+      //   last      = 最近一次「切 tab / 重建列表」时的界面快照（第 9 轮）
+      //   ourTab    = 我们那个 tab 被选中时的最后一次快照（没碰过就是 "-"）
+      //   ourTabMax = 我们那个 tab 上见过的最大条目数（-1 = 没碰过）
       public function SAQ_Report() : String
       {
          var _loc1_:int = this.SaqRawQuests != null ? this.SaqRawQuests.length : -1;
@@ -707,16 +745,19 @@ package
          var _loc5_:int = this.MissionsList_mc != null ? int(this.MissionsList_mc.filterMask) : -1;
          var _loc6_:int = this.TabbedFilterSelection_mc != null ? int(this.TabbedFilterSelection_mc.selectedIndex) : -1;
          var _loc7_:String = this.SaqLangKnown ? (this.SaqLangZh ? "zh" : "en") : "?";
+         // ★ 掩码按**无符号**十六进制打（第 8 轮实测打出来是 `0x-41`，即 -0x41 = 0xFFFFFFBF，
+         //   看日志的人得自己心算补码；>>> 0 转成 uint 后就是 0xffffffbf）。
          var _loc8_:String = "src=" + (this.SaqSourceIsCpp ? "cpp" : "embedded")
             + " raw=" + _loc1_
             + " keep=" + _loc2_
             + " questData=" + _loc3_
             + " list=" + _loc4_
-            + " mask=0x" + _loc5_.toString(16);
+            + " mask=0x" + (_loc5_ >>> 0).toString(16);
          _loc8_ += " tab=" + _loc6_
             + " lang=" + _loc7_
             + " title=" + this.SaqTabTitle()
             + " visible=" + (this.visible ? "1" : "0");
+         _loc8_ += " last=" + this.SaqTabProbe + " ourTab=" + this.SaqOurTabProbe + " ourTabMax=" + this.SaqOurTabMaxList;
          return _loc8_;
       }
       
@@ -804,6 +845,7 @@ package
          }
          GlobalFunc.PlayMenuSound(MISSION_CATEGORY_CHANGE_SOUND);
          this.bSkipSelectionSounds = false;
+         this.SaqSnapshotTab("switch");
       }
       
       private function CollapseAllChildren() : *

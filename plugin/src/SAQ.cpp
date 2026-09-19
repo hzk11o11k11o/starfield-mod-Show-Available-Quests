@@ -25,6 +25,7 @@
 #include "PCH.h"
 
 #include "SAQ.h"
+#include "SAQ_QuestState.h"  // TESQuest 运行时状态（已开始/已完成/追踪中）
 #include "SAQ_UI.h"          // UI 通道（菜单表 → IMenu → Movie → ASMovieRoot）
 #include "SAQ_QuestTable.h"  // 生成物：FormID -> 中/英文名 + 类型（tools/esm/gen_quest_table.py）
 
@@ -42,6 +43,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <format>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -87,15 +89,36 @@ namespace SAQ
 		std::atomic<std::uint64_t> g_pushCount{ 0 };
 		std::atomic_uint32_t g_mainThreadId{ 0 };
 
+		// 运行时过滤的统计（第 9 轮）：只为了「日志能自证」而留。
+		struct RuntimeFilterStats
+		{
+			std::size_t live{};               // 引擎里确实存在这个 FormID
+			std::size_t recognized{};         // 虚表核对通过（确认是 TESQuest）
+			std::size_t unrecognized{};       // 虚表不认识（不计入过滤，留证据）
+			std::size_t started{};            // 引擎已经开始
+			std::size_t completed{};          // 已完成
+			std::size_t tracked{};            // 正被玩家追踪
+			std::size_t hidden{};             // 因运行时状态被剔掉的
+			bool        filterApplied{};      // 这次到底有没有按运行时状态过滤
+			std::string samples;              // 被剔掉的前几条（名字 + 状态）
+			std::string vtableSamples;        // 未识别虚表的样本（诊断）
+			// ---- 诊断用（不参与过滤）：静态 DNAM 标志位的分布 ----
+			// 目的：搞清哪一位代表「引擎自动启动」——「进度没到不显示」要用它。
+			// 判据：拿「引擎已开始」的那几条的 staticFlags 与全体做对比（见 samples 里的 DN 值）。
+			std::size_t flagBitCount[24]{};   // 位 i 在候选里出现的次数
+			std::size_t startedSamples{};     // 已开始的样本条数
+			std::string startedFlags;         // 已开始任务的 `名字(DNAM=0x…)` 样本
+		};
+
 		// 推送重试状态（只在主线程读写，不需要锁）。
 		// 菜单刚打开的那一两帧 SWF 可能还没初始化完，Invoke 会失败 —— 隔几帧再试。
 		struct PendingPush
 		{
 			std::vector<QuestEntry> quests;
 			std::size_t             total{};
-			std::size_t             live{};
 			std::uint32_t           attempts{};
 			std::uint64_t           lastAttemptMs{};
+			RuntimeFilterStats      stats;
 		};
 		PendingPush g_pending;
 		constexpr std::uint32_t kMaxPushAttempts = 10;
@@ -168,42 +191,107 @@ namespace SAQ
 		// 数据收集
 		// ------------------------------------------------------------------
 
-		// ★ 关于「已经开始的 quest 怎么排除」：
-		//   上一版用 RE::BGSStoryTeller::GetSingleton() 读 runningQuests /
-		//   queuedStartQuests，结果游戏里一开任务菜单就弹
-		//   "Invalid ID: 0" 的框 —— commonlibsf 的
-		//   RE::ID::BGSStoryTeller::Singleton 就是 0（见文件上方 ID 审计）。
+		// ★ 关于「已经开始的 quest 怎么排除」（第 9 轮的结论）：
+		//   老路（BGSStoryTeller::GetSingleton）走不通 —— commonlibsf 里它的
+		//   REL::ID 就是 0，一碰弹 "Invalid ID: 0"（见文件上方 ID 审计）。
+		//   这一轮改成**直接读 TESQuest 自己的运行时标志位**：读法不是猜的，
+		//   而是把 Papyrus Quest 原生函数（IsRunning / IsCompleted / IsActive）
+		//   在 exe 里的实现反汇编抄下来的，见 SAQ_QuestState.h 顶部注释。
 		//
-		//   现在这条线索整个砍掉，改由 AS3 侧用**引擎自己推给 UI 的 QuestData**
-		//   过滤（MissionMenu.FilterKnownQuests）：玩家已经拿到的任务（进行中/
-		//   已完成）必然在 QuestData 里，这比 C++ 侧猜更准。C++ 只负责
-		//   「静态表里的可接候选」这一层。
+		//   两层过滤的分工：
+		//     * C++（这里）：引擎**已经开始 / 已完成**的 → 不是「可接」任务，剔掉；
+		//     * AS3（MissionMenu.FilterKnownQuests）：玩家任务日志里已有的 → 剔掉
+		//       （日志来自引擎推给 UI 的 QuestData，最权威）。
+		//   两层互不依赖、还能互相验证：日志里 C++ 的「隐藏」条数与 AS3 的
+		//   `keep` 缺口应该对得上（第 8 轮实测 keep=199 ⇒ 有 3 条已被玩家拿到）。
 		//
-		//   （下一代产品：若哪天 commonlibsf 补上 BGSStoryTeller 的 ID，或我们自己
-		//   挖到正确 ID，再考虑把「已开始但没进日志」的任务也滤掉。）
-
-		// 收集"可接任务"候选。
+		// 收集"可接任务"候选 + 按运行时状态过滤。
 		//
-		// 规则（MVP）：
+		// 规则：
 		//   * 必须命中静态表 => 有 QTYP（玩家可见任务）且非主线
 		//   * 引擎里确实存在这个 FormID（★ 用 TESForm::LookupByID 问引擎，
 		//     **不再用 TESDataHandler::formArrays** —— 1.16.244.0 上实测那里读到空表，
 		//     结果"quest 总数=0"、列表当然是空的，见 docs/02）
-		//   * 名称按游戏语言从静态表取
-		//
-		// "玩家已知任务"（进行中/已完成）由 AS3 侧用引擎推送的 QuestData 再过滤一次。
-		void CollectAvailableQuests(std::vector<QuestEntry>& a_out, std::size_t& a_totalQuests, std::size_t& a_liveQuests)
+		//   * 引擎已经开始的 / 已完成的 → 剔掉（统计照原样写进日志）
+		//   * 名称中英都带上，AS3 侧按游戏语言挑
+		void CollectAvailableQuests(std::vector<QuestEntry>& a_out, std::size_t& a_totalQuests, RuntimeFilterStats& a_stats)
 		{
-			a_out.reserve(kQuestTableSize);
+			a_stats = {};
 			a_totalQuests = kQuestTableSize;
-			a_liveQuests = 0;
+			a_out.reserve(kQuestTableSize);
+
+			// 第一遍：确认引擎里有这个表单 + 读运行时状态（同时统计）。
+			// 结果按 kQuestTable 的下标对齐存放；被运行时状态剔掉的存 nullptr 占位。
+			std::vector<const RE::TESForm*> forms(kQuestTableSize, nullptr);
+			std::vector<QuestRuntimeState>  states(kQuestTableSize);
+			std::size_t hiddenByRuntime = 0;
+			constexpr std::size_t kMaxSamples = 5;
+			std::size_t sampleCount = 0;
 
 			for (std::size_t i = 0; i < kQuestTableSize; ++i) {
 				const auto& info = kQuestTable[i];
-				if (!RE::TESForm::LookupByID(static_cast<RE::TESFormID>(info.formID))) {
+				auto* form = RE::TESForm::LookupByID(static_cast<RE::TESFormID>(info.formID));
+				if (!form) {
 					continue;  // 这个 FormID 在当前加载顺序里不存在（理论上 Starfield.esm 必有）
 				}
-				++a_liveQuests;
+				++a_stats.live;
+
+				const auto state = ReadQuestRuntimeState(form);
+				states[i] = state;
+				if (state.vtableKnown) {
+					++a_stats.recognized;
+				} else {
+					++a_stats.unrecognized;
+					if (a_stats.vtableSamples.size() < 400) {
+						a_stats.vtableSamples += std::format("{}[vt={:#x} {}] ", info.nameEn, state.vtable, Describe(state));
+					}
+				}
+				// 静态 DNAM 位分布（诊断）：位含义未知，先把数据攒下来 —— 等下一轮日志
+				// 把「引擎已开始的那几条」的 DNAM 值一对比，就知道哪一位是「自动启动」。
+				for (std::size_t bit = 0; bit < 24; ++bit) {
+					if (info.staticFlags & (1u << bit)) {
+						++a_stats.flagBitCount[bit];
+					}
+				}
+				if (state.started) {
+					++a_stats.started;
+					if (a_stats.startedSamples < 6) {
+						++a_stats.startedSamples;
+						a_stats.startedFlags += std::format("{}[DN={:#x} {}] ", info.nameZh, info.staticFlags, Describe(state));
+					}
+				}
+				if (state.completed) {
+					++a_stats.completed;
+				}
+				if (state.active) {
+					++a_stats.tracked;
+				}
+
+				if (IsAlreadyEngaged(state) && state.vtableKnown) {
+					++hiddenByRuntime;
+					if (sampleCount < kMaxSamples) {
+						++sampleCount;
+						a_stats.samples += std::format("{}（{}） ", info.nameZh, Describe(state));
+					}
+					continue;  // forms[i] 保持 nullptr ⇒ 第二遍不出条目
+				}
+
+				forms[i] = form;
+			}
+
+			// 安全阀：虚表识别率太低 ⇒ 说明「0x114 这套判据在这台机器/这个版本上不成立」，
+			// 那就**不过滤**（只把证据写进日志），免得凭错误的对象把整个列表清空。
+			const auto recognizedPct = a_stats.live == 0 ? 100u : static_cast<unsigned>(a_stats.recognized * 100 / a_stats.live);
+			a_stats.filterApplied = recognizedPct >= 80;
+			a_stats.hidden = a_stats.filterApplied ? hiddenByRuntime : 0;
+
+			// 第二遍：出候选（被运行时状态剔掉的不再进来）。
+			for (std::size_t i = 0; i < kQuestTableSize; ++i) {
+				const auto* form = forms[i];
+				if (!form) {
+					continue;
+				}
+				const auto& info = kQuestTable[i];
 				QuestEntry entry;
 				entry.formID = info.formID;
 				entry.type = kAvailableQuestType;  // 统一放到我们的 tab
@@ -275,6 +363,45 @@ namespace SAQ
 
 		std::atomic_bool g_menuWasOpen{ false };
 
+		// 运行时过滤统计的一行日志（菜单一开就打 —— 这一行要和 AS3 那份
+		// `keep=` 交叉验证：C++ 剔掉的数量应当覆盖 AS3 任务日志里已有的那些）。
+		std::string FormatRuntimeStats(const RuntimeFilterStats& a_stats)
+		{
+			std::string out = std::format(
+				"运行时状态：引擎存在={} 虚表识别={} 未识别={} 已开始={} 已完成={} 追踪中={} 隐藏={} 过滤={}",
+				a_stats.live, a_stats.recognized, a_stats.unrecognized,
+				a_stats.started, a_stats.completed, a_stats.tracked, a_stats.hidden,
+				a_stats.filterApplied ? "生效" : "跳过(识别率<80%)");
+			if (!a_stats.samples.empty()) {
+				out += " 隐藏例: " + a_stats.samples;
+			}
+			if (!a_stats.vtableSamples.empty()) {
+				out += " 未识别例: " + a_stats.vtableSamples;
+			}
+			return out;
+		}
+
+		// 静态 DNAM 位的分布 + 「引擎已开始」样本（**诊断第二行**，不参与过滤）。
+		// 想知道的是：「引擎自己启动的任务」在 DNAM 上是哪一位 ——
+		// 那一位置起来 ⇒ 「进度没到不显示」就能靠静态数据实现（见 docs/04 第五节）。
+		std::string FormatStaticFlagStats(const RuntimeFilterStats& a_stats)
+		{
+			std::string bits;
+			for (std::size_t bit = 0; bit < 24; ++bit) {
+				if (a_stats.flagBitCount[bit] == 0) {
+					continue;
+				}
+				bits += std::format("位{}={} ", bit, a_stats.flagBitCount[bit]);
+			}
+			std::string out = "DNAM 位分布（候选 " + std::to_string(a_stats.live) + " 条）：" + (bits.empty() ? "全 0" : bits);
+			if (!a_stats.startedFlags.empty()) {
+				out += "已开始样本: " + a_stats.startedFlags;
+			} else {
+				out += "已开始样本: 无（说明这一档还没有任务被引擎启动）";
+			}
+			return out;
+		}
+
 		// 尝试把待推送的数据送进 SWF；失败就隔 400ms 再试（菜单刚开那一两帧 SWF 可能还没就绪）。
 		void TryPushPending()
 		{
@@ -302,7 +429,7 @@ namespace SAQ
 			if (PushToUI(g_pending.quests)) {
 				const auto n = ++g_pushCount;
 				REX::INFO("菜单打开：静态表={} 引擎里存在={} 推送条数={} (第{}次)",
-					g_pending.total, g_pending.live, g_pending.quests.size(), n);
+					g_pending.total, g_pending.stats.live, g_pending.quests.size(), n);
 				g_pending.quests.clear();
 				g_pending.attempts = kMaxPushAttempts;  // 本次不再重试
 			} else if (g_pending.attempts >= kMaxPushAttempts) {
@@ -311,20 +438,80 @@ namespace SAQ
 			}
 		}
 
+		// ------------------------------------------------------------------
+		// 界面状态轮询（第 9 轮新增）
+		//
+		// 第 8 轮只能证明「推送成功」，证明不了「玩家切到我们那个 tab 之后到底看到了什么」。
+		// 现在菜单开着的时候每 500ms 读一次 AS3 自报状态（`_root.SAQ_Report`），
+		// **只在内容变化时记一行** —— 切 tab、列表长度变化都会在日志里留下证据，
+		// 关菜单时再把最后一条状态补记一次。
+		// ------------------------------------------------------------------
+		struct ReportPoll
+		{
+			std::uint64_t lastPollMs{};
+			std::string   lastReport;
+			std::uint32_t logged{};
+		};
+		ReportPoll g_poll;
+		constexpr std::uint64_t kReportPollIntervalMs = 500;
+		constexpr std::uint32_t kReportPollMaxLines = 60;  // 一次开菜单最多记这么多行
+
+		void ResetReportPoll()
+		{
+			g_poll.lastPollMs = 0;
+			g_poll.lastReport.clear();
+			g_poll.logged = 0;
+		}
+
+		void PollUiReport()
+		{
+			if (g_poll.logged >= kReportPollMaxLines) {
+				return;
+			}
+			const auto now = NowMs();
+			if (g_poll.lastPollMs != 0 && now - g_poll.lastPollMs < kReportPollIntervalMs) {
+				return;
+			}
+			g_poll.lastPollMs = now;
+
+			std::string report;
+			if (!UI::ReadUiReport(report)) {
+				return;  // 桥没通 / SWF 旧版 / 换代的中间态：静默跳过，不刷屏
+			}
+			if (report == g_poll.lastReport) {
+				return;  // 没变化就不记（这样日志里只留下「发生过什么」）
+			}
+			g_poll.lastReport = report;
+			++g_poll.logged;
+			REX::INFO("界面状态[{}]：{}", g_poll.logged, report);
+		}
+
+		void OnMissionMenuClosed()
+		{
+			if (!g_poll.lastReport.empty()) {
+				REX::INFO("菜单关闭：界面最后状态={}", g_poll.lastReport);
+			} else {
+				REX::INFO("菜单关闭：界面状态一条都没读回来（桥没通 / SWF 是旧版 / 一次都没轮询到）");
+			}
+			ResetReportPoll();
+		}
+
 		void OnMissionMenuOpened()
 		{
 			// ★ 菜单是「新开的」，上一轮解析出来的 Movie 指针多半已经随菜单关闭销毁了，
 			//   必须重新解析一遍（Reset 后第一次推送会重新走「菜单表 → IMenu → Movie」）。
 			UI::Reset();
+			ResetReportPoll();
 
 			g_pending.quests.clear();
 			g_pending.attempts = 0;
 			g_pending.total = 0;
-			g_pending.live = 0;
-			CollectAvailableQuests(g_pending.quests, g_pending.total, g_pending.live);
+			CollectAvailableQuests(g_pending.quests, g_pending.total, g_pending.stats);
+			REX::INFO("{}", FormatRuntimeStats(g_pending.stats));
+			REX::INFO("{}", FormatStaticFlagStats(g_pending.stats));
 			// 语言这一项只是**日志参考**：实际显示语言由 AS3 侧按引擎推来的任务名判定。
 			REX::INFO("菜单打开：静态表={} 引擎里存在={} 待推送={} INI语言={}(仅供参考) 标题=可接任务/Available(中英都推，由 UI 选)",
-				g_pending.total, g_pending.live, g_pending.quests.size(), GetGameLanguage());
+				g_pending.total, g_pending.stats.live, g_pending.quests.size(), GetGameLanguage());
 			TryPushPending();
 		}
 
@@ -344,6 +531,9 @@ namespace SAQ
 				OnMissionMenuOpened();
 			} else if (open) {
 				TryPushPending();  // 上一轮没成功的话接着重试
+				PollUiReport();    // 界面状态「变化即记」
+			} else if (wasOpen) {
+				OnMissionMenuClosed();
 			}
 		}
 	}

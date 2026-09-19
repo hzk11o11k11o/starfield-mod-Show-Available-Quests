@@ -14,7 +14,7 @@
 - 支持语言：中文/英文
 - 基于SFSE
 - 要有ESM文件
-- 要有日志，但日志文件不能超过1M，旧内容要做到滚动删除
+- 要有日志，但日志文件不能超过1MB，旧内容要做到滚动删除
 
 ## starfield安装位置
 D:\SteamLibrary\steamapps\common\Starfield（sfse已安装）
