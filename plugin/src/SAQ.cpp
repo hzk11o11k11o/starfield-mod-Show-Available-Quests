@@ -1348,7 +1348,7 @@ namespace SAQ
 		//   体验上等价于原版：按 R ⇒ 星图出现并画好航线。
 		//
 		// 判据（下一轮日志）：`星图：已请求关闭任务菜单` → 脚本 `[SAQ] 星图请求：<地点>`
-		//   → 本文件的 `星图：已打开（MapMenu 在屏幕上）`（或没打开的 WARN）。
+		//   → 本文件的 `星图：已打开（GalaxyStarMapMenu 在屏幕上）`（或没打开的 WARN）。
 		// ==================================================================
 		// ★ 第 40 轮：星图诊断 —— 引擎自己的「地点 → 星图节点」解析器（RVA 0xAC2AB0）。
 		//
@@ -1364,9 +1364,13 @@ namespace SAQ
 		//   调用约定（与 0x2010210 / 0x1FEACE0 一致）：rcx = 8 字节出参缓冲，rdx = 地点表单。
 		// ==================================================================
 		constexpr std::uintptr_t kResolveNodeRva = 0xAC2AB0;
-		// 函数头 8 字节: mov r11,rsp / mov [r11+0x20],rbx（dis_range.py 0xac2ab0 可见）
+		// 函数头 8 字节: mov r11,rsp (4C 8B DC) / mov [r11+0x20],rbx (49 89 5B 20) / push rbp (55)
+		//   ★ 第 41 轮修正：第 40 轮把 `mov r11,rsp` 的机器码抄成了 `4C 89 1C 24`
+		//   （那是 `mov [rsp],r11` —— 方向抄反），导致运行时特征校验永远失败，
+		//   日志里全是「节点解析器不可用：游戏版本特征不符」，这一路诊断形同虚设。
+		//   复现：python tools/re/dis_range.py 0xac2ab0 0xac2ae0
 		constexpr std::array<std::uint8_t, 8> kResolveNodeSig{
-			0x4C, 0x89, 0x1C, 0x24, 0x49, 0x89, 0x5B, 0x20
+			0x4C, 0x8B, 0xDC, 0x49, 0x89, 0x5B, 0x20, 0x55
 		};
 
 		using ResolveNodeFn = void(__fastcall*)(void*, void*);
@@ -1530,7 +1534,8 @@ namespace SAQ
 			std::uint32_t questID{};      // 请求时的引导任务（日志用）
 			// ★ 第 40 轮：**自动重试**。16:28 会话的实测：脚本在「菜单关闭」后 0.5 秒就调了
 			//   原生函数，而那一刻暂停菜单还在关（关闭动画/收尾）⇒ 星图**根本没开**，
-			//   12 秒窗口内一次都没出现过（DLL 每帧查 MapMenu 都没有）。而第 38 轮那三次
+			//   12 秒窗口内一次都没出现过（当时误查 MapMenu —— 第 41 轮已更正为
+			//   GalaxyStarMapMenu，见 StarMapMenuName()）。而第 38 轮那三次
 			//   「星图开了但要等好久」的会话里，脚本调用发生在菜单关掉 4~5 秒之后 ⇒ 开了。
 			//   所以：没开就再让脚本调一次（重写「待处理 + 星图」状态），号码见下。
 			int           attempts{};     // 已尝试次数（1 = 玩家按 R 的那一次）
@@ -1596,16 +1601,34 @@ namespace SAQ
 				DisplayNameOf(a_questID), a_questID);
 		}
 
-		// 诊断：把「此刻还开着的菜单」拼成一行（只查菜单名表里有把握的几个）。
+		// ★★ 第 41 轮：星图的**注册名** = `GalaxyStarMapMenu`（不是 `MapMenu`）。
+		//
+		//   来历（离线、可复现）：引擎打开星图的 `ShowGalaxyStarMapMenu`（0x2010170）与
+		//   `ShowGalaxyStarMapMenuAndPlotToLocation`（0x2010210）都调用 `0x253CFA0` 取菜单名
+		//   —— 那是一个惰性初始化的静态 BSFixedString，内容是 `.rdata 0x4C96340` 的
+		//   `"GalaxyStarMapMenu"`，随后用它 `UIMessageQueue::AddMessage(…, kShow, …)`。
+		//   复现：`python tools/re/dis_range.py 0x253cfa0 0x253d060`
+		//
+		//   第 37~40 轮误用了菜单名表（`.rdata 0x4D7E010`）里的 `MapMenu` —— 那是**另一个**
+		//   菜单的名字 ⇒ DLL 从第 37 轮起所有「星图没有打开」判定都是**假阴性**：星图其实
+		//   每次都开了（玩家反馈「R 键可以打开星图」才是真相）。本函数是唯一正确的探测入口。
+		const RE::BSFixedString& StarMapMenuName()
+		{
+			static const RE::BSFixedString name{ "GalaxyStarMapMenu" };
+			return name;
+		}
+
+		// 诊断：把「此刻还开着的菜单」拼成一行（只查有把握的几个）。
 		// 为什么不用 UI::menuStack / IMenu：那要读 commonlibsf 的结构体偏移（本项目通则：
 		// 偏移一律不可信），而 IsMenuOpen 是引擎自己的函数，按注册名查哈希表 —— 零风险。
-		// 名字取自 exe 的菜单名表（`.rdata 0x4D7DF00` 一带）：PauseMenu / BSMissionMenu /
-		// MapMenu / SkillsMenu / StatusMenu …（注意表里**没有 DataMenu** —— 那只是 AS3
-		// 事件前缀；带 tab 栏的外层暂停菜单注册名是 PauseMenu）。
+		// 名字来源：exe 的菜单名表（`.rdata 0x4D7DF00` 一带）：PauseMenu / BSMissionMenu /
+		// SkillsMenu / StatusMenu …（注意表里**没有 DataMenu** —— 那只是 AS3 事件前缀；
+		// 带 tab 栏的外层暂停菜单注册名是 PauseMenu）+ 星图的 GalaxyStarMapMenu（★ 它不在
+		// 那张表里，用 StarMapMenuName() 拿）。
 		std::string OpenMenusSummary()
 		{
 			static const RE::BSFixedString kNames[] = {
-				"BSMissionMenu", "PauseMenu", "MapMenu", "SkillsMenu", "StatusMenu",
+				"BSMissionMenu", "PauseMenu", "GalaxyStarMapMenu", "SkillsMenu", "StatusMenu",
 				"ContainerMenu", "DataSlateMenu", "LoadingMenu", "MainMenu", "FaderMenu"
 			};
 			auto* ui = RE::UI::GetSingleton();
@@ -1643,9 +1666,10 @@ namespace SAQ
 			const auto now = NowMs();
 			const auto elapsed = static_cast<double>(now - g_starMap.startMs) / 1000.0;
 
-			if (ui->IsMenuOpen("MapMenu")) {
+			// ★ 第 41 轮：用引擎自己的注册名 GalaxyStarMapMenu（见 StarMapMenuName()）。
+			if (ui->IsMenuOpen(StarMapMenuName())) {
 				g_starMap.pending = false;
-				REX::INFO("星图：已打开（MapMenu 在屏幕上，R 后约 {:.1f} 秒，第 {} 次尝试）"
+				REX::INFO("星图：已打开（GalaxyStarMapMenu 在屏幕上，R 后约 {:.1f} 秒，第 {} 次尝试）"
 						  "—— SET COURSE 链路完整",
 					elapsed, g_starMap.attempts);
 				return;
@@ -1696,7 +1720,7 @@ namespace SAQ
 			}
 			if (now >= g_starMap.deadlineMs) {
 				g_starMap.pending = false;
-				REX::WARN("星图：{:.1f} 秒内没有打开（已尝试 {} 次｜MapMenu 不在屏幕上｜还开着：{}）"
+				REX::WARN("星图：{:.1f} 秒内没有打开（已尝试 {} 次｜GalaxyStarMapMenu 不在屏幕上｜还开着：{}）"
 						  "—— 看 Papyrus 的 `[SAQ] 星图请求` 两行有没有出现（取不到地点 / 脚本没跑）",
 					static_cast<double>(kStarMapWindowMs) / 1000.0, g_starMap.attempts,
 					OpenMenusSummary());
@@ -2386,8 +2410,9 @@ namespace SAQ
 			//   ★ 第 19 轮：把 open 传进去 —— 超时/失败时要回写界面（菜单开着才做）。
 			PollGuideVerify(open);
 
-			// ★ 第 37 轮：SET COURSE 的星图这一半 —— 到点后查一次 MapMenu 在不在屏幕上，
-			//   把「R 键链路通没通」写进日志（内部按 pending/dueMs 自我短路）。
+			// ★ 第 37 轮：SET COURSE 的星图这一半 —— 到点后查一次 **GalaxyStarMapMenu**
+			//   （引擎自己的注册名，第 41 轮修正）在不在屏幕上，把「R 键链路通没通」写进
+			//   日志（内部按 pending/dueMs 自我短路）。
 			CheckStarMapOpened();
 
 			// ★ 第 19 轮：脚本活性探测（菜单打开 1.5 秒后复读通知值，见 CheckScriptLiveness）。

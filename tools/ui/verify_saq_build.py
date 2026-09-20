@@ -52,6 +52,16 @@
            （param3 = 是否允许「再按一次 = 取消」的切换语义），R 传 false：
            已引导时退化为「保持引导 + 再请求一次星图」。本脚本检查 SWF 里的
            「重复设定航线」note（R 重复请求的链路证据）
+  第 40 轮：星图「开不起来」修调用时机（延时 1.5 秒 + DLL 自动重试 2.5s×3、
+           重试时依次换地点候选 5/6/7）+ 引擎「地点 → 星图节点」解析器（0xAC2AB0）
+           只读诊断。本脚本检查 DLL 8 条 + PEX 6 条星图文案/API
+  第 41 轮：★★ 两个确定性 bug 的修正 —— ① 星图**注册名**是 GalaxyStarMapMenu
+           （引擎 ShowGalaxyStarMapMenu* 调 0x253cfa0 拿到的静态 BSFixedString，
+           .rdata 0x4C96340）；第 37~40 轮误查菜单名表里的 MapMenu ⇒「星图没打开」
+           全是假阴性（星图其实每次都开了）；②「地点 → 星图节点」解析器的函数头
+           特征字节抄反（`mov r11,rsp` = `4C 8B DC`，不是 `4C 89 1C 24`）⇒ 运行时
+           特征校验永远失败、诊断不可用。本脚本检查：注册名特征 + 修正后的特征字节
+           （含反向检查：旧的错误字节不应再出现在 DLL 里）
 
 用法：python tools/ui/verify_saq_build.py
 """
@@ -373,13 +383,17 @@ def main() -> int:
             "IsStageDone 不可用提示": "IsStageDone 不可用".encode(),
             # ★★ 第 37 轮：SET COURSE 的星图 —— 关任务菜单 + 结果探测 + 状态 5
             "星图请求(旧协议 kHide)": "星图：已请求关闭任务菜单".encode(),
-            "星图结果(已打开)": "星图：已打开（MapMenu 在屏幕上".encode(),
+            "星图结果(已打开)": "星图：已打开（GalaxyStarMapMenu 在屏幕上".encode(),
             # ★ 第 40 轮：这句补上「已尝试 N 次」，所以只查前缀
             "星图结果(没打开)": "秒内没有打开".encode(),
             # ★ 第 40 轮：状态值改由 std::format 生成（5/6/7 三个地点候选），所以只查后缀
             "星图请求状态文案": "（星图请求）".encode(),
             "星图原生函数名": b"ShowGalaxyStarMapMenuAndPlotToLocation",
-            "星图菜单名": b"MapMenu",
+            # ★★ 第 41 轮：星图的**注册名** = GalaxyStarMapMenu（不是 MapMenu）。
+            #   引擎自己的 ShowGalaxyStarMapMenu*（0x2010170 / 0x2010210）调 0x253cfa0
+            #   拿到的静态 BSFixedString 内容就是它（.rdata 0x4C96340）—— 第 37~40 轮
+            #   误用菜单名表里的 MapMenu ⇒ 所有「星图没打开」判定都是假阴性。
+            "星图菜单名(注册名)": b"GalaxyStarMapMenu",
             # ★★ 第 38 轮：SET COURSE 的「最外层主菜单 / 要等好久」修复 ——
             #   新协议（界面侧关整个暂停菜单）+ 多段探测（还开着哪些菜单 / R 后多少秒打开）
             "星图请求(新协议 界面关菜单)": "星图：界面侧会自己关掉整个暂停菜单".encode(),
@@ -400,6 +414,10 @@ def main() -> int:
             "星图诊断(未命中)": "（未命中：星图不会定位到这个地点）".encode(),
             "星图诊断(玩家对照)": "玩家所在地点".encode(),
             "星图节点解析器特征校验": "节点解析器不可用".encode(),
+            # ★★ 第 41 轮：修正后的函数头特征字节（mov r11,rsp / [r11+0x20],rbx / push rbp）
+            #   —— 上面的字符串检查只证明「有这么一句日志」，这一条才证明字节真的修了
+            #   （数组是 constexpr，MSVC 把它放在 .rdata，二进制里能直接查到）
+            "星图节点解析器特征字节": b"\x4c\x8b\xdc\x49\x89\x5b\x20\x55",
         }.items():
             all_ok &= check(f"DLL · {name}", blob, needle)
         # 反向检查：第 31 轮把候选链顺序换掉，第 30 轮的「marker 优先」诊断文案不应再出现
@@ -430,6 +448,11 @@ def main() -> int:
         gone = ("星图：任务菜单没被关掉".encode() not in blob
                 and "星图：没有打开（MapMenu 不在屏幕上）".encode() not in blob)
         print(("OK  " if gone else "MISS") + " DLL · 旧单点星图探测文案已替换(反向检查)")
+        all_ok &= gone
+        # 反向检查：第 41 轮修正的特征字节 —— 旧的 `4C 89 1C 24`（mov [rsp],r11，抄反了）
+        #   不应再出现在 DLL 里（新字节里第一个 dword 是 4C 8B DC）
+        gone = b"\x4c\x89\x1c\x24\x49\x89\x5b\x20" not in blob
+        print(("OK  " if gone else "MISS") + " DLL · 旧星图节点解析器特征字节已修正(反向检查)")
         all_ok &= gone
         # ★ 第 17 轮的核心判据：DLC 的两个 + 基础游戏一共 4 个数据源名都编进了 DLL
         for master in (b"Starfield.esm", b"ShatteredSpace.esm", b"SFBGS050.esm", b"SFBGS00D.esm"):
