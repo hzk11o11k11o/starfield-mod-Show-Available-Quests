@@ -95,6 +95,9 @@ def main() -> int:
             "测试模式日志": "测试模式：".encode(),
             "测试模式说明": "只显示「有引导目标」的条目".encode(),
             "测试过滤统计": "测试过滤".encode(),
+            # 第 20 轮补丁：实机上控制台 `set` 不认 EDID（Unknown variable）⇒ ini 文件兜底
+            "ini 兜底开关": "SAQ_ShowAvailableQuests.ini".encode(),
+            "测试模式来源": "[来源=".encode(),
         }.items():
             all_ok &= check(f"DLL · {name}", blob, needle)
         # 反向检查：第 18 轮换掉的旧「未加载」文案不应再出现（新文案不含完整旧串）

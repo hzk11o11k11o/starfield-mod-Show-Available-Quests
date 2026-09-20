@@ -47,7 +47,9 @@
 
 #include <atomic>
 #include <cstdint>
+#include <cstring>
 #include <format>
+#include <fstream>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -301,6 +303,77 @@ namespace SAQ
 			case 4: return "只显示「有引导目标 + 有具名地点」的条目";
 			default: return "关闭（显示全部）";
 			}
+		}
+
+		// ★ 第 20 轮补丁（实机反馈）：`set SAQ_TestMode to 4` 在控制台里报
+		//   `Unknown variable`（ESM 明明加载了 —— 通道摘要里能看到 `测试=0`），
+		//   说明这台机器的控制台 **不按 EDID 解析 mod 的 GLOB**。
+		//   于是补一条**不依赖控制台**的通路：读 ini 文件（每次开菜单读一次，
+		//   改完文件关开菜单即可生效，不用重启游戏；文件不存在时首次运行自动写一份模板）。
+		//
+		//   路径：%USERPROFILE%\Documents\My Games\Starfield\SAQ_ShowAvailableQuests.ini
+		//   内容：[Test] / Mode=N（N 与 GLOB 同一套取值，见 PassesTestFilter）
+		//
+		//   优先级：**GLOB（控制台）非 0 时优先**；否则用 ini；都是 0 = 不过滤。
+		std::wstring TestModeIniPath()
+		{
+			wchar_t profile[MAX_PATH]{};
+			if (::GetEnvironmentVariableW(L"USERPROFILE", profile, MAX_PATH) == 0) {
+				return {};
+			}
+			return std::wstring{ profile } +
+				L"\\Documents\\My Games\\Starfield\\SAQ_ShowAvailableQuests.ini";
+		}
+
+		// 首次运行写一份带说明的模板（已存在就不动 —— 玩家的设置不能被覆盖）。
+		void EnsureTestModeIniTemplate()
+		{
+			const auto path = TestModeIniPath();
+			if (path.empty() || ::GetFileAttributesW(path.c_str()) != INVALID_FILE_ATTRIBUTES) {
+				return;
+			}
+			const char* tmpl =
+				"; Show Available Quests - 测试过滤开关\r\n"
+				"; 改完保存，然后关闭并重新打开一次任务菜单即可生效（不用重启游戏）。\r\n"
+				"; Mode 取值：\r\n"
+				";   0 = 关闭（默认，显示全部可接任务）\r\n"
+				";   1 = 只显示「有引导目标」的任务（209 条，点了能出蓝点）\r\n"
+				";   2 = 只显示「没有引导目标」的任务（52 条，测界面回滚）\r\n"
+				";   3 = 只显示 DLC 任务（59 条）\r\n"
+				";   4 = 只显示「有引导目标 + 有具名地点」的任务（85 条，最少最好找）\r\n"
+				"; 控制台（如果你的游戏认 `set SAQ_TestMode to N`）非 0 时优先于本文件。\r\n"
+				"[Test]\r\n"
+				"Mode=0\r\n";
+			std::ofstream f{ path.c_str(), std::ios::binary };
+			if (!f) {
+				REX::WARN("测试开关 ini 写不进去（忽略；不影响其它功能）");
+				return;
+			}
+			f.write("\xEF\xBB\xBF", 3);  // BOM：记事本识别中文注释
+			f.write(tmpl, static_cast<std::streamsize>(std::strlen(tmpl)));
+			REX::INFO("已生成测试开关模板：Documents\\My Games\\Starfield\\SAQ_ShowAvailableQuests.ini");
+		}
+
+		// 最终模式 = 控制台（GLOB，非 0 优先）否则 ini。a_globMode < 0 = ESM 旧版没有 GLOB。
+		struct TestModeResolved
+		{
+			int         mode{};
+			const char* source{ "默认" };
+		};
+
+		TestModeResolved ResolveTestMode(float a_globMode)
+		{
+			if (a_globMode >= 0.5f) {
+				return { static_cast<int>(a_globMode + 0.5f), "控制台" };
+			}
+			const auto path = TestModeIniPath();
+			if (!path.empty()) {
+				const int v = static_cast<int>(::GetPrivateProfileIntW(L"Test", L"Mode", 0, path.c_str()));
+				if (v > 0) {
+					return { v > 4 ? 0 : v, "ini" };  // 未知值按 0（不过滤）处理
+				}
+			}
+			return { 0, "默认" };
 		}
 
 		// 收集"可接任务"候选 + 按运行时状态过滤。
@@ -1118,17 +1191,16 @@ namespace SAQ
 			//   ★ 第 18 轮：解析方式改为「前缀探测」（不再读 TESDataHandler —— 它的结构体
 			//   偏移在本游戏版本上不可信），设计与证据见 SAQ_Masters.h 顶部注释。
 			const auto t0 = NowMs();
-			// ★ 第 20 轮：先读 ESM 通道拿「控制台测试开关」（-1 = 旧 ESM 没这条 GLOB ⇒ 0）
-			const auto testModeRaw = Guide::EnsureChannel().testMode;
-			const int  testMode = testModeRaw >= 0.0f ? static_cast<int>(testModeRaw + 0.5f) : 0;
+			// ★ 第 20 轮：测试过滤开关 —— 控制台（GLOB，非 0 优先）或 ini（实机反馈的兜底）。
+			const auto testMode = ResolveTestMode(Guide::EnsureChannel().testMode);
 			const auto masters = BuildRuntimeRows(g_pending.stats);
-			CollectAvailableQuests(g_pending.quests, g_pending.total, g_pending.stats, testMode);
+			CollectAvailableQuests(g_pending.quests, g_pending.total, g_pending.stats, testMode.mode);
 			const auto collectCost = NowMs() - t0;
 			REX::INFO("数据源：{}", masters);
-			if (testMode > 0) {
+			if (testMode.mode > 0) {
 				// 测试模式醒目提示（只在开启时打 —— 免得玩家忘了关、以为列表坏了）
-				REX::INFO("测试模式：{}（{}）—— 控制台 `set SAQ_TestMode to 0` 关闭",
-					testMode, TestModeNote(testMode));
+				REX::INFO("测试模式：{}（{}）[来源={}] —— 控制台 set SAQ_TestMode to 0 或改 ini，均可关闭",
+					testMode.mode, TestModeNote(testMode.mode), testMode.source);
 			}
 			REX::INFO("{}", FormatRuntimeStats(g_pending.stats));
 			// 语言这一项只是**日志参考**：实际显示语言由 AS3 侧按引擎推来的任务名判定。
@@ -1210,6 +1282,9 @@ namespace SAQ
 		}
 
 		g_mainThreadId.store(::GetCurrentThreadId());
+
+		// ★ 第 20 轮：首次运行生成测试开关 ini 模板（存在就不动；失败不影响任何功能）
+		EnsureTestModeIniTemplate();
 
 		auto* task = SFSE::GetTaskInterface();
 		if (!task) {
