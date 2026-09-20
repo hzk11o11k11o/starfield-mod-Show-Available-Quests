@@ -214,6 +214,20 @@ package
 
       // ★ 第 42 轮：最近一次「列表选中项变化」（鼠标悬停 / 键盘上下 / 程序设置都会触发）。
       private var SaqLastSelNote:String = "-";
+      
+      // ★ 第 43 轮：诊断 —— 最近收到的 user event（「事件名↓按下 / ↑松开」，最多 6 条）。
+      //   为什么需要它（第 42 轮遗留）：第 42 轮给 R 键补了 `press=[R@…]` 记录，但玩家实测
+      //   「悬停任务板按 R 没反应」时，日志里连 press 都没变化 —— 这有两种可能分不开：
+      //     ① 按键根本没进任务菜单（上游 / 按键映射 / 被别的组件截住）；
+      //     ② 事件进了按钮栏，但 SET COURSE 按钮被禁用 ⇒ 回调不执行（press 不更新）。
+      //   有了 ev=[…] 一次就能分开：
+      //     · 没有 XButton ⇒ 病在①；· 有 XButton↓↑ 但 press 不变 ⇒ 病在②（按钮禁用）。
+      private var SaqEventLog:Array = new Array();
+      
+      // ★ 第 43 轮：诊断 —— 最近一次选中项变化时的按钮状态，进报告 btn=[…]。
+      //   格式：our/std（是不是我们的条目）:plot=<0/1>:map=<0/1>
+      //   （plot=SET COURSE / map=显示在地图上；1=启用、0=置灰）
+      private var SaqLastBtnNote:String = "-";
 
       private var StoredLastOpenedIds:Array = null;
       
@@ -979,7 +993,8 @@ package
          //   press=[R@0x351a@平衡账目] = 按 R 那一刻界面选的条目；sel=[idx=137:0x351a@…] = 列表选中项。
          //   C++ 侧会把 press/sel 抄进 `引导请求：…` 那一行（见 SAQ.cpp::As3PressNote），
          //   于是「悬停的那条 / 界面用的那条 / C++ 解析出的那条」三者在日志里能一次对齐。
-         _loc8_ += " press=[" + this.SaqLastPressNote + "] sel=[" + this.SaqLastSelNote + "]";
+         _loc8_ += " press=[" + this.SaqLastPressNote + "] sel=[" + this.SaqLastSelNote + "]"
+            + " btn=[" + this.SaqLastBtnNote + "] ev=[" + this.SaqEventLog.join(" ") + "]";
          // 玩家任务日志名单（第 11 轮，诊断用）：QuestData 的「FormID:名字」，最多 12 条。
          // 用途：玩家说「某条可接任务没找到」时，先看它是不是**已经在玩家日志里**
          // （那样它被 C++/AS3 两层过滤中的某一层正当挡掉）—— 在这个名单里一查便知。
@@ -1028,6 +1043,25 @@ package
          }
          var _loc1_:String = param1.sName != null ? String(param1.sName) : "?";
          return "0x" + Number(param1.uID).toString(16) + "@" + _loc1_;
+      }
+      
+      // ★ 第 43 轮：把收到的 user event 记进 SaqEventLog（相邻重复不重复记，最多 6 条）。
+      //   param2 的语义与原版一致：true = 按下、false = 松开
+      //   （原版在 `param1 == "ReturnToStarMap" && param2 == false` 时执行「取消」）。
+      //   绝不抛异常（诊断代码不能反过来把菜单带崩）。
+      private function SaqNoteUserEvent(param1:String, param2:Boolean) : void
+      {
+         var _loc1_:String = param1 + (param2 ? "↓" : "↑");
+         var _loc2_:int = this.SaqEventLog.length;
+         if(_loc2_ > 0 && this.SaqEventLog[_loc2_ - 1] == _loc1_)
+         {
+            return;
+         }
+         this.SaqEventLog.push(_loc1_);
+         while(this.SaqEventLog.length > 6)
+         {
+            this.SaqEventLog.shift();
+         }
       }
       
       // 条目的显示名：选中的如果是**子项**（「前往接取地点」），名字取它的父任务名 ——
@@ -1497,6 +1531,7 @@ package
       
       public function ProcessUserEvent(param1:String, param2:Boolean) : Boolean
       {
+         this.SaqNoteUserEvent(param1,param2);   // ★ 第 43 轮：诊断探针（见 SaqEventLog）
          var _loc3_:Boolean = false;
          if(param1 == "ReturnToStarMap" && param2 == false)
          {
@@ -1610,7 +1645,12 @@ package
                // SET COURSE（键盘 R / 手柄 X）改用我们自己的引导 —— 见 OnPlotCourseEvent。
                this.ShowOnMapButton.Enabled = false;
                // ★ 第 23 轮：没有导航目标的条目 → SET COURSE 置灰（点了也没用，别让玩家困惑）。
-               this.PlotToLocationButton.Enabled = _loc1_.bSaqHasTarget != false;
+               // ★ 第 43 轮：**取消置灰** —— 置灰是「沉默失败」：按 R 时既没有提示、也不留
+               //   任何日志痕迹（本轮排查「按 R 没反应」时连「按键有没有到界面」都无从判断，
+               //   就是它把现场抹掉了）。改回可点：没有导航目标时会走 SaqToggleGuide 的
+               //   「该任务暂无导航目标」分支（界面提示 + OFF 音、不发请求）—— 正合需求
+               //   「不可引导要提示玩家，而不是单纯无法选中」。
+               this.PlotToLocationButton.Enabled = true;
             }
             if(_loc2_ || _loc1_.bIsMiscObjective === true)
             {
@@ -1638,6 +1678,12 @@ package
             GlobalFunc.PlayMenuSound(MISSION_SUBTASK_TOGGLE_SOUND);
          }
          this.bSkipSelectionSounds = false;
+         // ★ 第 43 轮：把这一刻的按钮状态记进报告 —— 诊断「按 R 没反应」的关键数据：
+         //   our/std 区分「我们的条目」是否被识别（bSaqAvailable 是否还在），
+         //   plot/map = 两个按钮此刻是启用(1)还是置灰(0)。
+         this.SaqLastBtnNote = (this.SaqIsOurEntry(_loc1_) ? "our" : "std")
+            + ":plot=" + (this.PlotToLocationButton != null && this.PlotToLocationButton.Enabled ? 1 : 0)
+            + ":map=" + (this.ShowOnMapButton != null && this.ShowOnMapButton.Enabled ? 1 : 0);
       }
       
       override protected function OnControlMapChanged(param1:Object) : void

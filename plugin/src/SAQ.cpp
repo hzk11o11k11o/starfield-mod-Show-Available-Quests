@@ -2352,6 +2352,30 @@ namespace SAQ
 
 		void OnMissionMenuClosed()
 		{
+			// ★★ 第 43 轮：关闭时刻的两项补强（排查「按 R 没反应」时定位出来的）。
+			//
+			//   ① 界面报告**现场读一次**，而不是只用 500ms 轮询的缓存 ——
+			//      玩家按 R 与菜单关闭常常落在同一个轮询周期里：旧代码打印的
+			//      `菜单关闭：界面最后状态` 是**按键之前**的缓存，日志里因此看起来
+			//      「按 R 什么都没发生」（press/btn/ev 探针全被缓存遮住）。
+			//   ② 关闭前**补一次引导请求轮询**：PollGuideRequest 只在「菜单开着」
+			//      那一支里跑（见 Tick），而按 R 后菜单常常立刻关掉（界面侧
+			//      CloseMenu(true) / 玩家取消）—— 旧代码紧接着就把 lastSeq 重置，
+			//      那次请求会被**丢掉**。先在重置前 poll 一次，能救回来。
+			//      （节流按「距上次 100ms」判定，关闭时刻这一下强制读 —— lastPollMs 清零。）
+			{
+				std::string live;
+				if (UI::ReadUiReport(live) && !live.empty()) {
+					g_poll.lastReport = std::move(live);
+				}
+			}
+			const auto seqBeforeClose = g_guide.lastSeq;
+			g_guide.lastPollMs = 0;
+			PollGuideRequest();
+			if (g_guide.lastSeq != seqBeforeClose) {
+				REX::INFO("菜单关闭：补处理了关闭瞬间的引导请求（序号 {} → {}）",
+					seqBeforeClose, g_guide.lastSeq);
+			}
 			if (!g_poll.lastReport.empty()) {
 				REX::INFO("菜单关闭：界面最后状态={}", g_poll.lastReport);
 			} else {
