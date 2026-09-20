@@ -354,7 +354,16 @@ namespace SAQ
 		//
 		// ★ 第 27 轮：N=5 = 只显示「无限任务入口」（任务板）条目 —— 验证任务板入口时
 		//   不受 260 条任务干扰（见 CollectAvailableQuests 里的 kEntryOnlyTestMode 分支）。
+		// ★★ 第 46 轮：N=6 = 只显示「需要靠近」的任务（候选池**全是非常驻引用**，
+		//   远处点引导会走「目标尚未加载 → 待生效 → 退避重试 → 靠近后自动生效」那条链路；
+		//   本机 76 条，实测样本「营救机器人」）—— 验证大项 B 的清单，不用在 261 条里翻。
 		// ------------------------------------------------------------------
+
+		// ★ 第 46 轮：候选池判定助手 —— 定义在下面的候选池区（`CandidateAt` 之后）。
+		//   两处调用：① 这里的测试模式 6（筛「需要靠近」的任务）；② CollectAvailableQuests
+		//   组 QuestEntry 时算 needsApproach（推给界面提示用）。
+		bool AllCandidatesNonPersistent(const StaticQuestInfo& a_info);
+
 		bool PassesTestFilter(const StaticQuestInfo& a_info, int a_mode)
 		{
 			switch (a_mode) {
@@ -366,6 +375,8 @@ namespace SAQ
 				return a_info.master != 0;
 			case 4:
 				return a_info.candCount != 0 && a_info.whereZh != nullptr && a_info.whereZh[0] != '\0';
+			case 6:
+				return AllCandidatesNonPersistent(a_info);   // ★ 第 46 轮：「需要靠近」那一类
 			default:
 				return true;  // 0 / 未知值 = 不过滤
 			}
@@ -381,6 +392,7 @@ namespace SAQ
 			case 3: return "只显示 DLC 条目";
 			case 4: return "只显示「有引导目标 + 有具名地点」的条目";
 			case 5: return "只显示「无限任务入口」（任务板）条目";
+			case 6: return "只显示「需要靠近」的条目（候选全是非常驻引用；远处点引导 = 待生效那条链路）";
 			default: return "关闭（显示全部）";
 			}
 		}
@@ -422,6 +434,8 @@ namespace SAQ
 				";   3 = 只显示 DLC 任务（59 条）\r\n"
 				";   4 = 只显示「有引导目标 + 有具名地点」的任务（85 条，最少最好找）\r\n"
 				";   5 = 只显示「无限任务入口」（任务板，12 条）—— 验证任务板条目的显示与引导\r\n"
+				";   6 = 只显示「需要靠近」的任务（候选全是非常驻引用，76 条；含「营救机器人」）\r\n"
+				";       —— 验证第 46 轮：待生效 / HUD 提示 / 自动重试 / 靠近后生效\r\n"
 				"; 控制台（如果你的游戏认 `set SAQ_TestMode to N`）非 0 时优先于本文件。\r\n"
 				"[Test]\r\n"
 				"Mode=0\r\n"
@@ -665,10 +679,6 @@ namespace SAQ
 				LogEntryMarkerProbe();
 			}
 		}
-
-		// ★ 第 46 轮：候选池判定助手 —— 定义在下面的候选池区（用到 CandidateAt）。
-		//   这里（CollectAvailableQuests 的 QuestEntry 组装）先用，所以提前声明。
-		bool AllCandidatesNonPersistent(const StaticQuestInfo& a_info);
 
 		// 收集"可接任务"候选 + 按运行时状态过滤。
 		//
