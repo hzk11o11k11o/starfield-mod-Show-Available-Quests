@@ -1036,18 +1036,15 @@ namespace SAQ::UI
 	//   `null` / 长度 0          → 参数根本没送到；
 	//   别的形状                 → 编码/截断问题。
 	// （SWF 还是旧版时会 `=fail`，恰好也能告出「SWF 没更新」。）
+	// ★ 第 16 轮删掉了「裸名字 + 宽字符」的那次对照调用（第 8 轮就用它证明了
+	//   「必须带 `_root.` 前缀」）——结论已固化成 kAttempts 的顺序，日志里
+	//   每次推送都留一条 `SAQ_Probe=fail` 只会误导看日志的人。
 	std::string ProbeAs3String(RE::Scaleform::GFx::ASMovieRootBase* a_root, const char* a_path,
-		const std::wstring& a_wide, const std::string& a_utf8, bool a_useWide)
+		const std::string& a_utf8)
 	{
 		RE::Scaleform::GFx::Value arg;
-		bool argReady = false;
-		if (a_useWide) {
-			arg = RE::Scaleform::GFx::Value(a_wide.c_str());
-			argReady = true;
-		} else if (VtableSlotInModule(a_root, kSlotAsRootCreateString)) {
-			argReady = SafeCreateString(a_root, &arg, a_utf8.c_str());
-		}
-		if (!argReady) {
+		if (!VtableSlotInModule(a_root, kSlotAsRootCreateString) ||
+			!SafeCreateString(a_root, &arg, a_utf8.c_str())) {
 			return std::string{ a_path } + "=arg失败";
 		}
 		RE::Scaleform::GFx::Value ret;
@@ -1123,9 +1120,8 @@ namespace SAQ::UI
 		//   第 8 轮实测结论：`_root.SAQ_Probe=6743|SAQ1\nT\t可接任务\tAvailable\nQ\t`
 		//   —— 载荷**完整**送到（6743 字符 = 8561 字节 UTF-8 的中文一字一 char），
 		//   且 24 字符前缀与载荷开头逐字相符 ⇒ 参数链路没有问题。
-		//   （裸名字那条 `SAQ_Probe=fail`，与 kAttempts 的实测一致：必须带 `_root.` 前缀。）
-		const std::string probeS = ProbeAs3String(root, "_root.SAQ_Probe", payloadWide, payloadUtf8, false);
-		const std::string probeW = ProbeAs3String(root, "SAQ_Probe", payloadWide, payloadUtf8, true);
+		//   （裸名字那条在旧日志里恒为 fail —— 与 kAttempts 的实测一致：必须带 `_root.` 前缀。）
+		const std::string probeS = ProbeAs3String(root, "_root.SAQ_Probe", payloadUtf8);
 
 		bool ok = false;
 		std::string trail;
@@ -1198,7 +1194,7 @@ namespace SAQ::UI
 		}
 
 		a_detail = bridgeDetail + slotNote +
-			" 探针: " + EscapeForLog(probeS, 120) + " | " + EscapeForLog(probeW, 120) +
+			" 探针: " + EscapeForLog(probeS, 120) +
 			" 调用: " + trail +
 			std::format(" 载荷={} 字节/{} 条", payloadUtf8.size(), a_quests.size()) +
 			" 状态: " + report;
@@ -1256,5 +1252,70 @@ namespace SAQ::UI
 		}
 		a_value = buf;
 		return true;
+	}
+
+	namespace
+	{
+		// ★ 第 16 轮：Invoke 一个「单字符串参数」的 AS3 函数，并把字符串应答读回来。
+		// 与 PushAvailableQuests 的传参方式一致（宽字符 Value：中文/ASCII 都不经过编码转换）。
+		// 返回 true = 调用发出（a_reply = AS3 应答）；false = 桥没通 / 函数不存在（旧 SWF）。
+		bool CallAs3WithString(RE::Scaleform::GFx::ASMovieRootBase* a_root, const char* a_path,
+			const char* a_argUtf8, std::string& a_reply)
+		{
+			const std::wstring wide = Utf8ToWide(a_argUtf8);
+			if (wide.empty()) {
+				a_reply = "参数编码失败";
+				return false;
+			}
+			RE::Scaleform::GFx::Value arg(wide.c_str());
+			RE::Scaleform::GFx::Value ret;
+			if (!SafeInvoke(a_root, a_path, &ret, &arg, 1)) {
+				a_reply = std::string{ a_path } + "=fail(路径不存在或调用失败)";
+				return false;
+			}
+			char buf[96]{};
+			if (SafeReadValueString(ret, buf, sizeof(buf))) {
+				a_reply = buf;
+			} else {
+				a_reply.clear();  // 调用成功但没返回字符串（函数的返回值是 undefined 之类）
+			}
+			return true;
+		}
+	}
+
+	// ★ 第 16 轮：引导结果回写（协议见 SAQ_UI.h 与 MissionMenu.as 的 SAQ_GuideReply）。
+	bool NotifyGuideReply(int a_seq, std::uint32_t a_actualFormID, int a_code, std::string& a_reply)
+	{
+		std::string detail;
+		if (!EnsureResolved(detail)) {
+			a_reply = "桥没通";
+			return false;
+		}
+		auto& bridge = Cached();
+		auto* root = reinterpret_cast<RE::Scaleform::GFx::ASMovieRootBase*>(bridge.asRoot);
+		if (!root) {
+			a_reply = "ASMovieRoot 指针为空";
+			return false;
+		}
+		const std::string arg = std::format("{}|{}|{}", a_seq, a_actualFormID, a_code);
+		return CallAs3WithString(root, "_root.SAQ_GuideReply", arg.c_str(), a_reply);
+	}
+
+	// ★ 第 16 轮：把「当前实际引导任务」同步给界面（见 SAQ_UI.h）。
+	bool SyncGuideState(std::uint32_t a_formID, std::string& a_reply)
+	{
+		std::string detail;
+		if (!EnsureResolved(detail)) {
+			a_reply = "桥没通";
+			return false;
+		}
+		auto& bridge = Cached();
+		auto* root = reinterpret_cast<RE::Scaleform::GFx::ASMovieRootBase*>(bridge.asRoot);
+		if (!root) {
+			a_reply = "ASMovieRoot 指针为空";
+			return false;
+		}
+		const std::string arg = std::to_string(a_formID);
+		return CallAs3WithString(root, "_root.SAQ_SyncGuideState", arg.c_str(), a_reply);
 	}
 }

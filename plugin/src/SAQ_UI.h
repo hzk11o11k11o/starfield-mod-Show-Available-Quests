@@ -54,5 +54,19 @@ namespace SAQ
 		// 用途：引导请求（`_root.SAQ_PeekGuide` → "<seq>|<questFormID>"）。
 		// 返回 false = 桥没通 / SWF 旧版 / 返回值不是字符串。
 		bool ReadUiString(const char* a_path, std::string& a_value);
+
+		// ★ 第 16 轮：把「引导请求的处理结果」回写给 AS3（`_root.SAQ_GuideReply`）。
+		// 协议 "<seq>|<实际引导任务FormID>|<结果码>"（见 MissionMenu.as 里的说明）。
+		// 为什么要它：没有回写时，玩家点到「没有引导目标」的任务会看到界面说
+		// 「已设为引导」而实际什么都没发生（旧引导可能还在），界面状态长期不一致。
+		// 返回 true = 调用发出且 AS3 给了应答（a_reply = ok/same/stale/bad…）；
+		// false = 桥没通 / 调用失败（a_reply 里是原因）。
+		bool NotifyGuideReply(int a_seq, std::uint32_t a_actualFormID, int a_code, std::string& a_reply);
+
+		// ★ 第 16 轮：菜单打开、列表推送成功后，把「当前实际引导任务」同步给 AS3
+		// （`_root.SAQ_SyncGuideState`）。菜单每次打开都是新 SWF 实例、界面的
+		// SaqGuideQuest 归 0——不同步会丢竖条、点「正在引导的那条」第一次会变成重设。
+		// a_formID = 0 表示当前没有引导（界面保持 0 即可，调用方通常跳过这种同步）。
+		bool SyncGuideState(std::uint32_t a_formID, std::string& a_reply);
 	}
 }

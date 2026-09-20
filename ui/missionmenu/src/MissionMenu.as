@@ -733,6 +733,11 @@ package
                _loc1_["SAQ_ApplyPayload"] = this.SAQ_ApplyPayload;
                _loc1_["SAQ_Report"] = this.SAQ_Report;
                _loc1_["SAQ_PeekGuide"] = this.SAQ_PeekGuide;
+               // ★ 第 16 轮：C++ → 界面的两条回写通道
+               //   SAQ_GuideReply     = 引导请求的处理结果（成功/没有引导目标/写失败）
+               //   SAQ_SyncGuideState = 菜单打开后同步「当前实际引导任务」
+               _loc1_["SAQ_GuideReply"] = this.SAQ_GuideReply;
+               _loc1_["SAQ_SyncGuideState"] = this.SAQ_SyncGuideState;
             }
          }
          catch(e:Error)
@@ -944,6 +949,109 @@ package
       public function SAQ_PeekGuide() : String
       {
          return this.SaqGuideSeq + "|" + this.SaqGuideQuest;
+      }
+      
+      // 按 uID 找一条可接任务的显示名（引导相关文案用；找不到给 "?"）。
+      private function SaqQuestNameByID(param1:Number) : String
+      {
+         var _loc2_:Object = this.FindQuestEntryByID(this.AvailableQuests, param1);
+         if(_loc2_ != null)
+         {
+            return _loc2_.sName;
+         }
+         return "?";
+      }
+      
+      // ==================================================================
+      //  C++ → 界面 · 回写通道（第 16 轮）
+      //
+      //  为什么需要它：SaqToggleGuide 只能在本地「立刻」切状态（音效 / 竖条 / 文案），
+      //  但「这条任务到底有没有引导目标」只有 C++ 侧知道（静态表里的 guideRef）。
+      //  没有回写时，玩家点到**没有引导目标**的任务（202 条里 34 条）会看到
+      //  「已设为引导」，实际什么都没发生 —— 而且旧引导如果还在，游戏里指的仍是旧任务。
+      //
+      //  协议："<seq>|<实际引导任务FormID>|<结果码>"
+      //    结果码：0=成功 / 1=该任务没有引导目标 / 2=写 ESM 通道失败 / 3=静态表里没有这条
+      //  语义：**以「实际值」为准**——界面把 SaqGuideQuest 对齐到 C++ 报的实际值，
+      //  与本地状态不一致时就是「被拒绝」，回滚竖条并给出失败文案。
+      // ==================================================================
+      public function SAQ_GuideReply(param1:String) : String
+      {
+         if(param1 == null)
+         {
+            return "bad";
+         }
+         var _loc2_:Array = param1.split("|");
+         if(_loc2_.length < 3)
+         {
+            return "bad";
+         }
+         var _loc3_:int = int(_loc2_[0]);
+         if(_loc3_ != this.SaqGuideSeq)
+         {
+            // 玩家已经又点了别的（或界面换代）—— 过期应答，忽略。
+            return "stale";
+         }
+         var _loc4_:Number = Number(_loc2_[1]);
+         var _loc5_:int = int(_loc2_[2]);
+         var _loc6_:Number = this.SaqGuideQuest;
+         if(_loc4_ == _loc6_ && _loc5_ == 0)
+         {
+            // 成功且状态一致：本地早已切好（音效/文案/竖条都不动）
+            return "same";
+         }
+         this.SaqGuideQuest = _loc4_;
+         if(_loc5_ == 0)
+         {
+            this.SaqGuideNote = _loc4_ != 0 ? "已设为引导:" + this.SaqQuestNameByID(_loc4_) : "已取消引导";
+         }
+         else
+         {
+            // 被拒绝：回滚到「实际值」，给失败反馈（OFF 音 = 与原版「取消追踪」同款提示）
+            GlobalFunc.PlayMenuSound(MISSION_TRACKING_TOGGLE_OFF_SOUND);
+            if(_loc5_ == 1)
+            {
+               this.SaqGuideNote = "该任务暂无引导目标";
+            }
+            else if(_loc5_ == 2)
+            {
+               this.SaqGuideNote = "引导通道写入失败";
+            }
+            else
+            {
+               this.SaqGuideNote = "引导失败:任务不在静态表";
+            }
+         }
+         this.SaqApplyTrackedMarker(_loc6_, _loc4_);
+         return "ok";
+      }
+      
+      // ==================================================================
+      //  C++ → 界面 · 状态同步（第 16 轮）
+      //
+      //  菜单每次打开都是**新的 SWF 实例**（SaqGuideQuest 归 0），而引导可能还在生效
+      //  （蓝点还指着某个地方）。不同步的话有两个毛病：
+      //    ① 列表重建时 SaqBuildEntry 的 bActive 读 0 ⇒ 引导中那条的竖条丢了；
+      //    ② 对「正在引导的那条」第一次点击会被算成「设置引导」而不是「取消」。
+      //  只在玩家还没操作过（SaqGuideSeq == 0）时接受同步 —— 否则会覆盖玩家刚做的操作
+      //  （那种情况的结果由 SAQ_GuideReply 回来）。
+      // ==================================================================
+      public function SAQ_SyncGuideState(param1:String) : String
+      {
+         if(this.SaqGuideSeq != 0)
+         {
+            return "skip";
+         }
+         var _loc2_:Number = Number(param1);
+         var _loc3_:Number = this.SaqGuideQuest;
+         if(_loc2_ == _loc3_)
+         {
+            return "same";
+         }
+         this.SaqGuideQuest = _loc2_;
+         this.SaqGuideNote = _loc2_ != 0 ? "当前引导:" + this.SaqQuestNameByID(_loc2_) : "-";
+         this.SaqApplyTrackedMarker(_loc3_, _loc2_);
+         return "ok";
       }
       
       private function OnQuestDataUpdate(param1:FromClientDataEvent) : void

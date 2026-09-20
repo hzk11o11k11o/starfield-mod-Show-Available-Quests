@@ -80,6 +80,14 @@ Event OnInit()
 		;   白跑一次「清除引导」（虽然无害，但日志里会多一条没意义的记录）。
 		GuideState.SetValue(3)
 	EndIf
+	; ★ 第 16 轮：脚本重挂自愈。
+	;   读档/任务重启会让本脚本重新 OnInit（实测一次游戏会话里 OnInit 跑了 3 次），
+	;   重挂会把别名清空（游戏里的蓝点随之消失），但 GLOB 里可能还留着引导目标
+	;   （DLL 那边认为引导还在）。把状态置回 0（待处理），让定时器立刻重新应用一次。
+	If GuideTargetRef != None && GuideState != None && GuideTargetRef.GetValue() > 0.0
+		GuideState.SetValue(0)
+		Debug.Trace("[SAQ] 脚本重挂且引导目标仍在 —— 重新应用引导")
+	EndIf
 	RegisterForMenuOpenCloseEvent("BSMissionMenu")
 	StartTimer(PollInterval, PollTimerID)
 EndEvent

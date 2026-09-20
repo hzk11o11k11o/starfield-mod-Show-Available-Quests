@@ -113,11 +113,18 @@ namespace SAQ
 
 		// 推送重试状态（只在主线程读写，不需要锁）。
 		// 菜单刚打开的那一两帧 SWF 可能还没初始化完，Invoke 会失败 —— 隔几帧再试。
+		//
+		// ★ 第 16 轮：把「等待菜单就绪」和「推送失败」拆成两套计数。实测每次开菜单
+		//   第 1 次推送都命中「UI 表里还没有 BSMissionMenu 条目」（菜单正在创建，0ms 就返回），
+		//   原来固定 400ms 退避 + 计入 attempts，会让列表从内嵌数据切成 C++ 数据拖到 ~0.8 秒，
+		//   而且日志每次都先来一条「推送失败（完整诊断）」。
 		struct PendingPush
 		{
 			std::vector<QuestEntry> quests;
 			std::size_t             total{};
-			std::uint32_t           attempts{};
+			std::uint32_t           attempts{};        // 正式推送尝试（预算 14 次，指数退避）
+			std::uint32_t           menuWaitTries{};   // 「菜单还没就绪」的等待次数（预算 24 次，150ms 短退避）
+			bool                    done{};            // 本次菜单打开已处理完（成功/放弃）
 			std::uint64_t           lastAttemptMs{};
 			// ★ 第 11 轮：失败退避间隔（400 → 800 → 1600 → …封顶 4000）。
 			//   实测「菜单打开后 40 秒才就绪」的场景（日志：重试间隔 15 秒 × 2 次），
@@ -129,6 +136,9 @@ namespace SAQ
 		constexpr std::uint32_t kMaxPushAttempts = 14;
 		constexpr std::uint64_t kPushRetryIntervalMs = 400;
 		constexpr std::uint64_t kPushRetryMaxMs = 4000;
+		// 「菜单还没就绪」的短退避与等待预算（24 × 150ms ≈ 3.6 秒）
+		constexpr std::uint64_t kMenuNotReadyRetryMs = 150;
+		constexpr std::uint32_t kMaxMenuWaitTries = 24;
 
 		// ------------------------------------------------------------------
 		// 本地化
@@ -324,48 +334,30 @@ namespace SAQ
 			}
 		}
 
-		// 一次性自检：把几个 form 数组的长度打出来（只读长度、不迭代）。
-		// 目的是把「为什么 TESDataHandler 那条路读到 0」这件事钉死（偏移过时 / 索引不对）。
-		void LogFormArrayProbe()
-		{
-			auto* dataHandler = RE::TESDataHandler::GetSingleton();
-			if (!dataHandler) {
-				REX::INFO("自检: TESDataHandler = null");
-				return;
-			}
-			const RE::FormType probe[] = {
-				RE::FormType::kQUST,
-				RE::FormType::kNPC_,
-				RE::FormType::kARMO,
-				RE::FormType::kWEAP,
-				RE::FormType::kMESG,
-				RE::FormType::kFLST,
-			};
-			std::string line;
-			for (const auto type : probe) {
-				const auto& arr = dataHandler->formArrays[std::to_underlying(type)].formArray;
-				line += std::to_string(std::to_underlying(type));
-				line += '=';
-				line += std::to_string(arr.size());
-				line += ' ';
-			}
-			REX::INFO("自检: TESDataHandler={:p} formArrays[类型=数量] {}", static_cast<const void*>(dataHandler), line);
-		}
-
 		// ------------------------------------------------------------------
 		// UI 推送
 		// ------------------------------------------------------------------
 
-		bool PushToUI(const std::vector<QuestEntry>& a_quests, bool a_verbose)
+		// ★ 第 16 轮：区分「菜单还没建好」和「真推送失败」（两者日志与重试策略都不同）。
+		// 判据是 UI 桥失败详情里的那句话（SAQ_UI.cpp::ResolveMapAndMenu 里唯一会这么写的地方）。
+		constexpr std::string_view kMenuNotReadyMark = "UI 里没找到 BSMissionMenu 的菜单表条目";
+
+		// 返回 true = 推送成功。a_menuNotReady = 失败原因是「菜单表条目还没出现」（预期现象）。
+		bool PushToUI(const std::vector<QuestEntry>& a_quests, bool a_verbose, bool& a_menuNotReady)
 		{
 			std::string detail;
 			const auto t0 = NowMs();
 			const bool ok = UI::PushAvailableQuests(a_quests, detail);
 			const auto cost = NowMs() - t0;
+			a_menuNotReady = !ok && detail.find(kMenuNotReadyMark) != std::string::npos;
 			// ★ 第 11 轮：耗时进日志。玩家报「打开任务菜单假死很久」——这一行能直接区分
 			//   「我们这层慢」还是「主线程被别的东西占着」（后者见 Tick 里的停顿检测）。
 			if (ok) {
 				REX::INFO("推送成功：{} | {} 条 | 耗时 {} ms", detail, a_quests.size(), cost);
+			} else if (a_menuNotReady) {
+				// 菜单打开后头几百毫秒的**预期**状态（SWF 的菜单表条目还没挂上）——
+				// 不是故障，不打完整诊断（那些指针细节只会淹日志）。
+				REX::INFO("菜单尚未就绪（UI 表里还没有 BSMissionMenu 条目），稍后重试 | 耗时 {} ms", cost);
 			} else if (a_verbose) {
 				REX::WARN("推送失败（第 1 次，完整诊断）：{} | 耗时 {} ms", detail, cost);
 			} else {
@@ -436,22 +428,30 @@ namespace SAQ
 			return out;
 		}
 
-		// 尝试把待推送的数据送进 SWF；失败按退避间隔再试（菜单刚开时 SWF 可能还没就绪）。
+		// 定义在下面「引导」一节；这里前向声明（推送成功后要把当前引导同步给界面）。
+		void SyncGuideStateToUi();
+
+		// 尝试把待推送的数据送进 SWF。
+		//
+		// ★ 第 16 轮：两种失败分开对待 ——
+		//   ① 「菜单还没建好」（UI 表里没有 BSMissionMenu）：**预期现象**，用 150ms 短退避
+		//      快速重试、不消耗正式重试预算。实测每次开菜单都要等 0.3~0.5 秒菜单才就绪；
+		//      原来固定 400ms 退避会把「列表从内嵌数据切成 C++ 数据」拖到 ~0.8 秒
+		//      （窗口期内玩家看到的是内嵌回退数据，里面还带着本该被运行时过滤的条目）。
+		//   ② 真正的推送失败：指数退避（400 → 800 → …封顶 4000ms），预算 14 次。
 		void TryPushPending()
 		{
-			if (g_pending.quests.empty() || g_pending.attempts >= kMaxPushAttempts) {
+			if (g_pending.done || g_pending.quests.empty()) {
 				return;
 			}
 			const auto now = NowMs();
-			if (g_pending.attempts > 0 && now - g_pending.lastAttemptMs < g_pending.backoffMs) {
+			if (g_pending.lastAttemptMs != 0 && now - g_pending.lastAttemptMs < g_pending.backoffMs) {
 				return;
 			}
 			g_pending.lastAttemptMs = now;
-			++g_pending.attempts;
 
-			// 第一次打开菜单时做一次性自检 + UI 桥解析日志（只打一次，不刷屏）
+			// 第一次打开菜单时做一次性 UI 桥解析日志（只打一次，不刷屏）
 			if (!g_firstMenuLogged.exchange(true)) {
-				LogFormArrayProbe();
 				std::string bridgeDetail;
 				const auto t0 = NowMs();
 				if (UI::EnsureResolved(bridgeDetail)) {
@@ -461,20 +461,37 @@ namespace SAQ
 				}
 			}
 
-			if (PushToUI(g_pending.quests, g_pending.attempts == 1)) {
+			bool menuNotReady = false;
+			if (PushToUI(g_pending.quests, g_pending.attempts == 0 && g_pending.menuWaitTries == 0, menuNotReady)) {
 				const auto n = ++g_pushCount;
-				REX::INFO("菜单打开：静态表={} 引擎里存在={} 推送条数={} (第 {} 次尝试成功)",
-					g_pending.total, g_pending.stats.live, g_pending.quests.size(), g_pending.attempts);
+				REX::INFO("菜单打开：静态表={} 引擎里存在={} 推送条数={} (第 {} 次推送成功，另有 {} 次菜单未就绪等待)",
+					g_pending.total, g_pending.stats.live, g_pending.quests.size(),
+					g_pending.attempts + 1, g_pending.menuWaitTries);
 				g_pending.quests.clear();
-				g_pending.attempts = kMaxPushAttempts;  // 本次不再重试
-			} else {
-				// 失败 ⇒ 退避加倍（封顶 kPushRetryMaxMs）：菜单加载慢时别把机会烧光。
-				const auto doubled = g_pending.backoffMs * 2;
-				g_pending.backoffMs = doubled < kPushRetryMaxMs ? doubled : kPushRetryMaxMs;
-				if (g_pending.attempts >= kMaxPushAttempts) {
-					REX::WARN("推送放弃：重试 {} 次仍未成功（下次打开菜单会再试）", g_pending.attempts);
+				g_pending.done = true;
+				SyncGuideStateToUi();  // ★ 第 16 轮：新 SWF 实例不知道引导还在，把实际值同步过去
+				return;
+			}
+			if (menuNotReady) {
+				// 菜单还在创建：短退避快速重试（不计入正式重试预算）
+				++g_pending.menuWaitTries;
+				g_pending.backoffMs = kMenuNotReadyRetryMs;
+				if (g_pending.menuWaitTries >= kMaxMenuWaitTries) {
+					REX::WARN("菜单就绪等待超时：{} 次 × {} ms 仍未就绪（本次放弃，下次打开菜单再试）",
+						g_pending.menuWaitTries, kMenuNotReadyRetryMs);
 					g_pending.quests.clear();
+					g_pending.done = true;
 				}
+				return;
+			}
+			// 真失败 ⇒ 退避加倍（封顶 kPushRetryMaxMs）：菜单加载慢时别把机会烧光。
+			++g_pending.attempts;
+			const auto doubled = g_pending.backoffMs * 2;
+			g_pending.backoffMs = doubled < kPushRetryMaxMs ? doubled : kPushRetryMaxMs;
+			if (g_pending.attempts >= kMaxPushAttempts) {
+				REX::WARN("推送放弃：重试 {} 次仍未成功（下次打开菜单会再试）", g_pending.attempts);
+				g_pending.quests.clear();
+				g_pending.done = true;
 			}
 		}
 
@@ -588,39 +605,82 @@ namespace SAQ
 				entry ? entry->whereZh : "", scriptState);
 		}
 
-		// 应用一次引导请求。a_formID = 0 表示取消引导。
-		void ApplyGuideRequest(std::uint32_t a_formID)
+		// ★ 第 16 轮：把引导结果回写给界面（`_root.SAQ_GuideReply`，协议见 MissionMenu.as）。
+		//
+		// 为什么必须回写：界面只能「本地立刻切状态」（音效/竖条/文案），但一条任务
+		// 到底有没有引导目标只有这边知道。不回写时，玩家点到没有引导目标的任务
+		// （202 条里 34 条）会看到界面说「已设为引导」，实际什么都没发生 —— 而且
+		// 旧引导如果还在，游戏里指的仍是旧任务。
+		void NotifyGuideReply(int a_seq, std::uint32_t a_actual, int a_code)
+		{
+			std::string reply;
+			if (!UI::NotifyGuideReply(a_seq, a_actual, a_code, reply)) {
+				REX::WARN("引导结果回写界面失败：{}（界面状态可能滞后；下次开菜单会自动同步）", reply);
+				return;
+			}
+			REX::INFO("引导结果已回写界面：seq={} 实际=0x{:08X} 结果码={} 应答={}",
+				a_seq, a_actual, a_code, reply.empty() ? std::string{ "?" } : reply);
+		}
+
+		// ★ 第 16 轮：菜单打开、列表推送成功后，把「实际引导任务」同步给界面。
+		// （菜单每次打开都是新 SWF 实例、界面的 SaqGuideQuest 归 0——不同步会丢竖条、
+		//   点「正在引导的那条」第一次会变成重设而不是取消。）
+		void SyncGuideStateToUi()
+		{
+			if (g_guide.questFormID == 0) {
+				return;  // 没有引导：界面本来就是 0，不用同步
+			}
+			std::string reply;
+			if (!UI::SyncGuideState(g_guide.questFormID, reply)) {
+				REX::WARN("引导状态同步界面失败：{}（竖条/取消语义可能滞后）", reply);
+				return;
+			}
+			REX::INFO("引导状态已同步界面：当前=0x{:08X} 应答={}", g_guide.questFormID,
+				reply.empty() ? std::string{ "?" } : reply);
+		}
+
+		// 应用一次引导请求，并把结果回写给界面。a_formID = 0 表示取消引导。
+		// 结果码（与 AS3 的约定）：0=成功 / 1=没有引导目标 / 2=写通道失败 / 3=静态表里没有
+		void ApplyGuideRequest(std::uint32_t a_formID, int a_seq)
 		{
 			if (a_formID == 0) {
 				std::string detail;
 				if (Guide::SetGuideTarget(0, detail)) {
 					REX::INFO("引导请求：取消｜{}", detail);
+					g_guide.questFormID = 0;
+					g_guide.guideRef = 0;
+					NotifyGuideReply(a_seq, 0, 0);
 				} else {
 					REX::WARN("引导请求：取消失败｜{}", detail);
+					g_guide.questFormID = 0;
+					g_guide.guideRef = 0;
+					NotifyGuideReply(a_seq, 0, 2);
 				}
-				g_guide.questFormID = 0;
-				g_guide.guideRef = 0;
 				return;
 			}
 			const auto* entry = FindStaticQuest(a_formID);
 			if (!entry) {
 				REX::WARN("引导请求：静态表里没有 0x{:08X}（是内嵌回退表里的条目？）", a_formID);
+				NotifyGuideReply(a_seq, g_guide.questFormID, 3);
 				return;
 			}
 			if (entry->guideRef == 0) {
 				REX::WARN("引导请求：{}（0x{:08X}）没有引导目标（离线没算出「去哪里接」的引用，见 docs/05）",
 					entry->nameZh, a_formID);
+				NotifyGuideReply(a_seq, g_guide.questFormID, 1);
 				return;
 			}
 			std::string detail;
 			if (!Guide::SetGuideTarget(entry->guideRef, detail)) {
 				REX::WARN("引导请求：{}（0x{:08X}）写 ESM 通道失败｜{}", entry->nameZh, a_formID, detail);
+				NotifyGuideReply(a_seq, g_guide.questFormID, 2);
 				return;
 			}
 			g_guide.questFormID = a_formID;
 			g_guide.guideRef = entry->guideRef;
 			REX::INFO("引导请求：{}（0x{:08X}）→ 引用 0x{:08X}（{}）｜{}",
 				entry->nameZh, a_formID, entry->guideRef, entry->whereZh, detail);
+			NotifyGuideReply(a_seq, a_formID, 0);
 		}
 
 		// 菜单开着时轮询 AS3 的引导请求（`_root.SAQ_PeekGuide` → "<序号>|<任务FormID>"）。
@@ -659,7 +719,7 @@ namespace SAQ
 				return;
 			}
 			g_guide.lastSeq = seq;
-			ApplyGuideRequest(static_cast<std::uint32_t>(fid));
+			ApplyGuideRequest(static_cast<std::uint32_t>(fid), seq);
 		}
 
 		// 菜单打开时的收尾：被引导的任务如果已经「被引擎开始」（玩家接到了），
@@ -690,6 +750,40 @@ namespace SAQ
 			g_guide.guideRef = 0;
 		}
 
+		// ★ 第 16 轮：引导「静默失效」的自愈。
+		//
+		// 两种场景（都实测/推断过）：
+		//   ① 脚本重挂：读档会让 SAQ_Main 重新 OnInit（Papyrus 日志实测一次会话 3 次），
+		//      别名被清空、脚本把 GuideState 写成 3（已清除）—— 而这边还认为在引导，
+		//      游戏里的蓝点却没了（UI 上也仍显示引导中）。
+		//   ② 引用当时没加载：引导目标是非常驻引用、格子没加载时脚本报 2（取不到），
+		//      之后玩家飞近了、引用加载了，但脚本不会自己重试。
+		// 两种情况都靠「把通道重写一遍（GuideState 清 0）」让脚本重新应用一次。
+		// 状态 4（别名不存在）不重发 —— ESM 补丁没生效，重写也没用。
+		void ReissueGuideIfScriptLost()
+		{
+			if (g_guide.questFormID == 0) {
+				return;  // 没在引导
+			}
+			const auto ch = Guide::EnsureChannel();
+			if (!ch.resolved) {
+				return;  // 通道没认领（ESM 没加载等）—— LogEsmChannel 已经记过原因
+			}
+			if (ch.guideState != 2.0f && ch.guideState != 3.0f) {
+				return;  // 0=待处理（脚本会自己应用）/ 1=已应用（正常）
+			}
+			std::string detail;
+			const auto* entry = FindStaticQuest(g_guide.questFormID);
+			if (!Guide::SetGuideTarget(g_guide.guideRef, detail)) {
+				REX::WARN("引导重新下发失败：{}（0x{:08X}）｜{}",
+					entry ? entry->nameZh : "?", g_guide.questFormID, detail);
+				return;
+			}
+			REX::INFO("引导重新下发：{}（0x{:08X}）脚本状态={:.0f}"
+					  "（2=引用当时没加载 / 3=脚本重挂丢了别名），已清 0 让脚本再试｜{}",
+				entry ? entry->nameZh : "?", g_guide.questFormID, ch.guideState, detail);
+		}
+
 		void OnMissionMenuClosed()
 		{
 			if (!g_poll.lastReport.empty()) {
@@ -715,6 +809,9 @@ namespace SAQ
 
 			g_pending.quests.clear();
 			g_pending.attempts = 0;
+			g_pending.menuWaitTries = 0;
+			g_pending.done = false;
+			g_pending.lastAttemptMs = 0;
 			g_pending.total = 0;
 			g_pending.backoffMs = kPushRetryIntervalMs;  // 新一轮重试：退避复位
 			const auto t0 = NowMs();
@@ -730,6 +827,7 @@ namespace SAQ
 			// 引导（第 10 轮）：ESM 通道自证 + 已接取任务的引导自动取消 + 当前引导状态
 			LogEsmChannel();
 			AutoClearGuideIfAccepted();
+			ReissueGuideIfScriptLost();  // ★ 第 16 轮：脚本重挂 / 引用没加载 → 重发一次
 			LogGuideState();
 
 			TryPushPending();
