@@ -2,6 +2,10 @@
 
 #include "SAQ_UI.h"
 
+// ★ 第 36 轮：载荷 `P` 行要用「代理任务的运行期 FormID」，加载前缀只有引导通道知道
+//   （SAQ_Guide.cpp 的 GLOB 认领）——所以这里读它。EnsureChannel 有缓存，开销只是一次读。
+#include "SAQ_Guide.h"
+
 #include "RE/B/BSFixedString.h"
 #include "RE/I/IMenu.h"
 // 注意 include 顺序：ASMovieRootBase.h 不自包含（Value/Movie/FunctionHandler 都要先有），
@@ -904,10 +908,31 @@ namespace SAQ::UI
 
 	namespace
 	{
+		// ★ 第 36 轮：代理任务（SAQ_MainQuest，记录号 0x800）的运行期 FormID。
+		//   为什么要推给界面：原版任务菜单按 R（SET COURSE）时，引擎取「目标位置」→
+		//   打开星图 → 聚焦目标星球 → 询问是否导航。我们的可接任务在引擎侧不存在，
+		//   但**代理任务**是真实任务、它的目标别名此刻绑着「接取地点」引用（脚本
+		//   ForceRefTo）—— 所以 AS3 把这个 FormID 交给原版的 MissionMenu_PlotToLocation
+		//   流程，效果就与原版一致（见 MissionMenu.as::SaqPlotToLocationViaEngine）。
+		//
+		//   FormID = (插件加载前缀 << 24) | 0x800（记录号，见 SAQ.cpp::kOwnQuestLocal）。
+		//   前缀是**运行期**才知道的（ESM 通道认领时得到）；没认领（ESM 没启用 /
+		//   脚本没跑）就返回 0 —— 界面据此跳过原版流程，只保留我们自己的引导。
+		std::uint32_t ProxyQuestFormID()
+		{
+			constexpr std::uint32_t kProxyQuestLocal = 0x800;
+			const auto ch = SAQ::Guide::EnsureChannel();
+			if (!ch.resolved) {
+				return 0;
+			}
+			return (ch.prefix << 24) | kProxyQuestLocal;
+		}
+
 		// 把任务列表编成一行行文本（AS3 侧 MissionMenu.SaqParsePayload 解析，
 		// 协议与 SWF 内嵌的回退数据完全一致）：
 		//     SAQ1
 		//     T\t可接任务\tAvailable
+		//     P\t<代理任务FormID>（第 36 轮；0 = 通道没认领，界面跳过原版星图流程）
 		//     Q\t<FormID>\t<type>\t<中文名>\t<英文名>\t<有无引导目标>
 		//   （第 23 轮追加最后一列 "1"/"0"；旧版 AS3 会忽略多余列，向后兼容）
 		//
@@ -918,9 +943,11 @@ namespace SAQ::UI
 		std::string BuildPayloadUtf8(const std::vector<QuestEntry>& a_quests)
 		{
 			std::string s;
-			s.reserve(a_quests.size() * 48 + 96);
+			s.reserve(a_quests.size() * 48 + 128);
 			s += "SAQ1\n";
 			s += "T\t" + std::string{ kTabTitleZh } + "\t" + std::string{ kTabTitleEn } + "\n";
+			// ★ 第 36 轮：P = 代理任务 FormID（SET COURSE 时把原版星图流程跑起来，见上面的注释）
+			s += "P\t" + std::to_string(ProxyQuestFormID()) + "\n";
 			for (const auto& q : a_quests) {
 				std::string zh = q.nameZh;
 				std::string en = q.nameEn;
@@ -1203,7 +1230,8 @@ namespace SAQ::UI
 		a_detail = bridgeDetail + slotNote +
 			" 探针: " + EscapeForLog(probeS, 120) +
 			" 调用: " + trail +
-			std::format(" 载荷={} 字节/{} 条", payloadUtf8.size(), a_quests.size()) +
+			std::format(" 载荷={} 字节/{} 条 代理任务=0x{:08X}", payloadUtf8.size(),
+				a_quests.size(), ProxyQuestFormID()) +
 			" 状态: " + report;
 		return ok;
 	}

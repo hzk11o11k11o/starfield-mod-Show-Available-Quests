@@ -171,6 +171,13 @@ package
       // 最近一次引导动作（进报告，日志里能看出玩家点了什么）
       private var SaqGuideNote:String = "-";
 
+      // ★ 第 36 轮：代理任务（SAQ_MainQuest）的运行期 FormID —— 由 C++ 载荷的 `P\t<FormID>`
+      //   行推来（DLL 知道自己的加载前缀，见 SAQ_Guide.cpp）。用途：按 SET COURSE 时把它
+      //   交给**原版**的 MissionMenu_PlotToLocation 流程 —— 引擎会打开星图、聚焦到
+      //   「接取地点」所在的星球并询问玩家是否导航（这正是原版任务菜单按 R 的表现）。
+      //   0 = 不知道（内嵌回退表 / 旧版 DLL）⇒ 跳过原版流程，只做我们自己的引导。
+      private var SaqProxyQuestID:Number = 0;
+
       private var StoredLastOpenedIds:Array = null;
       
       private var StoredLastCategory:uint = 0;
@@ -518,6 +525,9 @@ package
       private function SaqParsePayload(param1:String) : Array
       {
          var _loc2_:Array = new Array();
+         // ★ 第 36 轮：每次解析都从载荷重新确定「代理任务 FormID」——
+         //   载荷换源（C++ 推送 ↔ 内嵌回退表）时不留下上一次的值。
+         this.SaqProxyQuestID = 0;
          if(param1 == null)
          {
             return _loc2_;
@@ -536,6 +546,17 @@ package
                   {
                      this.SaqTitleZh = _loc6_[0];
                      this.SaqTitleEn = _loc6_[_loc6_.length - 1];
+                  }
+               }
+               else if(_loc5_.substr(0,2) == "P\t")
+               {
+                  // ★ 第 36 轮：P 行 = 代理任务（SAQ_MainQuest）的运行期 FormID。
+                  //   有了它，「设定航线」才能走原版的星图流程（见 SaqPlotToLocationViaEngine）。
+                  //   旧载荷没有这一行 ⇒ 保持 0（功能降级，不报错）。
+                  var _loc8_:Number = Number(_loc5_.substr(2));
+                  if(_loc8_ > 0)
+                  {
+                     this.SaqProxyQuestID = _loc8_;
                   }
                }
                else if(_loc5_.substr(0,2) == "Q\t")
@@ -912,6 +933,8 @@ package
             + " visible=" + (this.visible ? "1" : "0");
          _loc8_ += " last=" + this.SaqTabProbe + " ourTab=" + this.SaqOurTabProbe + " ourTabMax=" + this.SaqOurTabMaxList;
          _loc8_ += " guide=" + this.SaqGuideSeq + "|" + this.SaqGuideQuest + "|" + this.SaqGuideNote;
+         // ★ 第 36 轮：代理任务 FormID（0x… = 已知，`0` = 载荷没带 P 行 ⇒ 星图流程降级）
+         _loc8_ += " proxy=0x" + Number(this.SaqProxyQuestID).toString(16);
          // 玩家任务日志名单（第 11 轮，诊断用）：QuestData 的「FormID:名字」，最多 12 条。
          // 用途：玩家说「某条可接任务没找到」时，先看它是不是**已经在玩家日志里**
          // （那样它被 C++/AS3 两层过滤中的某一层正当挡掉）—— 在这个名单里一查便知。
@@ -1042,6 +1065,48 @@ package
          //   我们的条目看起来「永远没被选中」，缺少这个视觉反馈。
          this.SaqApplyTrackedMarker(_loc3_, _loc2_);
          return _loc2_ != 0;
+      }
+      
+      // ==================================================================
+      //  ★ 第 36 轮：SET COURSE 的「原版星图」这一半
+      //
+      //  原版（真实任务）按 R 时做的事情：dispatch MissionMenu_PlotToLocation{questID} →
+      //  引擎取该任务的目标位置 → 目标不在当前星球就**打开星图**、聚焦到那颗星球，
+      //  并询问玩家是否导航；在同一星球上则直接设置本地航线。
+      //
+      //  我们的可接任务在引擎侧不存在（还没接取），直接把它的 uID 丢进去只会静默失败。
+      //  但**代理任务**（SAQ_MainQuest）是真实任务：它的目标别名此刻绑着「接取地点」
+      //  引用（脚本 ForceRefTo），所以用它的 FormID 走同一条流程，效果与原版一致。
+      //
+      //  代理任务的运行期 FormID 只有 C++ 侧知道（插件加载前缀是运行期的），由载荷的
+      //  `P\t<FormID>` 行推来（见 SAQ_UI.cpp::BuildPayloadUtf8 / SaqParsePayload）。
+      //  拿不到（内嵌回退表 / 旧 DLL）就静默跳过 —— 只保留我们自己的引导，不报错。
+      //
+      //  返回值只用于日志（SAQ_Report 的 guide 段）。
+      // ==================================================================
+      private function SaqPlotToLocationViaEngine() : Boolean
+      {
+         if(Number(this.SaqProxyQuestID) <= 0)
+         {
+            this.SaqGuideNote += "｜星图:无代理任务ID";
+            return false;
+         }
+         try
+         {
+            BSUIDataManager.dispatchEvent(new CustomEvent(MissionMenu_PlotToLocation,{
+               "questID":this.SaqProxyQuestID,
+               "objectiveID":-1
+            }));
+            GlobalFunc.PlayMenuSound(MISSION_SHOW_ON_MAP_SOUND);
+            this.SaqGuideNote += "｜星图:已请求(代理任务 0x" + Number(this.SaqProxyQuestID).toString(16) + ")";
+            return true;
+         }
+         catch(_loc1_:Error)
+         {
+            // 引擎拒绝（例如任务菜单要关了）时不要让异常冒出去把菜单带崩。
+            this.SaqGuideNote += "｜星图:异常 " + _loc1_.message;
+            return false;
+         }
       }
       
       // 把「当前引导的任务」写进条目的 bActive，并就地刷新受影响的条目。
@@ -1519,7 +1584,22 @@ package
          // 不把不存在的任务 ID 丢给原版的数据层（那样只会静默失败）。
          if(this.SaqIsOurEntry(this.MissionsList_mc.selectedEntry))
          {
-            this.SaqToggleGuide(this.MissionsList_mc.selectedEntry);
+            // ★ 第 36 轮：行为与原版对齐 —— SET COURSE 除了「设定引导」，还要走**原版的
+            //   星图流程**（打开星图 → 聚焦到接取地点所在星球 → 询问玩家是否导航）。
+            //
+            //   怎么做到「原版流程」：引擎处理 MissionMenu_PlotToLocation 时只需要一个
+            //   **真实存在、且带「已显示目标」的任务** —— 我们的代理任务（SAQ_MainQuest）
+            //   正是为此而生的：它的目标别名（SAQ_GuideTarget）此刻已经绑在「接取地点」
+            //   引用上（ForceRefTo）。所以把**代理任务**的 FormID 传进去，引擎就会
+            //   像对待原版任务一样：算出目标位置 → 打开星图 → 聚焦星球 → 询问导航。
+            //
+            //   只在「新设定」时发（同一条再按一次 = 取消引导，那时不该再弹星图）。
+            var _loc1_:Number = this.SaqGuideQuest;
+            var _loc2_:Boolean = this.SaqToggleGuide(this.MissionsList_mc.selectedEntry);
+            if(_loc2_ && _loc1_ != this.MissionsList_mc.selectedEntry.uID)
+            {
+               this.SaqPlotToLocationViaEngine();
+            }
             return;
          }
          if(MissionsListEntry.IsMission(this.MissionsList_mc.selectedEntry))
