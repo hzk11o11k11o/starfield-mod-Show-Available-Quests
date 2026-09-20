@@ -162,6 +162,16 @@ python tools\test\check_results.py
 * 若日志里只有 `harness：已请求启用（SAQ_TestHarness=1），等脚本回写 2` 而没有
   「通道就绪」⇒ ESM 没打补丁 / 脚本没跑，用 `verify_saq_build.py` 的
   `ESM(…) · 测试命令通道 GLOB 8/8` 与 `PEX · 测试通道已就绪 Trace` 两条先排除。
+* ★★ **无参入口必须按 0 参调用**（第 49 轮补丁，首测踩坑 ②）：`SAQ_TestDriveTab()` /
+  `SAQ_TestDriveState()` 在 AS3 里是 **0 参**。`InvokeUiTestDrive` 原来无条件传 1 个参数
+  （空字符串占位）⇒ Scaleform `Invoke` **直接失败**（耗时 0 ms，回
+  `_root.SAQ_TestDriveTab=fail(路径不存在或调用失败；SWF 是旧版？)` —— 文案会误导成「SWF 旧版」，
+  实际用 FFDec 反编译 `-export script` 能看到方法就在类里）。对照证据：同一 `_root` 上
+  0 参的 `SAQ_Report`（走 0 参调用）与 1 参的 `SAQ_Probe`（走 1 参调用）都成功。
+  现在 `a_arg` 为空即走 `numArgs=0`。规律：**实参个数必须与 AS3 签名一致**，别拿空串占位。
+* 用例失败中止时（如首测卡在 `ui.tab`），后面的 `menu.close` 不会跑到 ⇒ 任务菜单会留在屏幕上
+  （游戏暂停、脚本定时器冻结，要玩家手动按 Cancel）。补丁起 `finishAll`（含失败）会自动
+  `kHide` 关掉菜单（日志 `harness：结束时菜单还开着 —— 已请求关闭`）。
 
 ## 八、第一条用例（smoke）与它的判据
 

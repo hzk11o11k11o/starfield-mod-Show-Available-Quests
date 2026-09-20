@@ -853,6 +853,16 @@ namespace SAQ::Test
 		}
 
 		auto finishAll = [&]() {
+			// ★ 第 49 轮补丁：结束（含失败中止）时把菜单恢复成「关着」。
+			//   首测实证：smoke 在 ui.tab 失败中止 ⇒ 后面的 menu.close 步骤没跑到
+			//   ⇒ 任务菜单（暂停菜单）一直留在屏幕上（游戏暂停、脚本定时器冻结），
+			//   得玩家手动按 Cancel 才能继续。用例跑完菜单该回到常态。
+			if (MenuIsOpen()) {
+				std::string detail;
+				if (SetMenuOpen(false, detail)) {
+					REX::INFO("harness：结束时菜单还开着 —— 已请求关闭（{}）", detail);
+				}
+			}
 			g_finished = true;
 			WriteResults();
 			REX::INFO("harness：全部用例结束 —— {}", StatusLine());

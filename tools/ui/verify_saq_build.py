@@ -723,6 +723,12 @@ def main() -> int:
         all_ok &= check("DLL · 脚本未就绪判定", blob, b"SAQ_TestHarness")
         all_ok &= check("DLL · 界面测试驱动入口", blob, b"SAQ_TestDriveSelect")
         all_ok &= check("DLL · 菜单 kShow 开关", blob, "已请求打开任务菜单".encode())
+        # ★ 第 49 轮补丁（首测复查）：
+        #   ① 无参 AS3 入口必须按 0 参调用（`SAQ_TestDriveTab()` 是 0 参，
+        #      传 1 个空字符串占位 ⇒ Invoke 直接失败 ⇒ 首测 smoke 卡在 ui.tab）；
+        #   ② 用例结束（含失败中止）时把菜单恢复成关着 —— 首测失败中止后
+        #      menu.close 步骤没跑到，任务菜单一直留在屏幕上（游戏暂停）。
+        all_ok &= check("DLL · harness 结束清菜单", blob, "结束时菜单还开着".encode())
         # ★ 第 17 轮的核心判据：DLC 的两个 + 基础游戏一共 4 个数据源名都编进了 DLL
         for master in (b"Starfield.esm", b"ShatteredSpace.esm", b"SFBGS050.esm", b"SFBGS00D.esm"):
             all_ok &= check(f"DLL · 数据源 {master.decode()}", blob, master)

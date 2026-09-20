@@ -1398,9 +1398,22 @@ namespace SAQ::UI
 			a_reply = "参数编码失败";
 			return false;
 		}
-		RE::Scaleform::GFx::Value arg(wide.c_str());
+		// ★ 第 49 轮补丁：**实参个数必须与 AS3 签名一致**。
+		//   首测实证（smoke 卡在 ui.tab）：`SAQ_TestDriveTab()` 是 0 参，而我们传了
+		//   1 个参数（空字符串占位）⇒ Invoke **直接失败**（耗时 0 ms，
+		//   `_root.SAQ_TestDriveTab=fail(路径不存在或调用失败)`）。
+		//   同一个 `_root` 上的对照：0 参的 `SAQ_Report` 用 0 参调用一直成功
+		//   （每 500ms 轮询在读），1 参的 `SAQ_Probe` 用 1 参调用也成功
+		//   ⇒ 无参入口必须走 0 参调用，不能拿空字符串占位。
 		RE::Scaleform::GFx::Value ret;
-		if (!SafeInvoke(root, path.c_str(), &ret, &arg, 1)) {
+		bool called = false;
+		if (a_arg.empty()) {
+			called = SafeInvoke(root, path.c_str(), &ret, nullptr, 0);
+		} else {
+			RE::Scaleform::GFx::Value arg(wide.c_str());
+			called = SafeInvoke(root, path.c_str(), &ret, &arg, 1);
+		}
+		if (!called) {
 			a_reply = path + "=fail(路径不存在或调用失败；SWF 是旧版？)";
 			return false;
 		}
