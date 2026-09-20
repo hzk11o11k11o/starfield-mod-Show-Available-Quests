@@ -131,16 +131,19 @@ namespace SAQ::Guide
 		return out;
 	}
 
-	bool SetGuideTarget(std::uint32_t a_formID, std::string& a_detail, bool a_starMap)
+	bool SetGuideTarget(std::uint32_t a_formID, std::string& a_detail, bool a_starMap, float a_starMapState)
 	{
 		// ★ 第 37 轮：「设定航线（R）」= 除了设引导，还要打开星图。
 		//   状态的约定（与 SAQ_Main.psc 一致，见 docs/05 第十一节）：
-		//     0 = 待处理（脚本应用引导即可）
-		//     5 = 待处理 + 应用后打开星图（只有玩家按 R 的那条路会写这个值）
+		//     0   = 待处理（脚本应用引导即可）
+		//     5   = 待处理 + 应用后打开星图（只有玩家按 R 的那条路会写这个值）
+		//     6/7 = ★ 第 40 轮：同 5，但换别的地点候选（星图重试时用，见 SAQ.cpp）
 		//   取消引导（a_formID == 0）永远写 0 —— 玩家要的是「撤掉引导」，不是要航线。
 		const float kStarMapRequest = 5.0f;
-		const float requested = (a_starMap && a_formID != 0) ? kStarMapRequest : 0.0f;
-		const char* requestedNote = requested == kStarMapRequest ? "5（星图请求）" : "0";
+		const float requested = (a_starMap && a_formID != 0) ? a_starMapState : 0.0f;
+		const std::string requestedNote = requested > 0.0f
+			? std::format("{:.0f}（星图请求）", requested)
+			: std::string{ "0" };
 		if (!g_resolved) {
 			EnsureChannel();
 		}

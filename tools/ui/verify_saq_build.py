@@ -374,8 +374,10 @@ def main() -> int:
             # ★★ 第 37 轮：SET COURSE 的星图 —— 关任务菜单 + 结果探测 + 状态 5
             "星图请求(旧协议 kHide)": "星图：已请求关闭任务菜单".encode(),
             "星图结果(已打开)": "星图：已打开（MapMenu 在屏幕上".encode(),
-            "星图结果(没打开)": "秒内没有打开（MapMenu 不在屏幕上".encode(),
-            "状态5写入文案": "5（星图请求）".encode(),
+            # ★ 第 40 轮：这句补上「已尝试 N 次」，所以只查前缀
+            "星图结果(没打开)": "秒内没有打开".encode(),
+            # ★ 第 40 轮：状态值改由 std::format 生成（5/6/7 三个地点候选），所以只查后缀
+            "星图请求状态文案": "（星图请求）".encode(),
             "星图原生函数名": b"ShowGalaxyStarMapMenuAndPlotToLocation",
             "星图菜单名": b"MapMenu",
             # ★★ 第 38 轮：SET COURSE 的「最外层主菜单 / 要等好久」修复 ——
@@ -387,6 +389,17 @@ def main() -> int:
             "星图打开(带耗时)": "R 后约".encode(),
             # 暂停菜单的真正注册名（exe 菜单名表里是 PauseMenu，没有 DataMenu）
             "暂停菜单名": b"PauseMenu",
+            # ★★ 第 40 轮：星图「没开就自动重试」+「地点 → 星图节点」只读诊断
+            #   （16:28 会话：脚本在菜单关闭后 0.5 秒调用 ⇒ 星图根本没开）
+            "星图重试日志": "星图：第".encode(),
+            "星图重试换候选": "地点候选随之切换".encode(),
+            "星图放弃重试": "星图：放弃重试".encode(),
+            "星图诊断(地点链)": "星图诊断（".encode(),
+            "星图诊断(父地点)": "父地点".encode(),
+            "星图诊断(节点)": "节点=0x".encode(),
+            "星图诊断(未命中)": "（未命中：星图不会定位到这个地点）".encode(),
+            "星图诊断(玩家对照)": "玩家所在地点".encode(),
+            "星图节点解析器特征校验": "节点解析器不可用".encode(),
         }.items():
             all_ok &= check(f"DLL · {name}", blob, needle)
         # 反向检查：第 31 轮把候选链顺序换掉，第 30 轮的「marker 优先」诊断文案不应再出现
@@ -445,10 +458,19 @@ def main() -> int:
         all_ok &= check("PEX · 星图请求 Trace", blob, "星图请求".encode())
         all_ok &= check("PEX · 原生星图函数调用", blob, b"ShowGalaxyStarMapMenuAndPlotToLocation")
         # ★ 第 38 轮：星图目的地的「行星诊断」+「父地点链兜底」（第 38 轮新增的两段文案）
-        all_ok &= check("PEX · 星图行星诊断", blob, "（行星=".encode())
-        all_ok &= check("PEX · 父地点兜底", blob, "地点自己没有行星，改用父地点".encode())
+        all_ok &= check("PEX · 星图行星诊断", blob, "，行星=".encode())
         all_ok &= check("PEX · 父地点 API", blob, b"GetParentLocations")
         all_ok &= check("PEX · 行星 API", blob, b"GetCurrentPlanet")
+        # ★ 第 40 轮：三个地点候选 + 逐候选诊断（地点链 / 采用地点 / 候选号 / 行星地点）
+        all_ok &= check("PEX · 地点链日志", blob, "星图请求：父地点[".encode())
+        all_ok &= check("PEX · 采用地点诊断", blob, "采用地点=".encode())
+        all_ok &= check("PEX · 候选号诊断", blob, "候选号=".encode())
+        all_ok &= check("PEX · 行星地点 API", blob, b"GetLocation")
+        all_ok &= check("PEX · 地点候选属性", blob, b"StarMapPendingMode")
+        # 反向检查：第 40 轮把「地点自己没有行星，改用父地点」并入候选链诊断，旧串不应再出现
+        gone = "地点自己没有行星，改用父地点".encode() not in blob
+        print(("OK  " if gone else "MISS") + " PEX · 旧父地点兜底文案已替换(反向检查)")
+        all_ok &= gone
     else:
         print(f"MISS 缺少 PEX {pex}")
         all_ok = False

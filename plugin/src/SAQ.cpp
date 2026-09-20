@@ -35,14 +35,17 @@
 #include "SAQ_QuestTable.h"  // 生成物：master + 记录号 -> 中/英文名 + 类型 + 引导目标（tools/esm/gen_quest_table.py）
 #include "SAQ_EntryTable.h"  // 生成物：无限任务入口（任务板）条目（tools/esm/gen_entry_table.py）
 
+#include "RE/B/BGSLocation.h"   // ★ 第 40 轮：星图诊断要沿父地点链看引擎认哪个地点
 #include "RE/B/BSFixedString.h"
 #include "RE/B/BSTEvent.h"
 #include "RE/F/FormTypes.h"
 #include "RE/IDs.h"  // 编译期 ID 审计要用（见下方 kIdUsable）
 #include "RE/I/INISettingCollection.h"
+#include "RE/P/PlayerCharacter.h"  // ★ 第 40 轮：星图诊断里记玩家所在地点（对照用）
 #include "RE/S/Setting.h"
 #include "RE/T/TESDataHandler.h"
 #include "RE/T/TESForm.h"
+#include "RE/T/TESObjectREFR.h"   // ★ 第 40 轮：GetCurrentLocation / GetEditorLocation
 #include "RE/U/UI.h"
 // ★ 第 37 轮：SET COURSE（R）要打开星图 —— 用引擎自己的 UI 消息队列关掉任务菜单
 //   （kHide），脚本才能在下一次「菜单关闭」事件里调用 Papyrus 原生函数打开星图。
@@ -1346,6 +1349,175 @@ namespace SAQ
 		//
 		// 判据（下一轮日志）：`星图：已请求关闭任务菜单` → 脚本 `[SAQ] 星图请求：<地点>`
 		//   → 本文件的 `星图：已打开（MapMenu 在屏幕上）`（或没打开的 WARN）。
+		// ==================================================================
+		// ★ 第 40 轮：星图诊断 —— 引擎自己的「地点 → 星图节点」解析器（RVA 0xAC2AB0）。
+		//
+		//   为什么需要它：玩家反馈「R 能打开星图，但所有任务都指到沃利阿尔法星」。离线复核
+		//   （docs/05）证明：引擎的 `ShowGalaxyStarMapMenuAndPlotToLocation`（0x2010210）
+		//   第一步就是 `0xac2ab0(&node, 地点)`，node 会原样进 UI 消息载荷，星图靠它定位；
+		//   同一个解析器也是 `Location.GetCurrentPlanet()` 的实现（0x1FEACE0：解析结果必须
+		//   是 PNDT(0xBA) 记录，否则返回 null）—— 所以它可以直接当判据：
+		//      节点 != 0 ⇒ 引擎认得这个地点（星图能定位到它对应的行星）
+		//      节点 == 0 ⇒ 引擎不认这个地点 ⇒ 星图只会按「当前位置」打开（玩家看到的现象）
+		//
+		//   这些函数**只读、只写日志**：不改任何行为，玩家再报「指错星球」时拿它定性。
+		//   调用约定（与 0x2010210 / 0x1FEACE0 一致）：rcx = 8 字节出参缓冲，rdx = 地点表单。
+		// ==================================================================
+		constexpr std::uintptr_t kResolveNodeRva = 0xAC2AB0;
+		// 函数头 8 字节: mov r11,rsp / mov [r11+0x20],rbx（dis_range.py 0xac2ab0 可见）
+		constexpr std::array<std::uint8_t, 8> kResolveNodeSig{
+			0x4C, 0x89, 0x1C, 0x24, 0x49, 0x89, 0x5B, 0x20
+		};
+
+		using ResolveNodeFn = void(__fastcall*)(void*, void*);
+
+		// ★ 特征校验与调用都必须放在**纯 POD 函数**里（MSVC 的 __try 不能与需要析构展开的
+		//   对象共存 —— 本项目已踩过，见 SAQ_QuestState.cpp 的注释）。
+		void* ProbeResolveNodeFn()
+		{
+			__try {
+				const auto base = reinterpret_cast<std::uintptr_t>(::GetModuleHandleW(nullptr));
+				if (!base) {
+					return nullptr;
+				}
+				const auto* p = reinterpret_cast<const std::uint8_t*>(base + kResolveNodeRva);
+				for (std::size_t i = 0; i < kResolveNodeSig.size(); ++i) {
+					if (p[i] != kResolveNodeSig[i]) {
+						return nullptr;
+					}
+				}
+				return const_cast<std::uint8_t*>(p);
+			} __except (EXCEPTION_EXECUTE_HANDLER) {
+				return nullptr;
+			}
+		}
+
+		bool PODResolveNode(void* a_fn, void* a_out, void* a_loc)
+		{
+			__try {
+				reinterpret_cast<ResolveNodeFn>(a_fn)(a_out, a_loc);
+				return true;
+			} __except (EXCEPTION_EXECUTE_HANDLER) {
+				return false;
+			}
+		}
+
+		bool PODFormID(const void* a_form, std::uint32_t& a_out)
+		{
+			__try {
+				a_out = static_cast<const RE::TESForm*>(a_form)->GetFormID();
+				return true;
+			} __except (EXCEPTION_EXECUTE_HANDLER) {
+				return false;
+			}
+		}
+
+		bool PODParentLocation(const void* a_loc, void*& a_out)
+		{
+			__try {
+				a_out = static_cast<const RE::BGSLocation*>(a_loc)->parentLocation.get();
+				return true;
+			} __except (EXCEPTION_EXECUTE_HANDLER) {
+				return false;
+			}
+		}
+
+		bool PODCurrentLocation(void* a_ref, void*& a_out)
+		{
+			__try {
+				a_out = static_cast<RE::TESObjectREFR*>(a_ref)->GetCurrentLocation();
+				return true;
+			} __except (EXCEPTION_EXECUTE_HANDLER) {
+				return false;
+			}
+		}
+
+		bool PODEditorLocation(void* a_ref, void*& a_out)
+		{
+			__try {
+				a_out = static_cast<RE::TESObjectREFR*>(a_ref)->GetEditorLocation();
+				return true;
+			} __except (EXCEPTION_EXECUTE_HANDLER) {
+				return false;
+			}
+		}
+
+		bool PODPlayerLocation(void*& a_out)
+		{
+			__try {
+				auto* player = RE::PlayerCharacter::GetSingleton();
+				a_out = player ? player->GetCurrentLocation() : nullptr;
+				return true;
+			} __except (EXCEPTION_EXECUTE_HANDLER) {
+				return false;
+			}
+		}
+
+		// 「地点 → 星图节点」一行（节点 + 第二个出参）。取不到就写原因。
+		std::string StarMapNodeOf(void* a_loc)
+		{
+			if (!a_loc) {
+				return "（地点为空）";
+			}
+			static void* s_fn = ProbeResolveNodeFn();
+			if (!s_fn) {
+				return "（节点解析器不可用：游戏版本特征不符）";
+			}
+			std::uint32_t buf[2]{};
+			if (!PODResolveNode(s_fn, buf, a_loc)) {
+				return "（节点解析调用异常）";
+			}
+			return std::format("节点=0x{:08X}｜标记=0x{:08X}{}",
+				buf[0], buf[1], buf[0] ? "" : "（未命中：星图不会定位到这个地点）");
+		}
+
+		// ★ 第 40 轮：星图诊断（每次按 R 记一次）——把「引导引用所在的地点链」逐层解析。
+		//   引擎认哪一层 = 星图该用哪一层（脚本会把「行星自己的地点」优先传给原生函数）。
+		void LogStarMapDiagnosis(const char* a_why)
+		{
+			const auto refID = g_guide.guideRef;
+			if (refID == 0) {
+				return;
+			}
+			auto* form = RE::TESForm::LookupByID(refID);
+			auto* refr = form ? form->As<RE::TESObjectREFR>() : nullptr;
+			if (!refr) {
+				REX::INFO("星图诊断（{}）：引导引用 0x{:08X} 取不到（所在格子没加载）", a_why, refID);
+				return;
+			}
+			void* loc = nullptr;
+			const char* kind = "当前地点";
+			if (!PODCurrentLocation(refr, loc) || !loc) {
+				kind = "编辑地点";
+				if (!PODEditorLocation(refr, loc) || !loc) {
+					REX::INFO("星图诊断（{}）：引用 0x{:08X} 的当前/编辑地点都是空"
+							  "（脚本会在请求时自己找地点）",
+						a_why, refID);
+					return;
+				}
+			}
+			for (int depth = 0; depth <= 3; ++depth) {
+				std::uint32_t fid = 0;
+				if (!PODFormID(loc, fid)) {
+					break;
+				}
+				REX::INFO("星图诊断（{}）：地点链[{}]{}＝0x{:08X}｜{}", a_why, depth,
+					depth == 0 ? kind : "父地点", fid, StarMapNodeOf(loc));
+				void* parent = nullptr;
+				if (!PODParentLocation(loc, parent) || !parent || parent == loc) {
+					break;
+				}
+				loc = parent;
+			}
+			void* playerLoc = nullptr;
+			if (PODPlayerLocation(playerLoc) && playerLoc) {
+				std::uint32_t fid = 0;
+				PODFormID(playerLoc, fid);
+				REX::INFO("星图诊断（{}）：玩家所在地点＝0x{:08X}（对照：星图若「站在原地」就是这个）",
+					a_why, fid);
+			}
+		}
+
 		struct StarMapProbe
 		{
 			bool          pending{};      // 已发出「关菜单 + 开星图」请求，等验证
@@ -1356,6 +1528,14 @@ namespace SAQ
 			// ★ 第 38 轮：界面侧会自己走原版的「退回游戏」路径关掉**整个**暂停菜单。
 			bool          closedBySwf{};
 			std::uint32_t questID{};      // 请求时的引导任务（日志用）
+			// ★ 第 40 轮：**自动重试**。16:28 会话的实测：脚本在「菜单关闭」后 0.5 秒就调了
+			//   原生函数，而那一刻暂停菜单还在关（关闭动画/收尾）⇒ 星图**根本没开**，
+			//   12 秒窗口内一次都没出现过（DLL 每帧查 MapMenu 都没有）。而第 38 轮那三次
+			//   「星图开了但要等好久」的会话里，脚本调用发生在菜单关掉 4~5 秒之后 ⇒ 开了。
+			//   所以：没开就再让脚本调一次（重写「待处理 + 星图」状态），号码见下。
+			int           attempts{};     // 已尝试次数（1 = 玩家按 R 的那一次）
+			std::uint64_t retryAtMs{};    // 下一次重试的时间点
+			std::uint32_t guideRef{};     // 请求时的引导引用（变了/取消了就放弃重试）
 		};
 		StarMapProbe g_starMap;
 
@@ -1367,6 +1547,14 @@ namespace SAQ
 		//   星图一出现就记「R 后约 N 秒」。
 		constexpr std::uint64_t kStarMapMidCheckMs = 1500;
 		constexpr std::uint64_t kStarMapWindowMs = 12000;
+		// ★ 第 40 轮：重试节奏与上限。第 2/3 次会顺带**换地点候选**（状态值告诉脚本用哪个，
+		//   脚本侧见 SAQ_Main.psc 的取值表）：
+		//     第 1 次 = 状态 5（优先「行星自己的地点」——第 40 轮的新默认）
+		//     第 2 次 = 状态 6（引用当前/编辑地点原样 —— 第 37~39 轮的行为）
+		//     第 3 次 = 状态 7（父地点链里第一个带行星的地点）
+		//   三个候选各试一次，日志里能看出「哪一次把星图打开了」。
+		constexpr std::uint64_t kStarMapRetryMs = 2500;
+		constexpr int           kStarMapMaxAttempts = 3;
 
 		// 请求「关菜单 + 开星图」。调用方保证通道已经写好状态 5。
 		// ★ 第 38 轮：a_swfCloses = 新 SWF 会在收到回写后自己调 CloseMenu(true)
@@ -1384,6 +1572,12 @@ namespace SAQ
 			g_starMap.midLogged = false;
 			g_starMap.closedBySwf = a_swfCloses;
 			g_starMap.questID = a_questID;
+			// ★ 第 40 轮：重试与诊断的现场快照
+			g_starMap.attempts = 1;
+			g_starMap.retryAtMs = now + kStarMapRetryMs;
+			g_starMap.guideRef = g_guide.guideRef;
+			// ★ 第 40 轮：把「引擎认不认这个地点」写进日志（只读诊断，见上面注释）
+			LogStarMapDiagnosis("R 请求");
 			if (a_swfCloses) {
 				REX::INFO("星图：界面侧会自己关掉整个暂停菜单（新协议，不发 kHide）"
 						  "｜引导任务={}（0x{:08X}）",
@@ -1431,10 +1625,12 @@ namespace SAQ
 		}
 
 		// 每帧调用（内部按 pending/到点自我短路，没请求时零开销）：
-		//   ① 星图一出现就记一行（带 R 后的秒数）；
+		//   ① 星图一出现就记一行（带 R 后的秒数与尝试次数）；
 		//   ② 中途记一行「还开着哪些菜单」（卡在 PauseMenu = 游戏仍暂停 = 脚本定时器不走
 		//      = 星图要等玩家手动关菜单，正是第 37 轮那个 4~5 秒延迟）；
-		//   ③ 窗口结束还没出现才 WARN。
+		//   ③ ★ 第 40 轮：没开就自动重试（重写「待处理 + 星图」状态，脚本再调一次原生函数；
+		//      第 2/3 次顺带换地点候选 —— 见 kStarMapRetryMs 上面的说明）；
+		//   ④ 窗口结束还没出现才 WARN。
 		void CheckStarMapOpened()
 		{
 			if (!g_starMap.pending) {
@@ -1449,8 +1645,9 @@ namespace SAQ
 
 			if (ui->IsMenuOpen("MapMenu")) {
 				g_starMap.pending = false;
-				REX::INFO("星图：已打开（MapMenu 在屏幕上，R 后约 {:.1f} 秒）—— SET COURSE 链路完整",
-					elapsed);
+				REX::INFO("星图：已打开（MapMenu 在屏幕上，R 后约 {:.1f} 秒，第 {} 次尝试）"
+						  "—— SET COURSE 链路完整",
+					elapsed, g_starMap.attempts);
 				return;
 			}
 			if (!g_starMap.midLogged && now >= g_starMap.midCheckMs) {
@@ -1469,11 +1666,40 @@ namespace SAQ
 						elapsed, menus);
 				}
 			}
+			// ★ 第 40 轮：自动重试。只在「没有任何菜单开着」时重试 —— 菜单开着时游戏暂停、
+			//   脚本定时器不走，重试请求要等菜单关了才会被处理；与其干等，不如推迟。
+			if (now >= g_starMap.retryAtMs && g_starMap.attempts < kStarMapMaxAttempts) {
+				const auto menus = OpenMenusSummary();
+				if (menus != "无") {
+					g_starMap.retryAtMs = now + 1000;
+					return;
+				}
+				if (g_guide.guideRef == 0 || g_guide.guideRef != g_starMap.guideRef) {
+					g_starMap.pending = false;
+					REX::INFO("星图：放弃重试（引导目标已取消/已换：0x{:08X} → 0x{:08X}）",
+						g_starMap.guideRef, g_guide.guideRef);
+					return;
+				}
+				++g_starMap.attempts;
+				const float state = g_starMap.attempts == 2 ? 6.0f : 7.0f;
+				std::string detail;
+				if (Guide::SetGuideTarget(g_guide.guideRef, detail, /*a_starMap=*/true, state)) {
+					REX::INFO("星图：第 {} 次尝试（把通道重设为待处理 + 星图 {:.0f}：脚本会在菜单关着时"
+							  "再调一次原生函数，地点候选随之切换）｜R 后约 {:.1f} 秒",
+						g_starMap.attempts, state, elapsed);
+				} else {
+					REX::WARN("星图：第 {} 次尝试写通道失败｜{}", g_starMap.attempts, detail);
+				}
+				g_starMap.retryAtMs = now + kStarMapRetryMs;
+				g_starMap.deadlineMs = now + kStarMapWindowMs;   // 窗口跟着顺延
+				return;
+			}
 			if (now >= g_starMap.deadlineMs) {
 				g_starMap.pending = false;
-				REX::WARN("星图：{:.1f} 秒内没有打开（MapMenu 不在屏幕上｜还开着：{}）—— "
-						  "看 Papyrus 的 `[SAQ] 星图请求` 两行有没有出现（取不到地点 / 脚本没跑）",
-					static_cast<double>(kStarMapWindowMs) / 1000.0, OpenMenusSummary());
+				REX::WARN("星图：{:.1f} 秒内没有打开（已尝试 {} 次｜MapMenu 不在屏幕上｜还开着：{}）"
+						  "—— 看 Papyrus 的 `[SAQ] 星图请求` 两行有没有出现（取不到地点 / 脚本没跑）",
+					static_cast<double>(kStarMapWindowMs) / 1000.0, g_starMap.attempts,
+					OpenMenusSummary());
 			}
 		}
 

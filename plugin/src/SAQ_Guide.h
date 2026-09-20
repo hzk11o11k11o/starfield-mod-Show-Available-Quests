@@ -71,14 +71,18 @@ namespace SAQ
 		Channel EnsureChannel();
 
 		// 写引导目标（a_formID = 0 表示取消引导）。
-		// 成功时同时把 SAQ_GuideState 写成一个「待处理」值（0 或 5，告诉脚本「有新请求」）：
-		//   0 = 普通请求（脚本应用引导就行）；
-		//   5 = ★ 第 37 轮：**玩家按了「设定航线（R）」** —— 脚本应用完引导后还要调用
-		//       引擎原生的 `Game.ShowGalaxyStarMapMenuAndPlotToLocation(地点)` 打开星图
-		//       （见 SAQ_Main.psc 的状态表与 docs/05 第十一节）。
+		// 成功时同时把 SAQ_GuideState 写成一个「待处理」值（0 或 5/6/7，告诉脚本「有新请求」）：
+		//   0   = 普通请求（脚本应用引导就行）；
+		//   5   = ★ 第 37 轮：**玩家按了「设定航线（R）」** —— 脚本应用完引导后还要调用
+		//         引擎原生的 `Game.ShowGalaxyStarMapMenuAndPlotToLocation(地点)` 打开星图
+		//         （见 SAQ_Main.psc 的状态表与 docs/05 第十一节）。地点 = 优先「行星自己的
+		//         地点」（第 40 轮）。
+		//   6/7 = ★ 第 40 轮：同 5，但换用别的地点候选（重试时用；6 = 引用当前/编辑地点原样，
+		//         7 = 父地点链里第一个带行星的地点）。理由见 SAQ.cpp 的星图重试注释。
 		//   a_starMap 只由「玩家请求」那条路传 true；内部路径（重发 / 动态更新 /
 		//   静默更新 / 自动取消）一律 false —— 那些不是玩家在要航线。
-		bool SetGuideTarget(std::uint32_t a_formID, std::string& a_detail, bool a_starMap = false);
+		bool SetGuideTarget(std::uint32_t a_formID, std::string& a_detail, bool a_starMap = false,
+			float a_starMapState = 5.0f);
 
 		// 丢掉认领结果（换存档/换加载顺序后用；正常流程不需要）。
 		void ResetChannel();

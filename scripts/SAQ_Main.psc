@@ -38,7 +38,7 @@ Scriptname SAQ_Main extends Quest
 ;  VMAD 里的「别名属性」要写对 Object/Alias 联合体的字节格式，容易出错；
 ;  Quest.GetAlias(int) 原生函数直接按 id 取，零风险。
 ;
-;  ## SAQ_GuideState 的取值（DLL 写 0/5，脚本写 1/2/3/4）
+;  ## SAQ_GuideState 的取值（DLL 写 0/5/6/7，脚本写 1/2/3/4）
 ;
 ;    0 = 待处理（DLL 每次下新目标都会置 0）
 ;    1 = 已应用（ForceRefTo + 显示目标 + 设为追踪）
@@ -54,6 +54,14 @@ Scriptname SAQ_Main extends Quest
 ;        为什么必须这么绕：任务菜单开着时 Papyrus 定时器不走（第 27 轮实测定案），
 ;        脚本只能在菜单关闭时跑；而 DLL 直接调 Papyrus 原生函数要伪造 VM 栈帧，
 ;        风险远大于收益（详见 docs/05 第十一节）。
+;    6/7 = ★ 第 40 轮：同 5，只是换「要传给引擎的地点」：
+;        5 = **优先「行星自己的地点」**（Planet.GetLocation()——引擎的星图节点就是
+;            按地点查表的，城市/内部地点常常只是行星地点的子地点；这是第 40 轮的新默认）；
+;        6 = 引导引用的当前/编辑地点**原样**（第 37~39 轮的行为）；
+;        7 = 沿父地点链找到的第一个**带行星**的地点。
+;        为什么要三个候选：玩家反馈「R 能打开星图，但所有任务都指到沃利阿尔法星」。
+;        DLL 在「星图没打开」时会自动重试并依次切换这三个候选（见 SAQ.cpp 的
+;        kStarMapRetryMs），日志里能看出哪一次把星图打开了。
 ;
 ;  ## SAQ_Notify = 7777 + 菜单打开次数
 ;
@@ -98,9 +106,18 @@ int Property PollTimerID = 1 AutoReadOnly
 
 ; ★ 第 37 轮：星图请求的延时与定时器 id（见 OpenStarMapFor 的说明）。
 ;   为什么不在「菜单关闭」事件里直接调：那一刻菜单还在销毁流程里，
-;   延后 0.5 秒（菜单关掉后游戏已恢复运行 ⇒ 定时器会走）更稳。
-float Property StarMapDelay = 0.5 AutoReadOnly
+;   延后一段时间（菜单关掉后游戏已恢复运行 ⇒ 定时器会走）更稳。
+;   ★ 第 40 轮：0.5 秒 → **1.5 秒**。实测（16:28 会话）：脚本在「菜单关闭」后 0.5 秒就调了
+;   原生函数，而那一刻暂停菜单还在关（关闭动画/收尾）⇒ **星图根本没开**
+;   （DLL 每帧查 MapMenu，12 秒窗口内一次都没出现）。而 15:55 那几次「星图开了」的会话里，
+;   脚本调用发生在菜单关掉 4~5 秒之后。所以把延时拉长，并且 DLL 侧还有自动重试兜底。
+float Property StarMapDelay = 1.5 AutoReadOnly
 int Property StarMapTimerID = 2 AutoReadOnly
+
+; ★ 第 40 轮：本次星图请求要用的「地点候选」（DLL 写进 SAQ_GuideState 的值，见 ApplyGuide）。
+;   5 = 优先「行星自己的地点」（Planet.GetLocation()，默认）；6 = 引用当前/编辑地点原样；
+;   7 = 父地点链里第一个带行星的地点。DLL 的自动重试会依次换 5 → 6 → 7。
+int StarMapPendingMode = 5
 
 Event OnInit()
 	Debug.Trace("[SAQ] SAQ_Main OnInit —— 注册菜单事件 + 启动引导轮询")
@@ -129,7 +146,7 @@ Event OnTimer(int aiTimerID)
 	If aiTimerID == StarMapTimerID
 		ObjectReference pendingTarget = StarMapPendingRef
 		StarMapPendingRef = None
-		OpenStarMapFor(pendingTarget)
+		OpenStarMapFor(pendingTarget, StarMapPendingMode)
 		Return
 	EndIf
 	; 重新排下一拍（Starfield 的定时器是一次性的）
@@ -176,7 +193,8 @@ Function ApplyGuide()
 	float pendingState = GuideState.GetValue()
 	; ★ 第 37 轮：5 = 待处理 + 应用后打开星图（玩家按了「设定航线」）。
 	;   0 = 普通待处理（脚本自己下发的重发/动态更新/自愈都走这个值）。
-	Bool starMapWanted = (pendingState == 5.0)
+	;   ★ 第 40 轮：6/7 = 同 5，只是换「要传给引擎的地点」（DLL 重试时用，见文件头状态表）。
+	Bool starMapWanted = (pendingState == 5.0) || (pendingState == 6.0) || (pendingState == 7.0)
 	If !starMapWanted && pendingState != 0.0
 		; 没有新的请求（1/2/3/4 都表示上一轮已经处理完）
 		Return
@@ -227,8 +245,9 @@ Function ApplyGuide()
 	;   那一刻菜单还在销毁流程里，直接开另一个菜单容易被引擎吞掉（见 OpenStarMapFor）。
 	If starMapWanted
 		StarMapPendingRef = target
+		StarMapPendingMode = pendingState as int
 		StartTimer(StarMapDelay, StarMapTimerID)
-		Debug.Trace("[SAQ] 星图请求：" + StarMapDelay + " 秒后打开（目标 " + target + "）")
+		Debug.Trace("[SAQ] 星图请求：" + StarMapDelay + " 秒后打开（目标 " + target + "，地点候选=" + StarMapPendingMode + "）")
 	EndIf
 EndFunction
 
@@ -257,8 +276,20 @@ EndFunction
 ;    ② 地点自己查不到行星时，沿父地点链往上找第一个**带行星**的地点再传给引擎
 ;       （传一个解析不出行星的地点，引擎只会把星图按默认焦点打开 —— 表现就是
 ;       「显示我所在的星球、没有任务导航点」）。
+;
+;  ★ 第 40 轮：三个候选 + 一行「采用」诊断（回应玩家反馈「R 能打开星图，但所有任务
+;   都指到沃利阿尔法星」）。离线结论（docs/05 第十节~）：引擎的
+;   `ShowGalaxyStarMapMenuAndPlotToLocation` 第一步是 `0xac2ab0(&节点, 地点)` ——
+;   **按「地点表单」查星图节点表**，查不到只会按「当前位置」打开星图。而引擎自己的
+;   `Location.GetCurrentPlanet()` 用的就是同一个解析器（0x1FEACE0）⇒ 「地点 → 行星」
+;   能成立并不代表「地点 → 星图节点」能成立。所以要试的出入口有三个：
+;     ① `body.GetLocation()`（行星自己的地点 —— 星图节点是按行星/星系地点登记的，
+;        城市/内部地点常常只是它的子地点）★ 现在的默认候选（DLL 状态 5）；
+;     ② 引用自己的当前/编辑地点（第 37~39 轮的行为，DLL 状态 6 = 重试时换它）；
+;     ③ 父地点链里第一个带行星的地点（DLL 状态 7 = 再换它）。
+;   三个候选各带一次，日志里「采用地点=…」这一行就是「这一轮传了什么」的硬证据。
 ; ============================================================================
-Function OpenStarMapFor(ObjectReference akTarget)
+Function OpenStarMapFor(ObjectReference akTarget, int aiMode)
 	If akTarget == None
 		Debug.Trace("[SAQ] 星图请求：引导目标引用为空，跳过")
 		Return
@@ -271,24 +302,70 @@ Function OpenStarMapFor(ObjectReference akTarget)
 		Debug.Trace("[SAQ] 星图请求失败：取不到目标地点（" + akTarget + "）")
 		Return
 	EndIf
-	Location plotLoc = loc
+
+	; ---- 收集候选（顺便把整条地点链打进日志，方便离线核对「引擎认哪一层」）----
 	Planet body = loc.GetCurrentPlanet()
-	If body == None
-		Location[] parents = loc.GetParentLocations()
-		int i = 0
-		While i < parents.Length && body == None
-			Location parentLoc = parents[i]
-			If parentLoc != None
-				Planet parentBody = parentLoc.GetCurrentPlanet()
-				If parentBody != None
-					plotLoc = parentLoc
+	Location parentWithPlanet = None
+	Location[] parents = loc.GetParentLocations()
+	int i = 0
+	While i < parents.Length
+		Location parentLoc = parents[i]
+		If parentLoc != None
+			Planet parentBody = parentLoc.GetCurrentPlanet()
+			If parentBody != None
+				If body == None
 					body = parentBody
-					Debug.Trace("[SAQ] 星图请求：地点自己没有行星，改用父地点 " + plotLoc)
+				EndIf
+				If parentWithPlanet == None
+					parentWithPlanet = parentLoc
 				EndIf
 			EndIf
-			i += 1
-		EndWhile
+			Debug.Trace("[SAQ] 星图请求：父地点[" + i + "]=" + FormText(parentLoc) + "（ID=" + FormIDText(parentLoc) + "，行星=" + FormText(parentBody) + "，行星ID=" + FormIDText(parentBody) + "）")
+		EndIf
+		i += 1
+	EndWhile
+	Location bodyLoc = None
+	If body != None
+		bodyLoc = body.GetLocation()
 	EndIf
-	Debug.Trace("[SAQ] 星图请求：打开星图并设定航线 → " + akTarget + " @ " + plotLoc + "（行星=" + body + "）")
+
+	; ---- 按候选挑一个传给引擎（默认 5 = 优先「行星自己的地点」）----
+	Location plotLoc = loc
+	int used = aiMode
+	If aiMode == 7
+		If parentWithPlanet != None
+			plotLoc = parentWithPlanet
+		Else
+			used = 6
+		EndIf
+	EndIf
+	If used != 7 && used != 6
+		If bodyLoc != None
+			plotLoc = bodyLoc
+			used = 5
+		Else
+			used = 6
+		EndIf
+	EndIf
+
+	Debug.Trace("[SAQ] 星图请求：打开星图并设定航线 → " + FormText(akTarget) + " @ " + FormText(loc) + "（ID=" + FormIDText(loc) + "，行星=" + FormText(body) + "，行星地点=" + FormText(bodyLoc) + "，父地点候选=" + FormText(parentWithPlanet) + "，候选号=" + used + "，采用地点=" + FormText(plotLoc) + "（ID=" + FormIDText(plotLoc) + "））")
 	Game.ShowGalaxyStarMapMenuAndPlotToLocation(plotLoc)
+EndFunction
+
+; ============================================================================
+;  ★ 第 40 轮：日志小工具 —— Papyrus 里把「可能为 None 的表单」拼进字符串很容易踩坑
+;  （None 与字符串相加的行为没保证），统一走这两个函数。
+; ============================================================================
+String Function FormText(Form akForm)
+	If akForm == None
+		Return "None"
+	EndIf
+	Return "" + akForm
+EndFunction
+
+String Function FormIDText(Form akForm)
+	If akForm == None
+		Return "-"
+	EndIf
+	Return "" + (akForm.GetFormID() as int)
 EndFunction
