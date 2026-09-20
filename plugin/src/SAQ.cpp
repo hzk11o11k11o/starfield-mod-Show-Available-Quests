@@ -464,6 +464,16 @@ namespace SAQ
 				"; 控制台（如果你的游戏认 `set SAQ_TestMode to N`）非 0 时优先于本文件。\r\n"
 				"[Test]\r\n"
 				"Mode=0\r\n"
+				"; ★★ 第 49 轮：harness 的两个键**必须在这个 [Test] 段里** —— 放到别的段\r\n"
+				";   （例如 [Filter]）插件读不到（GetPrivateProfileInt(\"Test\", …) 只认本段；\r\n"
+				";   实机踩过一次：构建脚本原来是「追加到文件末尾」，结果落进 [Filter] 段，\r\n"
+				";   harness 静默不跑）。\r\n"
+				";   0 = 关（默认，普通玩家）；1 = 启用引擎内自动化测试：插件会读 Plan 指向的\r\n"
+				";   用例文件，在游戏里自动造进度 / 开关菜单 / 选中 / 按键 / 断言，跑完把结果\r\n"
+				";   写到同目录的 SAQ_testresults.json。★ 会改任务状态：先备份存档。\r\n"
+				";   ★ 改 0→1 不必重启游戏（插件每 2 秒复查本文件；再置 1 会重新载入用例）。\r\n"
+				"Harness=0\r\n"
+				"Plan=SAQ_TestPlan.txt\r\n"
 				";\r\n"
 				"; ---- 进度门槛过滤（第 35 轮，「游戏进度还不能让玩家接到就不显示」） ----\r\n"
 				"; 判据来自任务记录级条件里「引用别的任务」的 GetQuestRunning / GetQuestCompleted\r\n"
@@ -477,16 +487,7 @@ namespace SAQ
 				";   1 = 过滤（默认）；0 = 只写日志（便于对照界面）\r\n"
 				"[Filter]\r\n"
 				"ProgressCond=1\r\n"
-				"InfoCond=1\r\n"
-				";\r\n"
-				"; ---- 引擎内自动化测试（harness，第 49 轮，「可接任务」这个 mod 的开发用） ----\r\n"
-				"; 普通玩家保持 Harness=0。Harness=1 时插件会读 Plan 指向的用例文件，在游戏里自动\r\n"
-				"; 执行（造任务进度 → 开关菜单 → 选中/按键 → 断言），跑完把结果写到同目录的\r\n"
-				"; SAQ_testresults.json。★ 会改任务状态：先备份存档、别在主力存档上跑。\r\n"
-				"; ★ 只在插件加载时读一次（改完要重启游戏）；一轮跑完本会话不再重跑。\r\n"
-				"[Test]\r\n"
-				"Harness=0\r\n"
-				"Plan=SAQ_TestPlan.txt\r\n";
+				"InfoCond=1\r\n";
 			std::ofstream f{ path.c_str(), std::ios::binary };
 			if (!f) {
 				REX::WARN("测试开关 ini 写不进去（忽略；不影响其它功能）");

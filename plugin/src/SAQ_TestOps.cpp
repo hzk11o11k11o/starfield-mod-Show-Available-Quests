@@ -76,7 +76,9 @@ namespace SAQ::Test
 		bool   g_iniCached{};
 		bool   g_iniValue{};
 		std::uint64_t g_iniReadAtMs{};
-		constexpr std::uint64_t kIniCacheMs = 3000;
+		// ★ 1 秒（不是 3 秒）：驱动器每 2 秒复查一次「Harness 有没有被改成 1」，
+		//   缓存太长会把「改完到开跑」的延迟拖到 5 秒以上，调试体感差（读一次 ini 很便宜）。
+		constexpr std::uint64_t kIniCacheMs = 1000;
 
 		bool ReadIniHarness()
 		{

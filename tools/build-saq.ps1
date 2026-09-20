@@ -271,12 +271,33 @@ if (-not $SkipDeploy) {
     if (Test-Path $iniDest) {
         $iniText = [System.IO.File]::ReadAllText($iniDest, [System.Text.Encoding]::UTF8)
         $iniChanged = $false
+        # ★★ 第 49 轮踩坑：Harness / Plan **必须落在 [Test] 段里** —— 第一版是「追加到文件
+        #   末尾」，而 [Test] 段在文件中间 ⇒ 两个键落进了 [Filter] 段，
+        #   GetPrivateProfileInt("Test", …) 读不到 ⇒ harness 静默不跑（实机表现为「进游戏
+        #   什么也没发生」）。现在改成「插在 [Test] 行之后」。
+        $newKeys = @()
         if ($iniText -notmatch '(?m)^\s*Harness\s*=') {
-            $iniText = $iniText.TrimEnd() + "`r`n; ★ 第 49 轮：引擎内自动化测试（1=启用；普通玩家保持 0）`r`nHarness=0`r`n"
-            $iniChanged = $true
+            $newKeys += '; ★ 第 49 轮：引擎内自动化测试（1=启用；普通玩家保持 0；改 0→1 不必重启游戏）'
+            $newKeys += 'Harness=0'
         }
         if ($iniText -notmatch '(?m)^\s*Plan\s*=') {
-            $iniText = $iniText.TrimEnd() + "`r`n; 用例文件（相对插件目录）—— 见 tools\test\scenarios`r`nPlan=SAQ_TestPlan.txt`r`n"
+            $newKeys += '; 用例文件（相对插件目录）—— 见 tools\test\scenarios'
+            $newKeys += 'Plan=SAQ_TestPlan.txt'
+        }
+        if ($newKeys.Count -gt 0) {
+            $lines = $iniText -split "`r`n"
+            $testIdx = -1
+            for ($i = 0; $i -lt $lines.Count; $i++) {
+                if ($lines[$i].Trim() -eq '[Test]') { $testIdx = $i; break }
+            }
+            if ($testIdx -ge 0) {
+                $head = @($lines[0..$testIdx])
+                $tail = if ($testIdx + 1 -lt $lines.Count) { @($lines[($testIdx + 1)..($lines.Count - 1)]) } else { @() }
+                $lines = $head + $newKeys + $tail
+            } else {
+                $lines = @($lines) + @('[Test]') + $newKeys
+            }
+            $iniText = ($lines -join "`r`n")
             $iniChanged = $true
         }
         if ($Harness) {

@@ -151,7 +151,14 @@ python tools\test\check_results.py
 ```
 
 * ★ **先备份存档**：harness 会改任务状态（`Reset/Start/Stage/Complete`），别在主力存档上跑。
-* `Harness` 只在插件加载时读一次（改完要重启游戏）；一轮跑完本会话不再重跑。
+* `Harness` 在插件加载时读一次；此外驱动器**每 2 秒复查**本文件 ⇒ 改 `0→1` 不必重启游戏
+  （要重新载入用例：拨回 0 再置 1）。一轮跑完本会话不再重跑。
+* ★★ **`Harness` / `Plan` 必须落在 `[Test]` 段里**。`GetPrivateProfileInt("Test", …)` 只认
+  本段 —— 放在别的段（例如 `[Filter]`）会**静默不跑**：日志只有一句
+  `harness：未启用（ini [Test] Harness=0）—— 引擎内自动化测试关闭`，游戏里「什么也没发生」。
+  **实机踩过一次**（第 49 轮首测）：`build-saq.ps1` 原来是「把两个键追加到文件末尾」，
+  而 `[Test]` 段在文件中间 ⇒ 键落进了 `[Filter]` 段。现在构建脚本改成「插在 `[Test]` 行之后」，
+  并在 ini 模板里写了这条警告。
 * 若日志里只有 `harness：已请求启用（SAQ_TestHarness=1），等脚本回写 2` 而没有
   「通道就绪」⇒ ESM 没打补丁 / 脚本没跑，用 `verify_saq_build.py` 的
   `ESM(…) · 测试命令通道 GLOB 8/8` 与 `PEX · 测试通道已就绪 Trace` 两条先排除。

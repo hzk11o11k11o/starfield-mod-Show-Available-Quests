@@ -93,6 +93,10 @@ namespace SAQ::Test
 
 		bool        g_enabled{};
 		bool        g_loaded{};
+		// ★ 未启用时的复查节流 + 「这次变成要跑了吗」的边沿标记（见 PollEnable）
+		bool        g_wantHarness{};
+		std::uint64_t g_lastEnableCheckMs{};
+		constexpr std::uint64_t kEnableCheckIntervalMs = 2000;
 		bool        g_harnessReady{};
 		bool        g_readyWarned{};
 		bool        g_active{};
@@ -809,9 +813,42 @@ namespace SAQ::Test
 		REX::INFO("harness：已启用（{} 个用例）—— 等脚本通道就绪后自动开跑", g_cases.size());
 	}
 
+	namespace
+	{
+		// 未启用时每 2 秒复查一次 ini：允许「Harness 改 0→1」**当场**载入用例并开跑。
+		//
+		// 为什么值得加这一段：ini 是在插件加载时读一次，而实机第一次跑 smoke 就因为
+		// 「两个键被构建脚本追加到了 [Filter] 段 ⇒ 读到 0」白重启了一次游戏。有了这条复查，
+		// 「改开关 → 看结果」的循环不需要重启（要重新载入用例：把 Harness 拨回 0 再置 1）。
+		bool PollEnable()
+		{
+			const auto now = NowMs();
+			if (now - g_lastEnableCheckMs < kEnableCheckIntervalMs) {
+				return false;
+			}
+			g_lastEnableCheckMs = now;
+			if (!HarnessRequested()) {
+				g_wantHarness = false;
+				return false;
+			}
+			if (g_wantHarness) {
+				return false;  // 已经尝试过载入（失败要重试就把开关拨一次）
+			}
+			g_wantHarness = true;
+			LoadPlan();
+			return true;
+		}
+	}
+
 	void Tick(bool a_menuOpen)
 	{
-		if (!g_enabled || !g_loaded || g_finished) {
+		if (g_finished) {
+			return;
+		}
+		if (!g_enabled || !g_loaded) {
+			// 未启用（或载入失败）：只在「这一次变成要跑」时载入一次，其余情况立刻返回
+			// ⇒ 零开销（一次时间戳比较）。
+			PollEnable();
 			return;
 		}
 
