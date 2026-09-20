@@ -327,6 +327,14 @@ HARNESS_STRINGS = (
     ("通道垃圾读数拒写", "拒绝写内存"),
     ("脚本未就绪判定", "SAQ_TestHarness"),
     ("界面测试驱动入口", "SAQ_TestDriveSelect"),
+    # ★★ 第 54 轮：harness 的三件新原语（历史判据落成用例时必须有的能力）——
+    #   ① 反向日志断言（第 26/44/49 轮的「不该再出现」类判据）；
+    #   ② 关掉任意菜单（星图也是暂停菜单，用例收尾必须能关掉它）；
+    #   ③ 传送到任务板（用例要「站远 / 走近」触发候选复算）。
+    ("反向日志断言", "assert.nolog"),
+    ("任意菜单关闭", "menu.hide"),
+    ("传送到任务板", "teleport.entry"),
+    ("界面测试驱动-子项", "SAQ_TestDriveSelectChild"),
     ("菜单 kShow 开关", "已请求打开任务菜单"),
     ("harness 结束清菜单", "结束时菜单还开着"),
     ("失败带 SWF 指纹", "SWF 指纹"),
@@ -491,6 +499,11 @@ def main() -> int:
         #   内部**调用真实的处理函数**（ProcessUserEvent / onEntryPress / ScrollingEvent），
         #   于是「造状态 → 开关菜单 → 选中 → 按键 → 断言」可以全自动跑。
         "测试入口-选中": b"SAQ_TestDriveSelect",
+        # ★★ 第 54 轮：**子项**选中入口（`ui.selectchild`）—— 主标题的 Enter 只展开（与原版
+        #   一致），「只引导、不开星图」那条链只有子项上的 Enter 才走（第 26 轮判据要用它）。
+        #   配套：MissionsList 的 `SAQ_FindChildIndexByUID`（子项 uID 与父项相同 ⇒ 不能按 uID 找）。
+        "测试入口-选中子项": b"SAQ_TestDriveSelectChild",
+        "列表按uID找子项": b"SAQ_FindChildIndexByUID",
         "测试入口-按键": b"SAQ_TestDriveKey",
         "测试入口-切 tab": b"SAQ_TestDriveTab",
         "测试入口-状态": b"SAQ_TestDriveState",
@@ -561,8 +574,10 @@ def main() -> int:
             all_ok = False
             continue
         text = p.read_text(encoding="utf-8", errors="replace")
-        for fn in ("SAQ_TestDriveTab", "SAQ_TestDriveSelect", "SAQ_TestDriveExpand",
-                   "SAQ_TestDriveKey", "SAQ_TestDriveState"):
+        # ★ 第 54 轮：新增子项选中入口（Enter 的「只引导」链 —— 第 26 轮「菜单久停」
+        #   判据要靠它停在菜单里；主标题的 Enter 只展开，不切引导）。
+        for fn in ("SAQ_TestDriveTab", "SAQ_TestDriveSelect", "SAQ_TestDriveSelectChild",
+                   "SAQ_TestDriveExpand", "SAQ_TestDriveKey", "SAQ_TestDriveState"):
             cnt = text.count(fn)
             ok = cnt >= 2
             print(("OK  " if ok else "MISS")
@@ -833,6 +848,29 @@ def main() -> int:
         else:
             for name, needle in HARNESS_STRINGS:
                 all_ok &= check(f"DLL · {name}", blob, needle.encode())
+            # ★★ 第 54 轮：用例计划本身也该被查 —— 历史判据（第 26/44~48 轮）落成用例后，
+            #   最怕的是「源码改了没部署」或「用例被误删」。这里只查**开发模式**：
+            #   ① 6 条用例都在（smoke + 5 条历史判据）；
+            #   ② MO2 部署副本与工作区**字节一致**（部署未落后 —— 与 DLL 同一条教训）。
+            plan_src = ROOT / "tools/test/scenarios/SAQ_TestPlan.txt"
+            if plan_src.exists():
+                plan_text = plan_src.read_text(encoding="utf-8", errors="replace")
+                for cid in ("smoke", "r26_menu_idle", "r44_starmap", "r45_candidates",
+                            "r47_board_marker", "r48_info_gate"):
+                    all_ok &= check(f"用例计划 · [case:{cid}]", plan_text.encode(),
+                                    f"[case:{cid}]".encode())
+                plan_deployed = MO2_MOD / "SFSE/Plugins/SAQ_TestPlan.txt"
+                if plan_deployed.exists():
+                    same = plan_deployed.read_bytes() == plan_src.read_bytes()
+                    print(("OK  " if same else "MISS") +
+                          " 用例计划 · MO2 部署副本与工作区一致（部署未落后）")
+                    all_ok &= same
+                else:
+                    print(f"MISS 用例计划 · MO2 部署副本不存在：{plan_deployed}")
+                    all_ok = False
+            else:
+                print(f"MISS 缺少用例计划 {plan_src}")
+                all_ok = False
         # ★ 第 17 轮的核心判据：DLC 的两个 + 基础游戏一共 4 个数据源名都编进了 DLL
         for master in (b"Starfield.esm", b"ShatteredSpace.esm", b"SFBGS050.esm", b"SFBGS00D.esm"):
             all_ok &= check(f"DLL · 数据源 {master.decode()}", blob, master)
@@ -1033,6 +1071,39 @@ def main() -> int:
         print(("OK  " if ok_slice else "MISS") +
               " 静态表 · 营救机器人兜底链（0x08ECA5 非常驻 → 0x08ECA6 常驻）")
         all_ok &= ok_slice
+        # ★★ 第 54 轮：把第 45 轮的**判据本身**落成离线检查（harness 的 r45 用例覆盖
+        #   「预选/升级/降级观察期」的运行时行为；「首选候选的质量」是纯数据事实，
+        #   离线查更稳 —— 玩家实测抱怨的那两条任务必须有「有名字的 NPC」当第一候选，
+        #   而不是 EnableMarker / HeadlockMarker 这类内部落脚点）：
+        #     · 平衡账目 0x0000351A：[1] 阿香（0x05797D）
+        #     · 群众心态 0x00063F4C：[1] 弗兰克斯卡·摩尔（0x19B086）
+        # 带名字的候选行（第 5 组 = nameZh）—— 匹配到 `}` 为止（不吞下一行的 `{`）
+        c_full = re.findall(
+            r"\{\s*0x([0-9A-F]+)u,\s*(\d+)u,\s*0x([0-9A-F]+)u,\s*(\d+)u,\s*\"([^\"]*)\"\s*\}",
+            cand_region)
+        first_ok = {}
+        for local, want_name, want_ref in (("0000351A", "阿香", "05797D"),
+                                           ("00063F4C", "弗兰克斯卡·摩尔", "19B086")):
+            m = re.search(
+                r"\{\s*0x" + local + r"u,\s*\d+u,\s*\d+u,\s*0x[0-9A-F]+u,\s*(\d+)u,\s*(\d+)u,", blob)
+            hit = False
+            if m and len(c_full) > 0:
+                begin = int(m.group(1))
+                if begin < len(c_full):
+                    row = c_full[begin]
+                    hit = (row[0].upper() == want_ref and row[4] == want_name)
+            first_ok[local] = hit
+        ok_first = all(first_ok.values())
+        print(("OK  " if ok_first else "MISS") +
+              " 静态表 · 第 45 轮首选候选质量（平衡账目[1]=阿香 / 群众心态[1]=弗兰克斯卡·摩尔）"
+              + ("" if ok_first else f" ← {first_ok}"))
+        all_ok &= ok_first
+        # 反向检查：这两个 EnableMarker 不该再当第一候选（第 45 轮玩家实测的抱怨形态）
+        bad_first = any(r[4] in ("FFNeonZ09_EnableRef", "FFNeonZ08_HeadlockEnableMarker001")
+                        for r in c_full[:1] + c_full[47:48])
+        print(("OK  " if not bad_first else "MISS") +
+              " 静态表 · 旧「EnableMarker 当首选」形态已替换(反向检查)")
+        all_ok &= not bad_first
 
         # ★★ 第 48 轮（大项 D）：INFO 门槛（对话侧条件）—— 数据侧完整性：
         #   ① 结构/数组存在；② 计数与实测对齐（290 条对话 / 341 条条件）；

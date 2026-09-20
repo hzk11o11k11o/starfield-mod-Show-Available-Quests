@@ -12,6 +12,7 @@
 #include "SAQ_UI.h"     // UI::InvokeUiTestDrive
 
 #include "RE/T/TESGlobal.h"
+#include "RE/U/UI.h"
 #include "RE/U/UIMessageQueue.h"
 
 #include <spdlog/sinks/base_sink.h>
@@ -385,15 +386,40 @@ namespace SAQ::Test
 	// ==================================================================
 	//  菜单开关
 	// ==================================================================
-	bool SetMenuOpen(bool a_open, std::string& a_detail)
+	bool MenuIsOpen(const char* a_name)
 	{
+		if (!a_name || !*a_name) {
+			return false;
+		}
+		auto* ui = RE::UI::GetSingleton();
+		return ui != nullptr && ui->IsMenuOpen(RE::BSFixedString{ a_name });
+	}
+
+	bool SetMenuOpenByName(const char* a_name, bool a_open, std::string& a_detail)
+	{
+		if (!a_name || !*a_name) {
+			a_detail = "菜单名为空";
+			return false;
+		}
 		auto* queue = RE::UIMessageQueue::GetSingleton();
 		if (!queue) {
 			a_detail = "UIMessageQueue 取不到（UI 还没起来？）";
 			return false;
 		}
-		queue->AddMessage(RE::BSFixedString{ kMenuName },
+		queue->AddMessage(RE::BSFixedString{ a_name },
 			a_open ? RE::UI_MESSAGE_TYPE::kShow : RE::UI_MESSAGE_TYPE::kHide);
+		a_detail = std::format("{}：{}", a_name, a_open ? "已请求打开（kShow）" : "已请求关闭（kHide）");
+		return true;
+	}
+
+	bool SetMenuOpen(bool a_open, std::string& a_detail)
+	{
+		std::string detail;
+		if (!SetMenuOpenByName(kMenuName, a_open, detail)) {
+			a_detail = detail;
+			return false;
+		}
+		// 保持历史文案（verify 与用例判据都在用）
 		a_detail = a_open ? "已请求打开任务菜单（kShow）" : "已请求关闭任务菜单（kHide）";
 		return true;
 	}

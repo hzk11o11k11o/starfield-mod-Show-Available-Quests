@@ -102,6 +102,13 @@ namespace SAQ::Test
 	// ------------------------------------------------------------------
 	bool SetMenuOpen(bool a_open, std::string& a_detail);
 
+	// ★ 第 54 轮：**任意菜单**的开关/查询（上面两个是 BSMissionMenu 的便捷包装）。
+	//   用途：用例收尾要把**星图**（GalaxyStarMapMenu）关掉 —— 它同样是暂停菜单，
+	//   不关掉的话游戏一直暂停、Papyrus 定时器不走，后面的命令步骤会全部超时
+	//   （用例 DSL 的 `menu.hide <注册名>`）。
+	bool MenuIsOpen(const char* a_name);
+	bool SetMenuOpenByName(const char* a_name, bool a_open, std::string& a_detail);
+
 	// 取消引导（用例 teardown 用）。走的是**产品路径**：DLL 把引导目标写成 0、状态清 0，
 	// 与「玩家自己取消引导 / 接取后自动取消」完全同一个调用（Guide::SetGuideTarget(0)）。
 	// 注意：真正生效仍要等脚本的轮询节拍（菜单关着时），所以放在最后一步就行。

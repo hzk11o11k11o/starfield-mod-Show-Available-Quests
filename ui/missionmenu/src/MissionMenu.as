@@ -914,6 +914,8 @@ package
                //   用 0 参也照样失败。教训：**加了新入口，必须同时加到这份清单里**。
                _loc1_["SAQ_TestDriveTab"] = this.SAQ_TestDriveTab;
                _loc1_["SAQ_TestDriveSelect"] = this.SAQ_TestDriveSelect;
+               // ★ 第 54 轮：子项选中（Enter 的「只引导」路径 —— 主标题的 Enter 只展开）
+               _loc1_["SAQ_TestDriveSelectChild"] = this.SAQ_TestDriveSelectChild;
                _loc1_["SAQ_TestDriveExpand"] = this.SAQ_TestDriveExpand;
                _loc1_["SAQ_TestDriveKey"] = this.SAQ_TestDriveKey;
                _loc1_["SAQ_TestDriveState"] = this.SAQ_TestDriveState;
@@ -1032,7 +1034,7 @@ package
          //   指纹写进本报告 ⇒ 日志里一眼看出游戏加载的是哪一版 SWF：
          //     有 `stamp=50` = 本次构建；没有 = 旧版（**完全重启游戏**后才会更新）。
          //   ★ 以后每改一次 SWF，就把这个数字 +1（verify 检查 `stamp=` 是否存在）。
-         _loc8_ += " stamp=52";
+         _loc8_ += " stamp=53";
          // ★★ 第 51 轮：入口自检（ep=）—— 见 SaqEntryProbe 的说明。
          //   位置在 stamp 之后、其余字段之前：报告有长度上限，这个字段是当前排查
          //   「测试入口调不到」问题的关键证据，必须优先保下来。
@@ -1102,7 +1104,7 @@ package
             {
                return _loc1_ + "no-root";
             }
-            var _loc3_:Array = ["SAQ_SetAvailableQuests","SAQ_Probe","SAQ_Report","SAQ_PeekGuide","SAQ_GuideReply","SAQ_SyncGuideState","SAQ_TestDriveTab","SAQ_TestDriveSelect","SAQ_TestDriveExpand","SAQ_TestDriveKey","SAQ_TestDriveState"];
+            var _loc3_:Array = ["SAQ_SetAvailableQuests","SAQ_Probe","SAQ_Report","SAQ_PeekGuide","SAQ_GuideReply","SAQ_SyncGuideState","SAQ_TestDriveTab","SAQ_TestDriveSelect","SAQ_TestDriveSelectChild","SAQ_TestDriveExpand","SAQ_TestDriveKey","SAQ_TestDriveState"];
             var _loc4_:String = "";
             var _loc5_:int = 0;
             while(_loc5_ < _loc3_.length)
@@ -1455,6 +1457,49 @@ package
          catch(_loc9_:Error)
          {
             return "err|ex:" + _loc9_.message;
+         }
+      }
+
+      // ★★ 第 54 轮（harness）：选中某条目的**子项**（「前往接取地点」/「前往任务板」）。
+      //
+      //   为什么需要：Enter 的引导路径与原版对齐 —— 主标题上的 Enter 只做「展开/收起」
+      //   （见 onMissionListItemActivated），**只有子项**上的 Enter 才切换引导。而
+      //   「只引导、不开星图」（map=0、菜单不关）这条链只有走子项才能验 ——
+      //   第 26 轮的历史判据「在菜单里久停 27 秒不出现假失败」需要的正是它
+      //   （按 R 的那条链会在成功回写后由界面关掉整个暂停菜单，没法久停）。
+      //
+      //   内部仍走真实路径：ExpandOrCollapseSelection（原版展开）+ 设 selectedIndex +
+      //   派发 ScrollingEvent.SELECTION_CHANGE（原版列表自己派发的就是它）——
+      //   接下来的 `ui.key Accept` 会落到 MissionsList.onEntryPress → ITEM_ACTIVATED
+      //   → onMissionListItemActivated 的**子项分支**（SaqToggleGuide）。
+      public function SAQ_TestDriveSelectChild(param1:String) : String
+      {
+         try
+         {
+            var _loc2_:Number = Number(param1);
+            var _loc3_:int = int(this.MissionsList_mc.SAQ_FindEntryIndexByUID(_loc2_));
+            if(_loc3_ < 0)
+            {
+               return "err|notfound|n=" + this.MissionsList_mc.entryCount;
+            }
+            this.MissionsList_mc.selectedIndex = _loc3_;
+            var _loc4_:Object = this.MissionsList_mc.selectedEntry;
+            if(_loc4_ != null && _loc4_.expanded != true)
+            {
+               this.MissionsList_mc.ExpandOrCollapseSelection();
+            }
+            var _loc5_:int = int(this.MissionsList_mc.SAQ_FindChildIndexByUID(_loc2_));
+            if(_loc5_ < 0)
+            {
+               return "err|no-child|n=" + this.MissionsList_mc.entryCount;
+            }
+            this.MissionsList_mc.selectedIndex = _loc5_;
+            this.MissionsList_mc.dispatchEvent(new ScrollingEvent(ScrollingEvent.SELECTION_CHANGE));
+            return "ok|idx=" + _loc5_ + "|" + this.SaqEntryTag(this.MissionsList_mc.selectedEntry);
+         }
+         catch(_loc10_:Error)
+         {
+            return "err|ex:" + _loc10_.message;
          }
       }
 

@@ -12,6 +12,12 @@
 #include "SAQ_TestOps.h"  // 原语层
 #include "SAQ_UI.h"       // ReadUiReport
 
+#include "SAQ_EntryTable.h"  // 任务板入口表（`teleport.entry` 要把「板/常驻 marker」解析成引用）
+#include "SAQ_Guide.h"       // Guide::EnsureChannel（入口 marker 的运行期前缀）
+#include "SAQ_Masters.h"     // Masters::MakeFormID（「master + 记录号」→ 运行期 FormID）
+#include "SAQ_QuestTable.h"  // 静态任务表（`~0x…` = 记录号，按加载顺序解析成运行期 FormID）
+
+#include "RE/T/TESForm.h"
 #include "RE/U/UI.h"
 
 #include <Windows.h>
@@ -47,12 +53,22 @@ namespace SAQ::Test
 			kCmd,          // 走 Papyrus 命令通道（要菜单关着）
 			kWait,
 			kMenu,         // menu.open / menu.close
-			kUi,           // ui.select / ui.key / ui.expand / ui.tab
+			kMenuHide,     // ★ 第 54 轮：menu.hide <注册名>（任意菜单，如星图）
+			kUi,           // ui.select / ui.selectchild / ui.key / ui.expand / ui.tab
 			kAssertLog,
+			kAssertNoLog,  // ★ 第 54 轮：反向断言（整段窗口不许出现）
 			kAssertUi,
 			kAssertMenu,
 			kNote,
 			kGuideClear,   // 取消引导（DLL 自己的产品路径：Guide::SetGuideTarget(0)）
+		};
+
+		// ★ 第 54 轮：日志断言的时间窗口起点（见 SAQ_Test.h 的 `scope=` 说明）
+		enum class LogScope
+		{
+			kThis = 0,   // 本步骤开始之后（默认，第 49 轮语义）
+			kPrev,       // 上一步开始之后（断言「上一步引起的那一行」）
+			kCase,       // 本用例开始之后（查总账）
 		};
 
 		struct Step
@@ -61,10 +77,16 @@ namespace SAQ::Test
 			Op            op{ Op::kNone };    // kind == kCmd 时有效
 			std::string   raw;                // 原始行（日志/结果里原样带出来）
 			std::string   opName;             // "quest.stage" / "assert.log" …
-			std::string   text;               // 正则 / 备注文本 / ui 参数
+			std::string   text;               // 正则 / 备注文本 / ui 参数 / 菜单名
 			std::uint32_t formId{};
 			std::int32_t  num{};
 			bool          menuOpen{};         // kind == kMenu / kAssertMenu
+			LogScope      logScope{ LogScope::kThis };
+			// ★ 第 54 轮：① `~0x…` = 记录号（踢给静态表解析成运行期 FormID）；
+			//   ② `teleport.entry` = 目标不是 FormID 而是**任务板 uID**（要按候选链解析引用）。
+			bool          localFormID{};
+			bool          resolveAsEntry{};
+			std::uint8_t  localMaster{ 0xFF };  // `~N:0x…` 里显式指定的 master 下标（0xFF = 未指定）
 			std::uint64_t timeoutMs{ kDefaultStepTimeoutMs };
 		};
 
@@ -115,6 +137,10 @@ namespace SAQ::Test
 		std::uint64_t g_lastReadyCheckMs{};
 		std::uint64_t g_caseStartedMs{};
 		std::uint64_t g_sessionStartMs{};
+		// ★ 第 54 轮：日志窗口打点（见 SAQ_Test.h 的 `scope=` 说明）——
+		//   g_caseMark = 本用例开始；g_prevMark = 上一步开始（断言上一步引起的那一行）。
+		std::size_t g_caseMark{};
+		std::size_t g_prevMark{};
 
 		struct StepState
 		{
@@ -181,6 +207,126 @@ namespace SAQ::Test
 			return Trim(a_text);
 		}
 
+		// ★ 第 54 轮：从串里摘出 `scope=this|prev|case`（其余部分原样返回）。
+		std::string ExtractScope(std::string a_text, LogScope& a_out)
+		{
+			for (std::size_t pos = 0; (pos = a_text.find("scope=", pos)) != std::string::npos;) {
+				const std::size_t end = a_text.find_first_of(" \t", pos);
+				const std::string tok = a_text.substr(pos + 6,
+					(end == std::string::npos ? a_text.size() : end) - (pos + 6));
+				if (tok == "prev") {
+					a_out = LogScope::kPrev;
+				} else if (tok == "case") {
+					a_out = LogScope::kCase;
+				} else {
+					a_out = LogScope::kThis;
+				}
+				a_text.erase(pos, (end == std::string::npos ? a_text.size() : end) - pos);
+				break;
+			}
+			return Trim(a_text);
+		}
+
+		// ★ 第 54 轮：`~0x…` = 静态表里的**记录号** ⇒ 运行期 FormID。
+		//   为什么需要：DLC 任务的 FormID 高字节是**加载顺序**（本机 SFBGS050 = 0x03）——
+		//   用例文件里写死运行期值，换一台机器/换一次加载顺序就会指到别的记录
+		//   （第 17 轮「DLC 任务全部消失」的同一类坑）。写成 `~0x0008EBDC` 由这里解析。
+		bool ResolveLocalFormID(std::uint32_t a_local, std::uint8_t a_master, std::uint32_t& a_out,
+			std::string& a_detail)
+		{
+			for (std::size_t i = 0; i < kQuestTableSize; ++i) {
+				const auto& q = kQuestTable[i];
+				if (q.localFormID != a_local) {
+					continue;
+				}
+				if (a_master != 0xFF && q.master != a_master) {
+					continue;
+				}
+				const auto id = Masters::MakeFormID(q.master, q.localFormID);
+				if (id == 0) {
+					a_detail = std::format(
+						"静态表还没就绪（master {} 未解析）—— 先开一次菜单再跑本用例", q.master);
+					return false;
+				}
+				a_out = id;
+				a_detail = std::format("记录号 0x{:06X}@master{}（{}）→ 运行期 0x{:08X}",
+					a_local, q.master, q.nameZh, id);
+				return true;
+			}
+			a_detail = std::format("静态表里没有记录号 0x{:06X}（master {}）", a_local,
+				a_master == 0xFF ? std::string{ "任意" } : std::to_string(a_master));
+			return false;
+		}
+
+		// ★ 第 54 轮：任务板条目的**传送目标** —— 依次取「此刻引擎里取得到」的第一个候选：
+		//   ① 任务板引用自身（精确；cell 加载时才有）② 新建常驻 XMarker（任意位置可用）
+		//   ③ 同 cell 的原生常驻兜底。与产品代码的候选链**同序**（SAQ.cpp::EvaluateEntryGuide），
+		//   但这里只关心「取得到」（要能 MoveTo —— 取不到的引用 Papyrus 也拿不到）。
+		bool ResolveEntryTarget(std::uint32_t a_boardID, std::uint32_t& a_out, std::string& a_detail)
+		{
+			std::size_t idx = kEntryTableSize;
+			for (std::size_t i = 0; i < kEntryTableSize; ++i) {
+				const auto& e = kEntryTable[i];
+				if (Masters::MakeFormID(e.master, e.refLocal) == a_boardID || e.refLocal == a_boardID) {
+					idx = i;
+					break;
+				}
+			}
+			if (idx >= kEntryTableSize) {
+				a_detail = std::format("入口表里没有 0x{:08X}", a_boardID);
+				return false;
+			}
+			const auto& e = kEntryTable[idx];
+			const auto ch = Guide::EnsureChannel();
+			const std::uint32_t markerPrefix = (ch.resolved && ch.prefix <= 0xFF) ? (ch.prefix << 24) : 0;
+			const std::uint32_t cands[4] = {
+				Masters::MakeFormID(e.master, e.refLocal),
+				e.markerLocal ? (markerPrefix | e.markerLocal) : 0,
+				e.fallback1 ? Masters::MakeFormID(0, e.fallback1) : 0,
+				e.fallback2 ? Masters::MakeFormID(0, e.fallback2) : 0,
+			};
+			const char* names[4] = { "任务板自身", "新建常驻 marker", "同 cell 常驻兜底1", "同 cell 常驻兜底2" };
+			std::string tried;
+			for (std::size_t i = 0; i < 4; ++i) {
+				if (cands[i] == 0) {
+					tried += std::format("{}[无] ", names[i]);
+					continue;
+				}
+				const bool hit = RE::TESForm::LookupByID(static_cast<RE::TESFormID>(cands[i])) != nullptr;
+				tried += std::format("{}[{}] ", names[i], hit ? "命中" : "未命中");
+				if (hit) {
+					a_out = cands[i];
+					a_detail = std::format("{}（0x{:08X}）｜{}", names[i], cands[i], tried);
+					return true;
+				}
+			}
+			a_detail = std::format("{}（0x{:08X}）此刻一个候选都取不到：{}", e.nameZh, a_boardID, tried);
+			return false;
+		}
+
+		// 解析步骤的最终 FormID（`~` 记录号 / 任务板 uID / 原样运行期值）。
+		bool ResolveStepFormID(const Step& a_step, std::uint32_t& a_out, std::string& a_detail)
+		{
+			if (a_step.resolveAsEntry) {
+				return ResolveEntryTarget(a_step.formId, a_out, a_detail);
+			}
+			if (a_step.localFormID) {
+				return ResolveLocalFormID(a_step.formId, a_step.localMaster, a_out, a_detail);
+			}
+			a_out = a_step.formId;
+			return true;
+		}
+
+		// 断言的日志窗口起点（见 SAQ_Test.h 的 `scope=` 说明）。
+		std::size_t EffectiveLogFrom(const Step& a_step)
+		{
+			switch (a_step.logScope) {
+			case LogScope::kPrev: return g_prevMark;
+			case LogScope::kCase: return g_caseMark;
+			default:              return g_cur.logMark;
+			}
+		}
+
 		std::string JsonEscape(std::string_view a_in)
 		{
 			std::string out;
@@ -203,7 +349,10 @@ namespace SAQ::Test
 			return out;
 		}
 
-		bool MenuIsOpen()
+		// 任务菜单这一刻开着吗。（★ 第 54 轮改名：`MenuIsOpen` 这个名字已经被原语层的
+		// **任意菜单**版本（`SAQ::Test::MenuIsOpen(const char*)`）占用 —— 同名会把它隐藏掉，
+		// 于是 `MenuIsOpen("GalaxyStarMapMenu")` 会编译不过。）
+		bool MissionMenuIsOpen()
 		{
 			auto* ui = RE::UI::GetSingleton();
 			return ui != nullptr && ui->IsMenuOpen(RE::BSFixedString{ kMenuName });
@@ -223,10 +372,35 @@ namespace SAQ::Test
 			a_step.opName = op;
 			a_step.timeoutMs = kDefaultStepTimeoutMs;
 
+			// ★ 第 54 轮：`~0x…`（记录号）与 `~<master>:0x…`（显式 master 下标）——
+			//   解析推迟到**步骤开跑时**（那时静态表一定已就绪），见 ResolveStepFormID。
+			auto parseFormIDToken = [&](const std::string& a_tok, std::uint32_t& a_out) -> bool {
+				std::string tok = a_tok;
+				if (!tok.empty() && tok[0] == '~') {
+					a_step.localFormID = true;
+					tok.erase(0, 1);
+					const auto colon = tok.find(':');
+					if (colon != std::string::npos) {
+						try {
+							a_step.localMaster = static_cast<std::uint8_t>(std::stoul(tok.substr(0, colon)));
+						} catch (...) {
+							a_error = "master 下标不是数字：" + tok.substr(0, colon);
+							return false;
+						}
+						tok = tok.substr(colon + 1);
+					}
+				}
+				std::string hex = tok;
+				if (hex.rfind("0x", 0) != 0 && hex.rfind("0X", 0) != 0) {
+					hex = "0x" + hex;
+				}
+				return ParseFormID(hex, a_out);
+			};
+
 			auto needFormID = [&](std::uint32_t& a_out) -> bool {
 				const auto toks = SplitWs(rest);
-				if (toks.empty() || !ParseFormID(toks[0], a_out)) {
-					a_error = "需要 FormID 参数（如 0x002A1B3C）";
+				if (toks.empty() || !parseFormIDToken(toks[0], a_out)) {
+					a_error = "需要 FormID 参数（如 0x002A1B3C；DLC 任务用 ~0x记录号）";
 					return false;
 				}
 				return true;
@@ -244,11 +418,23 @@ namespace SAQ::Test
 				if (!needFormID(a_step.formId)) {
 					return false;
 				}
+			} else if (op == "teleport.entry") {
+				// ★ 第 54 轮：传送到**任务板**（目标 = 候选链里此刻可得的第一个 —— 板自身 /
+				//   新建常驻 marker / 同 cell 常驻兜底）。为什么需要：用例要「站远 / 走近」来
+				//   触发候选复算（第 45/47 轮判据），而板所在 cell 决定了目标任务是否加载。
+				a_step.kind = Kind::kCmd;
+				a_step.op = Op::kTeleport;
+				a_step.resolveAsEntry = true;
+				const auto toks = SplitWs(rest);
+				if (toks.empty() || !parseFormIDToken(toks[0], a_step.formId)) {
+					a_error = "需要任务板 uID（如 0x0021001E）";
+					return false;
+				}
 			} else if (op == "quest.stage") {
 				a_step.kind = Kind::kCmd;
 				a_step.op = Op::kQuestStage;
 				const auto toks = SplitWs(rest);
-				if (toks.size() < 2 || !ParseFormID(toks[0], a_step.formId)) {
+				if (toks.size() < 2 || !parseFormIDToken(toks[0], a_step.formId)) {
 					a_error = "需要 <FormID> <stage> 两个参数";
 					return false;
 				}
@@ -275,7 +461,19 @@ namespace SAQ::Test
 				a_step.kind = Kind::kMenu;
 				a_step.menuOpen = (op == "menu.open");
 				a_step.timeoutMs = 8000;
-			} else if (op == "ui.select" || op == "ui.key" || op == "ui.expand" || op == "ui.tab") {
+			} else if (op == "menu.hide") {
+				// ★ 第 54 轮：关掉**任意**菜单（用例收尾用，典型 = GalaxyStarMapMenu ——
+				//   星图也是暂停菜单，不关掉的话游戏一直暂停、脚本定时器不走）。
+				a_step.kind = Kind::kMenuHide;
+				rest = ExtractTimeout(rest, a_step.timeoutMs);
+				a_step.text = Trim(rest);
+				a_step.timeoutMs = a_step.timeoutMs == kDefaultStepTimeoutMs ? 8000 : a_step.timeoutMs;
+				if (a_step.text.empty()) {
+					a_error = "需要菜单注册名（如 GalaxyStarMapMenu）";
+					return false;
+				}
+			} else if (op == "ui.select" || op == "ui.selectchild" || op == "ui.key" ||
+					   op == "ui.expand" || op == "ui.tab") {
 				a_step.kind = Kind::kUi;
 				a_step.text = Trim(rest);
 				a_step.timeoutMs = 3000;
@@ -284,16 +482,32 @@ namespace SAQ::Test
 					return false;
 				}
 				// uID 习惯上写成 0x…（与日志一致），AS3 侧按十进制 Number 比较 ⇒ 这里转一次。
+				// `~0x…`（记录号，多为 DLC 任务）**不在这里转** —— 运行期 FormID 要等静态表
+				// 就绪，改成步骤开跑时解析（见 RunStep 的 kUi 分支）。
 				// 转换失败就原样传（关键字参数，如 ui.key XButton）。
-				if ((op == "ui.select" || op == "ui.expand") && a_step.text.rfind("0x", 0) == 0) {
+				if ((op == "ui.select" || op == "ui.selectchild" || op == "ui.expand") &&
+					a_step.text.rfind("~", 0) == 0) {
+					std::uint32_t uid = 0;
+					if (!parseFormIDToken(a_step.text, uid)) {
+						a_error = "uID 解析失败：" + a_step.text;
+						return false;
+					}
+					a_step.text.clear();  // 运行期值由 ResolveStepFormID 补上
+				} else if ((op == "ui.select" || op == "ui.selectchild" || op == "ui.expand") &&
+						   a_step.text.rfind("0x", 0) == 0) {
 					std::uint32_t uid = 0;
 					if (ParseFormID(a_step.text, uid)) {
 						a_step.text = std::to_string(uid);
 					}
 				}
-			} else if (op == "assert.log" || op == "assert.ui") {
-				a_step.kind = (op == "assert.log") ? Kind::kAssertLog : Kind::kAssertUi;
+			} else if (op == "assert.log" || op == "assert.nolog" || op == "assert.ui") {
+				a_step.kind = (op == "assert.log")    ? Kind::kAssertLog
+					: (op == "assert.nolog")          ? Kind::kAssertNoLog
+													 : Kind::kAssertUi;
 				rest = ExtractTimeout(rest, a_step.timeoutMs);
+				if (op != "assert.ui") {
+					rest = ExtractScope(rest, a_step.logScope);
+				}
 				a_step.text = rest;
 				if (a_step.text.empty()) {
 					a_error = "需要正则表达式";
@@ -533,6 +747,12 @@ namespace SAQ::Test
 			g_stepIdx = 0;
 			g_cur = StepState{};
 			g_caseStartedMs = NowMs();
+			// ★ 第 54 轮：`scope=case` 的窗口起点（本用例第一行日志之前）；
+			//   同时把 g_cur.logMark 也钉在这里 —— 否则第一步的 `scope=prev` 会退化成
+			//   「整个环形缓冲」（g_cur 刚被重置成 0）。
+			g_caseMark = LogMark();
+			g_prevMark = g_caseMark;
+			g_cur.logMark = g_caseMark;
 			CaseResult r;
 			r.id = g_cases[a_index].id;
 			r.desc = g_cases[a_index].desc;
@@ -580,6 +800,9 @@ namespace SAQ::Test
 			if (!g_cur.started) {
 				g_cur.started = true;
 				g_cur.startedAtMs = now;
+				// ★ 第 54 轮：`scope=prev` 要的是**上一步**的起点 —— 先把当前记成"上一步"，
+				//   再取这一刻的打点作为本步骤的窗口起点（顺序不能反）。
+				g_prevMark = g_cur.logMark;
 				g_cur.logMark = LogMark();
 				// menu.open / menu.close 的 deadline 从「发动之后」开始算
 				g_cur.deadlineMs = now + step.timeoutMs;
@@ -625,7 +848,7 @@ namespace SAQ::Test
 					g_cur.kickDetail = detail;
 					g_cur.deadlineMs = NowMs() + step.timeoutMs;
 				}
-				if (MenuIsOpen() == step.menuOpen) {
+				if (MissionMenuIsOpen() == step.menuOpen) {
 					CompleteStep(true, std::format("{} → 已{}", g_cur.kickDetail, step.menuOpen ? "打开" : "关闭"), {});
 					return true;
 				}
@@ -636,8 +859,31 @@ namespace SAQ::Test
 				return false;
 			}
 
+			// ★ 第 54 轮：menu.hide <注册名> —— 关掉任意菜单（典型 = 星图）。
+			case Kind::kMenuHide: {
+				if (!g_cur.kicked) {
+					std::string detail;
+					if (!SetMenuOpenByName(step.text.c_str(), false, detail)) {
+						CompleteStep(false, "菜单操作失败：" + detail, LogSince(g_cur.logMark, kEvidenceMaxLines));
+						return true;
+					}
+					g_cur.kicked = true;
+					g_cur.kickDetail = detail;
+					g_cur.deadlineMs = NowMs() + step.timeoutMs;
+				}
+				if (!MenuIsOpen(step.text.c_str())) {
+					CompleteStep(true, std::format("{} → 已关闭", g_cur.kickDetail), {});
+					return true;
+				}
+				if (now >= g_cur.deadlineMs) {
+					timeoutFail(std::format("菜单 {} 没有关闭", step.text), g_cur.kickDetail);
+					return true;
+				}
+				return false;
+			}
+
 			case Kind::kAssertMenu:
-				if (MenuIsOpen() == step.menuOpen) {
+				if (MissionMenuIsOpen() == step.menuOpen) {
 					CompleteStep(true, std::format("菜单{}（符合预期）", step.menuOpen ? "开着" : "关着"), {});
 					return true;
 				}
@@ -649,12 +895,27 @@ namespace SAQ::Test
 
 			case Kind::kUi: {
 				if (!g_cur.kicked) {
-					const char* fn = (step.opName == "ui.select")  ? "SAQ_TestDriveSelect"
-						: (step.opName == "ui.key")                ? "SAQ_TestDriveKey"
-						: (step.opName == "ui.tab")                ? "SAQ_TestDriveTab"
-																   : "SAQ_TestDriveExpand";
+					const char* fn = (step.opName == "ui.select")      ? "SAQ_TestDriveSelect"
+						: (step.opName == "ui.selectchild")            ? "SAQ_TestDriveSelectChild"
+						: (step.opName == "ui.key")                    ? "SAQ_TestDriveKey"
+						: (step.opName == "ui.tab")                    ? "SAQ_TestDriveTab"
+																	   : "SAQ_TestDriveExpand";
+					// ★ 第 54 轮：`ui.select/selectchild/expand` 的参数是 uID —— 如果用例写的
+					//   是 `~0x…`（记录号，DLC 任务常用），这里才把它解析成运行期 FormID
+					//   （AS3 侧按十进制 Number 比较 uID）。
+					std::string arg = step.text;
+					if (step.localFormID) {
+						std::uint32_t id = 0;
+						std::string detail;
+						if (!ResolveStepFormID(step, id, detail)) {
+							CompleteStep(false, "uID 解析失败：" + detail, {});
+							return true;
+						}
+						arg = std::to_string(id);
+						REX::INFO("harness：  参数解析 {}", detail);
+					}
 					std::string reply;
-					const bool ok = InvokeUiTestDrive(fn, step.text, reply);
+					const bool ok = InvokeUiTestDrive(fn, arg, reply);
 					if (!ok) {
 						CompleteStep(false, std::format("{} 调用失败：{}", fn, reply),
 							LogSince(g_cur.logMark, kEvidenceMaxLines));
@@ -671,12 +932,38 @@ namespace SAQ::Test
 
 			case Kind::kAssertLog: {
 				std::string line;
-				if (LogFind(g_cur.logMark, step.text, line)) {
+				const auto from = EffectiveLogFrom(step);
+				if (LogFind(from, step.text, line)) {
 					CompleteStep(true, "命中：" + line, {});
 					return true;
 				}
 				if (now >= g_cur.deadlineMs) {
-					timeoutFail(std::format("日志里没出现 /{}/", step.text), "本步骤之后的日志见 evidence");
+					timeoutFail(std::format("日志里没出现 /{}/", step.text),
+						std::format("窗口从 idx {} 起（scope={}）；本窗口的日志见 evidence", from,
+							step.logScope == LogScope::kPrev ? "prev"
+							: step.logScope == LogScope::kCase ? "case"
+															   : "this"));
+					return true;
+				}
+				return false;
+			}
+
+			// ★ 第 54 轮：反向断言 —— 整段窗口**都不许**出现某个模式（「不该再有的行」）。
+			//   典型判据：第 44 轮「星图不该有第 2/3 次尝试」、第 49 轮补丁②「读档后不该立刻降级」、
+			//   第 26 轮「菜单久停期间不该出现引导未生效」。
+			case Kind::kAssertNoLog: {
+				std::string line;
+				const auto from = EffectiveLogFrom(step);
+				if (LogFind(from, step.text, line)) {
+					CompleteStep(false,
+						std::format("出现了不该出现的日志 /{}/（窗口从 idx {} 起）", step.text, from) +
+							" ← " + line,
+						LogSince(g_cur.logMark, kEvidenceMaxLines));
+					return true;
+				}
+				if (now >= g_cur.deadlineMs) {
+					CompleteStep(true,
+						std::format("整段窗口（{} ms）没有出现 /{}/（符合预期）", step.timeoutMs, step.text), {});
 					return true;
 				}
 				return false;
@@ -714,8 +1001,20 @@ namespace SAQ::Test
 						SetMenuOpen(false, detail);
 						return false;
 					}
+					// ★ 第 54 轮：命令的 FormID 可能是「记录号」（`~0x…`，DLC 任务）或
+					//   「任务板 uID」（`teleport.entry`）—— 都在**开跑这一刻**解析
+					//   （那时静态表/加载顺序一定已经就绪）。
+					std::uint32_t formID = step.formId;
+					if (step.localFormID || step.resolveAsEntry) {
+						std::string resolved;
+						if (!ResolveStepFormID(step, formID, resolved)) {
+							CompleteStep(false, "FormID 解析失败：" + resolved, {});
+							return true;
+						}
+						REX::INFO("harness：  参数解析 {}", resolved);
+					}
 					std::string detail;
-					if (!Submit(step.op, step.formId, step.num, detail)) {
+					if (!Submit(step.op, formID, step.num, detail)) {
 						CompleteStep(false, "提交命令失败：" + detail, LogSince(g_cur.logMark, kEvidenceMaxLines));
 						return true;
 					}
@@ -863,10 +1162,19 @@ namespace SAQ::Test
 			//   首测实证：smoke 在 ui.tab 失败中止 ⇒ 后面的 menu.close 步骤没跑到
 			//   ⇒ 任务菜单（暂停菜单）一直留在屏幕上（游戏暂停、脚本定时器冻结），
 			//   得玩家手动按 Cancel 才能继续。用例跑完菜单该回到常态。
-			if (MenuIsOpen()) {
+			if (MissionMenuIsOpen()) {
 				std::string detail;
 				if (SetMenuOpen(false, detail)) {
 					REX::INFO("harness：结束时菜单还开着 —— 已请求关闭（{}）", detail);
+				}
+			}
+			// ★ 第 54 轮：**星图**也是暂停菜单（第 44 轮起由脚本按 R 打开）——
+			//   用例若在「星图开着」时失败中止，游戏会一直暂停（脚本定时器冻结、
+			//   后续会话里的命令步骤全部超时）。收尾一并关掉。
+			if (MenuIsOpen("GalaxyStarMapMenu")) {
+				std::string detail;
+				if (SetMenuOpenByName("GalaxyStarMapMenu", false, detail)) {
+					REX::INFO("harness：结束时星图还开着 —— 已请求关闭（{}）", detail);
 				}
 			}
 			g_finished = true;

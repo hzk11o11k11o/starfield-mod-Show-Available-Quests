@@ -1,5 +1,5 @@
 ; ============================================================================
-;  SAQ 引擎内自动化测试 —— 用例计划（第 49 轮 harness）
+;  SAQ 引擎内自动化测试 —— 用例计划（第 49 轮 harness；第 54 轮补齐历史判据）
 ;
 ;  怎么用：
 ;    ① 把本文件放到 mod 目录的 SFSE\Plugins\ 下（build-saq.ps1 部署时会自动拷过去）；
@@ -8,12 +8,29 @@
 ;       Starfield 的 UI 资源在游戏启动阶段加载，进程起来之后再部署的 SWF 不会被采用；
 ;    ④ 启动游戏并**读一个存档**（随便哪个，用例会自己把需要的那几条任务回滚）；
 ;    ⑤ 等日志出现 `harness：全部用例结束`，看 mod 目录里的 SAQ_testresults.json。
-;       （判定游戏加载的 SWF 版本：看日志 SAQ_Report 输出有没有 `stamp=` 字段。）
+;       （判定游戏加载的 SWF 版本：看日志 SAQ_Report 输出有没有 `stamp=` 字段；
+;        第 54 轮起 = `stamp=53`。）
 ;
 ;  语法：`[case:名字]` 开一个用例；`desc = 说明`；`step = <操作> [参数]`。
-;  ★ 会改任务状态（Reset/Start/SetStage/CompleteQuest）—— 先备份存档，别在主力存档上跑。
+;  ★ 会改任务状态（Reset/Start/SetStage/CompleteQuest）与**传送玩家**—— 先备份存档，
+;    别在主力存档上跑。
+;  ★★ **ini 的 `[Test] Mode` 建议用 0（显示全部）** —— 本文件全部用例在 0 下成立。
+;    个别测试模式的差异（历史轮次实测用的 Mode）：
+;      · Mode=6（只显示「需要靠近」的任务）⇒ 列表里**没有**「营救机器人」（第 47 轮
+;        起它有了常驻兜底）⇒ r45 会找不到条目；r47 的入口统计也会是 0（入口条目
+;        只在 Mode=0/5 时追加）；
+;      · Mode=5（只显示入口条目）⇒ r47 可用，但 r26/r44/r45/r48 看不到任务行。
 ;  ★ 造状态的步骤必须在 menu.open **之前**；断言引导结果必须在 menu.close **之后**
 ;    （Papyrus 的轮询节拍在菜单开着时冻结，第 27 轮实测定论）。
+;  ★ 两条容易踩的语法点（第 54 轮新增）：
+;    · `assert.log/assert.nolog` 的 `scope=`：默认只找「本步骤开始之后」的行 —— 而
+;      动作与它的日志常落在**同一次 Tick** 里（产品路径先跑、harness 后跑）⇒ 断言
+;      「上一步引起的那一行」要用 `scope=prev`，查整条用例的总账用 `scope=case`。
+;    · `~0x…` = **记录号**（不是运行期 FormID）：DLC 任务的运行期高字节是加载顺序
+;      （本机 SFBGS050 = 0x03，换机器可能不同）⇒ 用例里写 `~0x0008EBDC`，由驱动器
+;      按静态表解析。基础游戏的任务（master 0）两种写法等价。
+;  ★ 本文件里的用例会**传送玩家**（teleport.entry）—— 它会改变你当前所在位置，
+;    跑完想回到原处请自己读档。
 ; ============================================================================
 
 ; ----------------------------------------------------------------------------
@@ -42,4 +59,212 @@ step = assert.log 引导请求： timeout=4000
 step = note === 5. 关菜单 → 脚本应用引导 ===
 step = menu.close
 step = assert.log 引导已生效|引导延迟生效|引导确认 timeout=30000
+step = guide.clear
+
+; ----------------------------------------------------------------------------
+;  用例 2：第 26/27 轮判据 —— 菜单里久停不产生「假失败」
+;
+;  历史（第 26 轮实测）：玩家在菜单里挑条目挑了 27 秒，旧代码在菜单开着时就按
+;  「11 秒确认窗口」判失败（星海派对 / 回收行动 / 失踪的地球人三次实测 = 假失败；
+;  而且真的把引导放弃了）。修法：**确认窗口只从「菜单关闭」那一刻开始算**
+;  （第 27 轮更进一步：菜单开着时连状态都不读）。
+;
+;  怎么造出「有待确认的引导 + 菜单一直开着」：走 **Enter 的「只引导」**那条链
+;  （`ui.selectchild` 选中子项「前往接取地点」→ `ui.key Accept`）——
+;  按 R 那条链成功后会由界面关掉整个暂停菜单（第 38 轮），停不住。
+;
+;  判据：
+;    ① 请求写入后出现「引导确认：菜单还开着」（明确说了「不会判失败」）；
+;    ② 之后 27 秒里**不许**出现 `引导未生效`（这一整段 = 菜单久停）；
+;    ③ 菜单仍开着（证明这 27 秒真的停在菜单里）；
+;    ④ 关菜单后 → 「引导确认：菜单已关」→「引导已生效」（历史值 ≈0.9 秒；
+;       步骤自己的耗时 ms 就在结果 JSON 里）。
+; ----------------------------------------------------------------------------
+[case:r26_menu_idle]
+desc = 第 26 轮：菜单里停 27 秒无假失败；关菜单后引导立刻生效
+step = note === 准备：目标任务回滚 + 清引导（避免 Enter 变成「取消引导」）===
+step = ping
+step = quest.reset 0x0006E0A1
+step = guide.clear
+step = wait 2500
+step = note === 开菜单 → 选中「前往接取地点」子项 → Enter（只引导、不开星图、不关菜单）===
+step = menu.open
+step = assert.log 推送成功 scope=prev timeout=12000
+step = ui.tab
+step = ui.selectchild 0x0006E0A1
+step = ui.key Accept
+step = assert.log 引导请求：沙布罗的解决方案 scope=prev timeout=6000
+step = assert.log 引导确认：菜单还开着 scope=prev timeout=6000
+step = note === 菜单里停 27 秒：这一整段都不许出现「引导未生效」（第 26 轮判据）===
+step = assert.nolog 引导未生效 timeout=27000
+step = assert.menu open timeout=2000
+step = note === 关菜单 → 脚本在关闭事件里应用引导 ===
+step = menu.close
+step = assert.log 引导确认：菜单已关 scope=prev timeout=5000
+step = assert.log 引导已生效 scope=prev timeout=15000
+step = guide.clear
+
+; ----------------------------------------------------------------------------
+;  用例 3：第 30~34/47 轮判据 —— 任务板 marker（入口链路 + 精确落点）
+;
+;  背景：12 条任务板里 11 条是**非常驻**引用（cell 没加载时取不到）⇒ 第 30 轮给它们
+;  各新建了一条**常驻 XMarker**（ESM 记录号 0x900~0x90A，位置 = 板坐标），第 33 轮
+;  又补了官方写法的 CELL 空壳记录；引导目标是候选链「任务板自身 → 新建常驻 marker →
+;  同 cell 常驻兜底」，依次 LookupByID 取第一个命中的。
+;
+;  判据（第 34 轮实测形态：`入口=12(可导航 12｜marker 10 原板 2 兜底 0 不可用 0)`）：
+;    ① 12 条入口**全部可导航**、`不可用 0`；
+;    ② 站在别的城市（这里先传送到阿基拉城 ⇒ 新亚特兰蒂斯城的 cell 未加载）
+;       点「任务板 · 新亚特兰蒂斯城」⇒ 引导目标 = **新建常驻 marker（精确）**
+;       —— 证明引擎接受了我们新建的常驻引用（第 30~34 轮的治本判据），
+;       且没有退化成「同 cell 常驻兜底」；
+;    ③ 关菜单后 `引导已生效 脚本状态=1`（脚本 ForceRefTo 成功 = 引擎真把它当引用）。
+; ----------------------------------------------------------------------------
+[case:r47_board_marker]
+desc = 第 30~34 轮：任务板入口 12/12 可导航；引导落在新建常驻 marker（精确）
+step = note === 先站到阿基拉城（让新亚特兰蒂斯城 The Well 的 cell 卸载）===
+step = ping
+step = guide.clear
+step = teleport.entry 0x0014D497
+step = wait 3000
+step = note === 开菜单：看入口统计（12 条全可导航、不可用 0）===
+step = menu.open
+step = assert.log 入口=12\(可导航 12｜marker [1-9]\d* 原板 \d+ 兜底 \d+ 不可用 0\) scope=prev timeout=12000
+step = ui.tab
+step = note === 点「任务板 · 新亚特兰蒂斯城」（子项 =「前往任务板」）===
+step = ui.selectchild 0x0021001E
+step = ui.key Accept
+step = assert.log 引导请求：任务板 · 新亚特兰蒂斯城.*新建常驻 marker（精确） scope=prev timeout=6000
+step = menu.close
+step = assert.log 引导已生效 scope=prev timeout=15000
+step = guide.clear
+
+; ----------------------------------------------------------------------------
+;  用例 4：第 45/47/49 轮判据 —— 候选池预选 / 自动升级 / 降级观察期
+;
+;  目标任务 = 「营救机器人」（`~0x0008EBDC`，地球舰队 DLC）：候选池只有 2 条 ——
+;    [1] 0x08ECA5「G型」（**非常驻**，在 The Well 里）+ [2] 0x08ECA6（**常驻**兜底，
+;        距目标 3.3 米）。这正是第 47 轮玩家实测「导航点锁死、导航没用」的那条任务。
+;
+;  判据：
+;    ① 站在赛多尼亚（The Well 未加载）点引导 ⇒ 预选落到**常驻兜底**
+;       `候选 [2/2]「Ref_08ECA6」` + 关菜单后**立即生效**（不再「点了没反应」）；
+;    ② 传送到「任务板 · 新亚特兰蒂斯城」（它在 The Well 里，距机器人 6 米）⇒ cell 加载
+;       ⇒ **候选复算**自动升级：`[2]「Ref_08ECA6」→ [1]「G型」`（蓝点挪到机器人本体）；
+;    ③ 再回到赛多尼亚（cell 卸载、当前候选取不到）⇒ 第 49 轮补丁②的**降级观察期**：
+;       先记「此刻取不到 —— 先保持（观察 20 秒）」且**不立刻降级**（12 秒内不许出现
+;       `引导目标已更新（候选复算）` —— 旧行为会在 1.5 秒内就降级，蓝点闪动）；
+;    ④ 观察期满（20 秒）后仍取不到 ⇒ 正常降级 `[1]「G型」→ [2]「Ref_08ECA6」`。
+;
+;  注：随机传送会改变玩家位置（用例 5 之后会再传一次；跑完自己读档回原处）。
+; ----------------------------------------------------------------------------
+[case:r45_candidates]
+desc = 第 45/47/49 轮：候选池预选落常驻兜底 → 走近自动升级 → 走远不立刻降级（观察期）
+step = note === 准备：让「营救机器人」回到可接状态 + 清引导 ===
+step = ping
+step = quest.reset ~0x0008EBDC
+step = guide.clear
+step = wait 2500
+step = note === 先站到赛多尼亚（远离 The Well）===
+step = teleport.entry 0x001DF853
+step = wait 3000
+step = note === 点引导：预选必须是「此刻可得的」常驻兜底 [2/2] ===
+step = menu.open
+step = assert.log 推送成功 scope=prev timeout=12000
+step = ui.tab
+step = ui.selectchild ~0x0008EBDC
+step = ui.key Accept
+step = assert.log 引导请求：营救机器人.*候选 \[2/2\]「Ref_08ECA6」 scope=prev timeout=6000
+step = menu.close
+step = assert.log 引导已生效 scope=prev timeout=15000
+step = note === 走近 The Well（新亚特兰蒂斯城任务板在 The Well 里）⇒ 期望自动升级 ===
+step = teleport.entry 0x0021001E
+step = assert.log 引导目标已更新（候选复算）.*\[2\]「Ref_08ECA6」→ \[1\]「G型」 scope=prev timeout=25000
+step = note === 再走远 ⇒ 第 49 轮补丁②：先保持（观察 20 秒），不许立刻降级 ===
+step = teleport.entry 0x001DF853
+step = assert.log 候选复算：.*先保持 scope=prev timeout=15000
+step = assert.nolog 引导目标已更新（候选复算） scope=prev timeout=12000
+step = note === 观察期满后正常降级（回常驻兜底）===
+step = assert.log 引导目标已更新（候选复算）.*\[1\]「G型」→ \[2\]「Ref_08ECA6」 timeout=25000
+step = guide.clear
+
+; ----------------------------------------------------------------------------
+;  用例 5：第 48 轮判据 —— INFO 门槛（对话侧「进度没到不显示」）
+;
+;  样本 = 「无凭无据」（0x00082D5A，FFNeonZ06）：它自己的对话（INFO）条件 =
+;  `StageDone(DialogueFCNeon 0x0022DAD6, 295) == 1`。判据（保守求值）：
+;    「引擎**没启动**这条任务 + 全部参与对话都有已知为假的条件 ⇒ 隐藏」。
+;
+;  用例自己造状态（A/B 对照）：
+;    A. 回滚前置任务（0x0022DAD6）+ 回滚目标任务 ⇒ 条件为假、且不是「引擎已开始」
+;       ⇒ 日志里必须出现 `INFO门槛=<N>(过x/藏y/放行z/未知w)` 与 `INFO没到:` 名单，
+;       名单里要有 「无凭无据[0x00082D5A …]」；
+;    B. 把前置任务推到位（Start + SetStage 295）⇒ 条件为真 ⇒ 门槛通过 ⇒
+;       重新开菜单后的 `INFO没到:` 名单里**不该**再有它（反向断言）。
+;
+;  注：`藏`/`放行` 的具体条数随存档进度变化（第 48 轮实测 21 与 19/放行 2），
+;      所以这里只断言「结构 + 本样本的去留」，不写死数字。
+;  注：本用例需要 ini `[Test] Mode=0`（显示全部）或 `6`（只显示需靠近的任务）——
+;      `Mode=5`（只显示入口条目）时整段任务循环不跑，看不到 INFO 门槛统计。
+; ----------------------------------------------------------------------------
+[case:r48_info_gate]
+desc = 第 48 轮：INFO 门槛 —— 前置未完成则隐藏（名单可查），推到位后不再隐藏
+step = note === A. 造「进度没到」：回滚前置任务 + 目标任务 ===
+step = ping
+step = quest.reset 0x0022DAD6
+step = quest.reset 0x00082D5A
+step = menu.open
+step = assert.log INFO门槛=\d+\(过\d+/藏\d+/放行\d+/未知\d+\) scope=prev timeout=12000
+step = assert.log INFO没到: .*无凭无据\[0x00082D5A scope=prev timeout=3000
+step = note === B. 把前置推到位（StageDone 295 = 真）⇒ 门槛应放行 ===
+step = menu.close
+step = quest.start 0x0022DAD6
+step = quest.stage 0x0022DAD6 295
+step = menu.open
+step = assert.nolog INFO没到:.*无凭无据 scope=prev timeout=3000
+step = assert.menu open timeout=2000
+step = menu.close
+step = guide.clear
+
+; ----------------------------------------------------------------------------
+;  用例 6：第 37~44 轮判据 —— SET COURSE（R）的星图（不滞后一条 / 不重画）
+;
+;  历史：第 36 轮那条原版 dispatch 用的是**代理任务当前的目标位置**，而那一刻脚本还没
+;  ForceRefTo ⇒ 星图永远聚焦**上一条**引导的目标；而且它先把星图打开（暂停 ⇒ 脚本
+;  定时器冻结）⇒ 补救调用永远跑不到。第 44 轮删掉 dispatch，星图改由脚本的**轮询节拍**
+;  打开（菜单关闭后 0.5~1.5 秒，用的是**本次**引导目标的地点）。
+;
+;  判据：
+;    ① 按 R ⇒ `引导请求：…星图=是`；界面收到成功回写后自己关掉整个暂停菜单（第 38 轮）；
+;    ② `星图：已打开（GalaxyStarMapMenu 在屏幕上，R 后约 N 秒，第 1 次尝试）`
+;       ——「第 1 次尝试」= 没有抢跑换地点候选重画（第 42 轮）；N 应 ≈1.5 秒；
+;    ③ 整条用例不许出现 `星图：等待中——任务菜单仍开着`（界面没关菜单 = 游戏暂停、
+;       脚本跑不动 —— 第 38 轮的回归判据）；
+;    ④ 收尾：`menu.hide GalaxyStarMapMenu` 关掉星图（它也是暂停菜单 ——
+;       不关掉的话游戏一直暂停，后面的用例全被冻住）。
+;
+;  注：星图**聚焦哪个星球**只有眼睛能最终确认（DLL 只能看到菜单在不在屏幕上 +
+;      `星图诊断` 的地点链节点值）。本用例覆盖「链路 + 不重画」这一半；
+;      眼睛判据见 docs/05 第十八节。
+; ----------------------------------------------------------------------------
+[case:r44_starmap]
+desc = 第 44 轮：R 设定航线 —— 星图由脚本节拍打开（第 1 次尝试，不重画）
+step = note === 准备 ===
+step = ping
+step = guide.clear
+step = quest.reset 0x0006E0A1
+step = wait 2500
+step = menu.open
+step = assert.log 推送成功 scope=prev timeout=12000
+step = ui.tab
+step = ui.select 0x0006E0A1
+step = note === 按 R：请求（带星图）+ 界面自己关掉暂停菜单 ===
+step = ui.key XButton
+step = assert.log 引导请求：沙布罗的解决方案.*星图=是 scope=prev timeout=6000
+step = assert.menu closed timeout=8000
+step = note === 星图应由脚本在菜单关闭后的第一个轮询节拍打开（第 1 次尝试）===
+step = assert.log 星图：已打开（GalaxyStarMapMenu.*第 1 次尝试 scope=prev timeout=15000
+step = assert.nolog 星图：等待中——任务菜单仍开着 scope=case timeout=800
+step = note === 收尾：星图也是暂停菜单 —— 必须关掉（否则游戏一直暂停）===
+step = menu.hide GalaxyStarMapMenu timeout=8000
 step = guide.clear

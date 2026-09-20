@@ -365,6 +365,38 @@ package
          return -1;
       }
       
+      // ★★ 第 54 轮（harness）：找「某条目的第一个**子项**」的显示下标（找不到给 -1）。
+      //
+      //   为什么不能再用 uID 找：子项的 uID 与父项**相同**（见 MissionMenu.SaqBuildObjective
+      //   的字段说明），`SAQ_FindEntryIndexByUID` 会先命中父项 ⇒ 必须按「父项之后、且
+      //   uOwnerQuestFormID 等于父 uID、且不是任务条目（没有 aObjectives）」来认。
+      //   用途：`ui.selectchild` —— Enter 的「只引导、不开星图」走的是**子项**那条真实
+      //   处理链（主标题的 Enter 与原版一致 = 只展开/收起，不切引导）。
+      public function SAQ_FindChildIndexByUID(param1:Number) : int
+      {
+         var _loc2_:int = 0;
+         while(_loc2_ < entryCount)
+         {
+            var _loc3_:Object = entryList[_loc2_];
+            if(_loc3_ != null && _loc3_.uID == param1 && _loc3_.hasOwnProperty("aObjectives"))
+            {
+               var _loc4_:int = _loc2_ + 1;
+               while(_loc4_ < entryCount)
+               {
+                  var _loc5_:Object = entryList[_loc4_];
+                  if(_loc5_ != null && !_loc5_.hasOwnProperty("aObjectives") && _loc5_.uOwnerQuestFormID == param1)
+                  {
+                     return _loc4_;
+                  }
+                  _loc4_++;
+               }
+               return -1;
+            }
+            _loc2_++;
+         }
+         return -1;
+      }
+      
       // ★ SAQ（第 14 轮）：按任务 uID 把当前**显示列表**里的行就地重渲染。
       // 用途：可接任务的「引导中」状态变化（点子项 / 按 X）时，点亮或熄灭主标题左侧
       // 那条竖条（TrackIndicator）—— 即原版「追踪中」的视觉。

@@ -33,15 +33,40 @@
 //
 //    ping / quest.reset <fid> / quest.start <fid> / quest.stage <fid> <n> /
 //    quest.complete <fid> / teleport <fid>        → 走 Papyrus 命令通道（要**菜单关着**）
+//    teleport.entry <板uID>                       → 传送玩家到**任务板**（自动挑此刻可得的
+//                                                   候选：板自身 / 新建常驻 marker / 常驻兜底）
 //    wait <ms>                                    → 等
-//    menu.open / menu.close                       → kShow/kHide（原语层）
+//    menu.open / menu.close                       → 任务菜单 kShow/kHide（原语层）
+//    menu.hide <注册名>                            → 关掉**任意**菜单（如 GalaxyStarMapMenu ——
+//                                                   星图也是暂停菜单，不关掉后面全冻住）
 //    ui.select <uid> / ui.key <key> / ui.expand <uid>  → AS3 测试入口（真实处理路径）
+//    ui.selectchild <uid>                          → ★ 第 54 轮：展开该条并选中它的**子项**
+//                                                   （「前往接取地点」/「前往任务板」）——
+//                                                   Enter 的「只引导、不开星图」走的是这条
 //    ui.tab                                       → 切到「可接任务」tab 并重建列表
-//    assert.log <正则> [timeout=ms]                → 内存日志环形缓冲里找（本步骤之后的行）
+//    assert.log <正则> [timeout=ms] [scope=…]      → 内存日志环形缓冲里找（窗口见下）
+//    assert.nolog <正则> [timeout=ms] [scope=…]    → ★ 第 54 轮：**反向断言** —— 整段窗口里
+//                                                   都不许出现（「不该再有的行」用它）
 //    assert.ui <正则> [timeout=ms]                 → 读 AS3 的 SAQ_Report
 //    assert.menu open|closed [timeout=ms]         → 任务菜单开关状态
 //    guide.clear                                  → 取消引导（teardown）
 //    note <文本>                                   → 只往日志里打一行标记（分段用）
+//
+//  ## 断言的日志窗口（`scope=`）—— 为什么需要（★ 第 54 轮）
+//
+//    默认 `scope=this`：只找**本步骤开始之后**的行（第 49 轮的原始语义）。
+//    问题：动作与它的日志常常落在**同一次 Tick** 里（SAQ.cpp 的 Tick 顺序是
+//    「产品路径 → harness」）⇒「menu.open 之后的统计行」「ui.key 之后的引导请求」这类
+//    断言会**看不到刚刚发生的那一行**（打点已经越过它了）。
+//      · `scope=prev` = 从**上一步开始**算起（断言上一步引起的那行 —— 推荐写法）；
+//      · `scope=case` = 从**本用例开始**算起（一条用例内查总账，如「整轮都没有复算抖动」）。
+//
+//  ## `~0x…` = 记录号（不是运行期 FormID）（★ 第 54 轮）
+//
+//    DLC 任务的运行期 FormID 高字节 = 加载顺序（本机 SFBGS050 是 0x03，别人的机器可能不同）
+//    ⇒ 用例文件里写死运行期 FormID，换加载顺序后会指到别的记录。写成 `~0x0008EBDC`，
+//    驱动器去静态表里查「记录号 + master 下标」，再用 Masters::MakeFormID 拼出运行期值
+//    （也可写 `~2:0x0008EBDC` 显式指定 master 下标）。`ui.select* / ui.expand` 同样支持。
 //
 //  ## 时序红线（写在用例里的人必须知道）
 //
