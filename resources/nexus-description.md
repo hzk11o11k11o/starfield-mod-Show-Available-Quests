@@ -53,7 +53,7 @@ Starfield 从不告诉你去哪接任务，全靠自己撞见。这个 mod 在�
 [b]已知限制[/b]
 [list]
 [*] 261 条任务中有 52 条暂无导航目标：界面会如实提示，不会假装能引导
-[*] 无限生成任务本身不显示，但其接取入口（12 处任务板）作为独立条目列出；任何位置都能一键导航过去——在远处先给你一个大致方位，等你走到那块任务板所在的区域，蓝点会自动落到任务板上（不会停在几米外）
+[*] 无限生成任务本身不显示，但其接取入口（12 处任务板）作为独立条目列出；任何位置都能一键导航过去——在远处先给你一个大致方位，等你走到那块任务板所在的区域，蓝点会自动落到任务板上（不会停在几米外；读档或重启游戏后也会自动校正）
 [*] 引导在关闭任务菜单后生效（与原版一致：HUD 蓝点本来就要关菜单才可见）
 [*] 「进度没到就不显示」目前只按「已完成」判断，尚未按任务前置条件过滤
 [*] 会覆盖任务菜单的 UI 文件（missionmenu.swf / missionmenu_lrg.swf），与其它改任务菜单的 mod 需要打补丁
@@ -101,7 +101,7 @@ Mission menu (TAB) -> "Available Quests" -> select an entry -> press the guidanc
 [b]Known limitations[/b]
 [list]
 [*] 52 of 261 quests currently have no navigation target; the UI says so honestly
-[*] Radiant quests themselves are not listed, but their pickup points (12 mission boards) are listed as entries; every entry can be navigated to from anywhere (the board references are made persistent)
+[*] Radiant quests themselves are not listed, but their pickup points (12 mission boards) are listed as entries; every entry can be navigated to from anywhere — far away you get the approximate direction, and once you reach the board's area the marker automatically snaps onto the board itself (no more stopping a few metres short; it also self-corrects after a save reload or restart)
 [*] Guidance applies after you close the mission menu (same as vanilla: the HUD marker only appears outside menus)
 [*] "Hidden when your progress isn't far enough" is currently based only on the completed state, not on quest preconditions
 [*] Overrides the mission menu UI (missionmenu.swf / missionmenu_lrg.swf): patching needed with other mission-menu mods

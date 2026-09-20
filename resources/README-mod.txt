@@ -48,7 +48,8 @@
   · 少量任务（261 条中的 52 条）暂时没有可用的导航目标：界面会如实提示，
     不会假装能引导。
   · 无限生成任务本身不显示，但其接取入口（12 处任务板）会作为独立条目列出；
-    无论你在哪都能一键导航过去（任务板引用已做常驻化处理）。
+    无论你在哪都能一键导航过去——远处先给大致方位，走到那块板所在的区域后
+    蓝点会自动落到板上（读档/重启后也会自动校正）。
   · 「游戏进度还没到时应当不显示」目前只按「已完成」判断，尚未按任务
     前置条件过滤。
   · 本 mod 会覆盖 Interface\missionmenu.swf 与 missionmenu_lrg.swf：
@@ -120,7 +121,9 @@
     says so honestly instead of pretending.
   · Radiant (infinite) quests themselves are not listed, but their pickup
     points (12 mission boards) are listed as entries; every entry can be
-    navigated to from anywhere (the board references are persistent).
+    navigated to from anywhere - far away you get the approximate direction,
+    and once you reach the board's area the marker snaps onto the board
+    itself (it also self-corrects after a save reload or restart).
   · "Not shown when your progress is not far enough" is currently based
     only on the completed state, not on quest preconditions.
   · This mod overrides Interface\missionmenu.swf and

@@ -951,6 +951,11 @@ namespace SAQ
 			//   确认超时/失败时**不清通道、不回写界面** —— 否则会把玩家原本可用的引导一起清掉。
 			bool          verifySilent{};
 			std::uint64_t lastTargetCheckMs{};   // 入口目标复算的节流时间戳（第 31 轮）
+			// ---- 第 32 轮：菜单关着时的例行认领/对账（见 PollGuideUpkeep）----
+			//   玩家重启游戏后直接读档看 HUD（不进菜单）是常态：此时 DLL 必须自己把
+			//   通道里遗留的引导认领回来，动态更新才有机会把蓝点挪到板上。
+			std::uint32_t adoptWarnRef{};      // 「认不出的通道目标」已 WARN 过的值（同一目标只刷一次）
+			std::uint64_t upkeepMs{};          // 例行认领/对账的节流时间戳（第 32 轮）
 		};
 		GuideRuntime g_guide;
 		constexpr std::uint64_t kGuidePollIntervalMs = 100;
@@ -958,6 +963,7 @@ namespace SAQ
 		constexpr std::uint64_t kGuideVerifyRetryMs = 2000;  // 之后每次重查的间隔
 		constexpr std::uint32_t kGuideVerifyMaxTries = 6;    // 最多查这么久（≈ 11 秒）
 		constexpr std::uint64_t kEntryTargetCheckMs = 1500;  // 入口引导目标复算间隔（第 31 轮）
+		constexpr std::uint64_t kUpkeepIntervalMs = 2000;    // 菜单关着时例行认领/对账间隔（第 32 轮）
 
 		const StaticQuestInfo* FindStaticQuest(std::uint32_t a_formID)
 		{
@@ -1386,6 +1392,10 @@ namespace SAQ
 		//   • 玩家没有任何办法取消它（除非再点一条别的任务）；
 		//   • AutoClear / Reissue 这两条自愈路径都因为 questFormID==0 直接返回。
 		// 判据：通道认得出来 + 通道里的目标引用 != 0 + 静态表里有一条任务的引导目标正好是它。
+		//
+		// ★ 第 32 轮：本函数现在**菜单关着时也会被例行调用**（PollGuideUpkeep，每 2 秒一次）——
+		//   玩家重启游戏/读档后直接看 HUD（不进菜单）时，旧引导必须在这里被认领回来，
+		//   第 31 轮的「目标动态更新」才有机会把蓝点从兜底引用挪到任务板上。
 		void AdoptExistingGuide()
 		{
 			if (g_guide.questFormID != 0) {
@@ -1416,14 +1426,20 @@ namespace SAQ
 					const auto uid = Masters::MakeFormID(gap->master, gap->refLocal);
 					g_guide.questFormID = uid;
 					g_guide.guideRef = targetID;
+					g_guide.lastTargetCheckMs = 0;   // 第 32 轮：允许同帧的动态更新立即复算
+					g_guide.adoptWarnRef = 0;
 					REX::INFO("认领已有引导（任务板入口）：{}（0x{:08X}）引导目标=0x{:08X}｜脚本状态={:.0f}"
 							  "（上一次会话/读档留下的，界面会同步成「正在引导」）",
 						gap->nameZh, uid, targetID, ch.guideState);
 					return;
 				}
-				REX::WARN("ESM 通道里有引导目标 0x{:08X}，但静态表里没有哪条任务/入口的引导目标是它"
-						  "（另一个存档留下的？）—— 已按「没有引导」处理，下次点引导会覆盖它",
-					targetID);
+				// ★ 第 32 轮：菜单关着时本函数每 2 秒被调用一次 —— 同一个认不出的目标只 WARN 一次。
+				if (g_guide.adoptWarnRef != targetID) {
+					g_guide.adoptWarnRef = targetID;
+					REX::WARN("ESM 通道里有引导目标 0x{:08X}，但静态表里没有哪条任务/入口的引导目标是它"
+							  "（另一个存档留下的？）—— 已按「没有引导」处理，下次点引导会覆盖它",
+						targetID);
+				}
 				return;
 			}
 			// 反查运行期 FormID（表里是 master + 记录号）
@@ -1439,6 +1455,8 @@ namespace SAQ
 			}
 			g_guide.questFormID = questID;
 			g_guide.guideRef = targetID;
+			g_guide.lastTargetCheckMs = 0;   // 第 32 轮：允许同帧的动态更新立即复算（入口条目用）
+			g_guide.adoptWarnRef = 0;
 			REX::INFO("认领已有引导：{}（0x{:08X}）目标引用=0x{:08X}｜脚本状态={:.0f}"
 					  "（上一次会话/读档留下的，界面会同步成「正在引导」）",
 				entry->nameZh, questID, targetID, ch.guideState);
@@ -1605,6 +1623,62 @@ namespace SAQ
 				currentAlive ? std::string_view{} : std::string_view{ "（原目标已不可用）" }, detail);
 		}
 
+		// ★★ 第 32 轮：菜单关着时的**例行认领 + 通道对账**（每 2 秒一次）。
+		//
+		// 起因（玩家本轮实测：重启游戏后蓝点仍然偏 3.41 m）：第 31 轮的「目标动态更新」
+		// 只在 DLL **已经认领**引导之后才会跑，而认领此前只发生在「菜单打开」时 ——
+		// 玩家重启游戏、读档、直接看 HUD（全程不进菜单）时：
+		//   • DLL 侧 questFormID == 0 ⇒ UpdateEntryGuideTarget 直接短路；
+		//   • 存档里（GLOB）残留的旧目标（上次会话选的兜底引用，离板 ~3 m）继续生效
+		//     ⇒ 「蓝点不在板上」原样复现。
+		//
+		// 现在菜单关着时定期做三件事（都很便宜；只在状态不一致时才有动作）：
+		//   ① 没在引导 + 通道里有目标 ⇒ **认领**（AdoptExistingGuide）—— 同一帧后面的
+		//      UpdateEntryGuideTarget 就会把目标换成当前最精确的可用引用（蓝点自动上板）；
+		//   ② 在引导 + 通道里没有目标（读档到了「没有引导」的存档）⇒ 重置本侧状态；
+		//   ③ 在引导 + 通道目标与本侧不一致（同会话里读了另一个存档 / 通道被外部改）
+		//      ⇒ 清本侧状态，下一轮按通道值重新配对（认知以通道/存档为准）。
+		void PollGuideUpkeep()
+		{
+			const auto now = NowMs();
+			if (g_guide.upkeepMs != 0 && now - g_guide.upkeepMs < kUpkeepIntervalMs) {
+				return;
+			}
+			g_guide.upkeepMs = now;
+
+			const auto ch = Guide::EnsureChannel();
+			if (!ch.resolved) {
+				return;  // 通道没认领（ESM 没加载等）—— LogEsmChannel 已经记过原因
+			}
+			if (g_guide.questFormID == 0) {
+				if (ch.targetFormID != 0) {
+					AdoptExistingGuide();  // ①
+				}
+				return;
+			}
+			if (ch.targetFormID == g_guide.guideRef) {
+				return;  // 一致：正常在引导
+			}
+
+			// ② / ③：不一致，以通道（= 存档）为准，清本侧等重新配对。
+			if (ch.targetFormID == 0) {
+				REX::INFO("引导状态对账：通道里已没有目标（读档到了没有引导的存档？）—— 重置本侧"
+						  "（原先：{} 0x{:08X} 目标 0x{:08X}）",
+					DisplayNameOf(g_guide.questFormID), g_guide.questFormID, g_guide.guideRef);
+			} else {
+				REX::INFO("引导状态对账：通道目标 0x{:08X} ≠ 本侧 0x{:08X}（读档切换 / 外部改动？）"
+						  "—— 按通道重新配对",
+					ch.targetFormID, g_guide.guideRef);
+			}
+			g_guide.questFormID = 0;
+			g_guide.guideRef = 0;
+			g_guide.verifyAtMs = 0;
+			g_guide.verifySeq = 0;
+			g_guide.verifySilent = false;
+			g_guide.lastTargetCheckMs = 0;
+			g_guide.adoptWarnRef = 0;
+		}
+
 		void OnMissionMenuClosed()
 		{
 			if (!g_poll.lastReport.empty()) {
@@ -1735,6 +1809,10 @@ namespace SAQ
 			} else if (wasOpen) {
 				OnMissionMenuClosed();
 			} else {
+				// ★ 第 32 轮：菜单关着时先做例行认领/对账 —— 玩家重启游戏后直接读档看 HUD
+				//   （不进菜单）时，只有这里能把「存档里遗留的引导」认领回来，让下面那句
+				//   动态更新把蓝点挪到板上。（函数内部按 2 秒自我节流。）
+				PollGuideUpkeep();
 				// ★ 第 31 轮：菜单关着时才算「入口条目的引导目标能不能更精确」
 				//   （玩家从远处选完就关菜单去赶路 —— 蓝点该在到达后自动上板）。
 				//   函数内部按 lastTargetCheckMs 自我节流，没在引导时零开销。
