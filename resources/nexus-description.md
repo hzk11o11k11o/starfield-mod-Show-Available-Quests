@@ -30,8 +30,10 @@ Starfield 从不告诉你去哪接任务，全靠自己撞见。这个 mod 在�
 [*] 集中显示所有可接的非主线任务
 [*] 汇总「无限任务」的接取入口（12 处任务板：新亚特兰蒂斯 / 阿基拉城 / 霓虹城 / 塞多尼亚 / 霍普镇 / 新家园 / 星船厂 / 星钥站……），点一下就能导航过去
 [*] 选中即可调用游戏原生引导，导航到接取地点（蓝点 / 路径线）
+[*] 引导目标优先指向**有名字的任务发布者（NPC）**，而不是附近的路标 / 内部标记；你在远处时自动落到常驻目标，飞近后自动切回 NPC
 [*] 已完成的、已在任务日志里的任务自动隐藏
-[*] 没有导航目标的任务会明确提示（按钮置灰），不会让你白点
+[*] 没有导航目标的任务会明确提示（描述里写明原因），不会让你白点
+[*] 有些任务的接取地点只在靠近时才加载：列表描述会**提前**写明「需要靠近」，点引导后 HUD 也会提示；引导会保持待生效，你走到那一带自动生效（不必重新点）
 [*] 被引导的任务一旦接取，引导自动取消
 [*] 支持中文 / 英文
 [*] 支持官方 DLC（破碎空间 / 地球舰队等；未安装的 DLC 不会显示其任务）
@@ -78,9 +80,11 @@ Starfield never tells you where to pick up quests — you just have to stumble i
 [*] Lists all available non-main quests in one place
 [*] Includes the pickup points of radiant quests: 12 mission boards (New Atlantis / Akila City / Neon / Cydonia / Hopetown / New Homestead / staryards / The Key...), one click to navigate
 [*] Native guidance: quest marker + scanner route line to the quest giver
+[*] Guidance prefers the **named quest giver (NPC)** over nearby signposts / internal markers; from a distance it falls back to a persistent target and automatically upgrades back to the NPC once you get close
 [*] SET COURSE (R / X) goes one step further: it also opens the star map with the route plotted to the pickup location, exactly like a vanilla quest
 [*] Already-completed quests and quests already in your log are hidden
-[*] Quests with no navigation target are clearly flagged (button greyed out) — no dead ends
+[*] Quests with no navigation target are clearly flagged (the description explains why) — no dead ends
+[*] Some pickup locations only load when you get near: the description says so in advance, and the HUD reminds you after you press guide; the guidance stays pending and activates automatically once you arrive (no need to press it again)
 [*] Guidance is cancelled automatically once you accept the quest
 [*] Chinese and English games supported
 [*] Official DLC aware (Shattered Space, Earth Fleet, …); quests from DLC you don't own are never listed

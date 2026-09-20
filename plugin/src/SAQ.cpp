@@ -666,6 +666,10 @@ namespace SAQ
 			}
 		}
 
+		// ★ 第 46 轮：候选池判定助手 —— 定义在下面的候选池区（用到 CandidateAt）。
+		//   这里（CollectAvailableQuests 的 QuestEntry 组装）先用，所以提前声明。
+		bool AllCandidatesNonPersistent(const StaticQuestInfo& a_info);
+
 		// 收集"可接任务"候选 + 按运行时状态过滤。
 		//
 		// 规则：
@@ -798,6 +802,9 @@ namespace SAQ
 				// ★ 第 23 轮：把「有没有引导目标」也推给界面（能不能导航要看得见）
 				// ★ 第 45 轮：判据换成候选池（candCount > 0 等价于旧 guideRefLocal != 0）。
 				entry.hasGuideTarget = info.candCount != 0;
+				// ★★ 第 46 轮（大项 B）：全是非常驻候选 ⇒ 远处点引导会「尚未加载」。
+				//   界面据此在描述里**提前**告知玩家「靠近目标区域后才能导航」。
+				entry.needsApproach = AllCandidatesNonPersistent(info);
 				entry.nameZh = info.nameZh;        // 中英都带上，AS3 侧按游戏语言挑
 				entry.nameEn = info.nameEn;
 				a_out.push_back(std::move(entry));
@@ -1127,6 +1134,15 @@ namespace SAQ
 			//   「有没有更优的候选变得可用了」（见 UpdateQuestGuideTarget）。
 			std::uint8_t  candIndex{};         // 入口条目不用（它的候选链在 EvaluateEntryGuide 里）
 			std::uint32_t candSwitches{};      // 本次引导换过多少次候选（日志/诊断用）
+			// ---- ★★ 第 46 轮（大项 B）：引导「待生效」（目标尚未加载）----
+			//   点引导那一刻所有候选都取不到 ⇒ 不再 19 秒后静默放弃，而是：
+			//     ① 界面回写结果码 5（保持竖条 + note 写明原因，不播 OFF 音、不回滚）；
+			//     ② 脚本侧发一次 HUD 提示（「目标地点尚未加载，靠近后自动生效」）；
+			//     ③ 菜单关着时按**退避**慢速重试（10/20/40/60 秒…），目标 cell 一加载
+			//        就会生效（蓝点自动出现）—— 见 PollApproachRetry。
+			bool          approachPending{};    // 正在等「目标加载」（只有普通任务会置位）
+			std::uint32_t approachTries{};      // 已重试次数（到 kApproachMaxTries 后停手，引导仍保持）
+			std::uint64_t approachRetryAtMs{};  // 下一次重试的时间点
 		};
 		GuideRuntime g_guide;
 		constexpr std::uint64_t kGuidePollIntervalMs = 100;
@@ -1135,6 +1151,10 @@ namespace SAQ
 		constexpr std::uint32_t kGuideVerifyMaxTries = 6;    // 最多查这么久（≈ 11 秒）
 		constexpr std::uint64_t kEntryTargetCheckMs = 1500;  // 入口引导目标复算间隔（第 31 轮）
 		constexpr std::uint64_t kUpkeepIntervalMs = 2000;    // 菜单关着时例行认领/对账间隔（第 32 轮）
+		// ★ 第 46 轮：引导「待生效」（目标尚未加载）的退避重试参数（见 PollApproachRetry）。
+		constexpr std::uint64_t kApproachRetryFirstMs = 10000;  // 第一次重试：10 秒
+		constexpr std::uint64_t kApproachRetryMaxMs   = 60000;  // 之后最多每 60 秒一次
+		constexpr std::uint32_t kApproachMaxTries     = 40;     // 约 35 分钟后停手（引导保持）
 
 		const StaticQuestInfo* FindStaticQuest(std::uint32_t a_formID)
 		{
@@ -1163,6 +1183,9 @@ namespace SAQ
 		//   同一个引擎查询；入口条目的候选链（第 31 轮）已实测：非持久引用在所在
 		//   cell 未加载时这里也查不到（「原板」只在走进那个 cell 后才命中）。
 		// ==================================================================
+		// ★ 第 46 轮：候选 flags 的位定义（与 SAQ_QuestTable.h / gen_guide_targets.py 一致）。
+		constexpr std::uint8_t kGuideCandidatePersistent = 0x01;   // bit0 = 常驻引用
+
 		const StaticGuideCandidate* CandidateAt(const StaticQuestInfo& a_info, std::uint8_t a_index)
 		{
 			const auto slot = static_cast<std::size_t>(a_info.candBegin) + a_index;
@@ -1202,6 +1225,28 @@ namespace SAQ
 				}
 			}
 			return 0;
+		}
+
+		// ★★ 第 46 轮（大项 B）：这条任务的候选池里**没有任何一个常驻引用**
+		//   —— 玩家在远处（目标的 cell 没加载）时必然全部取不到，必须靠近才能导航。
+		//
+		//   用途：① 推给界面，在描述里**提前**告知（MissionMenu 的 bSaqNeedsApproach）；
+		//         ② 点引导且全不可得时，据此走「保持待生效 + 慢速重试 + HUD 提示」
+		//            而不是 19 秒后静默放弃（实测「营救机器人」，见 docs/05 第二十节）。
+		//   数据来源 = StaticGuideCandidate.flags bit0（离线由持久位算出，
+		//   见 tools/esm/gen_guide_targets.py 的 persistent）。
+		bool AllCandidatesNonPersistent(const StaticQuestInfo& a_info)
+		{
+			if (a_info.candCount == 0) {
+				return false;  // 没有目标：那是「暂无导航目标」，与「需要靠近」是两回事
+			}
+			for (std::uint8_t i = 0; i < a_info.candCount; ++i) {
+				const auto* c = CandidateAt(a_info, i);
+				if (!c || (c->flags & kGuideCandidatePersistent) != 0) {
+					return false;  // 有常驻候选（或有取不到的槽位）⇒ 不算「必须靠近」
+				}
+			}
+			return true;
 		}
 
 		// ★ 第 45 轮：换候选（定义在下方 ReissueGuideIfScriptLost 之前）——
@@ -1313,9 +1358,13 @@ namespace SAQ
 					  CandidateName(*quest, g_guide.candIndex), quest->candCount)
 				: std::string{};
 			REX::INFO("引导状态：{}（0x{:08X}）目标引用=0x{:08X}{} {}｜脚本状态={:.0f}"
-					  "（0 待处理 / 1 已应用 / 2 取不到 / 3 已清除 / 4 别名不存在）",
+					  "（0 待处理 / 1 已应用 / 2 取不到 / 3 已清除 / 4 别名不存在）{}",
 				DisplayNameOf(g_guide.questFormID), g_guide.questFormID, g_guide.guideRef,
-				candNote, quest ? quest->whereZh : "", scriptState);
+				candNote, quest ? quest->whereZh : "", scriptState,
+				// ★ 第 46 轮：这条引导是「点的时候目标还没加载、等靠近」的那一类
+				g_guide.approachPending
+					? std::format("｜待生效：目标尚未加载（已重试 {} 次）", g_guide.approachTries)
+					: std::string{});
 		}
 
 		// ★ 第 16 轮：把引导结果回写给界面（`_root.SAQ_GuideReply`，协议见 MissionMenu.as）。
@@ -1953,12 +2002,19 @@ namespace SAQ
 
 		// 应用一次引导请求，并把结果回写给界面。a_formID = 0 表示取消引导。
 		// 结果码（与 AS3 的约定）：0=成功 / 1=没有引导目标 / 2=写通道失败 / 3=静态表里没有
+		//   ★ 第 46 轮新增 5 = 「已排定，但目标此刻还没加载」（保持引导 + 界面提示「靠近后自动生效」，
+		//   不回滚、不播 OFF 音、不开星图；见下面 approachPending 分支与 SAQ_Main.psc）。
 		// ★ 第 37 轮：a_wantMap = 玩家这次按的是「设定航线（R）」（AS3 在 peek 第三段传来）
 		//   —— 成功时除了设引导，还要关掉任务菜单让脚本打开星图（见 RequestStarMapOpen）。
 		// ★ 第 38 轮：a_swfCloses = 新 SWF 会在收到回写后自己关掉**整个**暂停菜单
 		//   （peek 第四段；旧 SWF 没有这一段 ⇒ false ⇒ 沿用 kHide 的旧路径）。
 		void ApplyGuideRequest(std::uint32_t a_formID, int a_seq, bool a_wantMap, bool a_swfCloses)
 		{
+			// ★ 第 46 轮：每次玩家请求都先清「待生效」状态（下面的 !anyAlive 分支会重新置位）。
+			g_guide.approachPending = false;
+			g_guide.approachTries = 0;
+			g_guide.approachRetryAtMs = 0;
+
 			if (a_formID == 0) {
 				g_guide.verifyAtMs = 0;  // 取消：没有「结果」要确认
 				g_guide.verifySeq = 0;
@@ -1988,6 +2044,8 @@ namespace SAQ
 			std::uint32_t guideRefID = 0;
 			std::string_view displayName;
 			const char* whereZh = "";
+			// ★ 第 46 轮：点引导时所有候选都取不到 ⇒ 走「待生效」路径（见下面的分支）。
+			bool approachPending = false;
 			if (entry) {
 				if (entry->candCount == 0) {
 					REX::WARN("引导请求：{}（0x{:08X}）没有引导目标（离线没算出「去哪里接」的引用，见 docs/05）",
@@ -2017,8 +2075,18 @@ namespace SAQ
 				displayName = entry->nameZh;
 				whereZh = entry->whereZh;
 				if (!anyAlive) {
+					// ★★ 第 46 轮（大项 B）：点引导那一刻**所有候选都取不到** ——
+					//   实测（「营救机器人」19:27 会话）：旧行为是照常写通道、界面显示
+					//   「已设为引导」，然后脚本连报 5 次取不到、19 秒后引导被**静默放弃**
+					//   + 界面回滚 ⇒ 玩家看到的是「按了没反应，过一会儿又自己取消了」。
+					//   现在：① 界面回写结果码 5（保持竖条 + note 写明原因，不回滚、不播 OFF 音）；
+					//        ② 脚本侧发 HUD 提示（见 SAQ_Main.psc 的 ShowNotice）；
+					//        ③ 不安排 19 秒确认窗口，改由菜单关着时的**退避慢速重试**
+					//           等目标 cell 加载（见 PollApproachRetry）—— 玩家靠近即自动生效。
+					approachPending = true;
 					REX::INFO("引导请求：{}（0x{:08X}）的 {} 个候选此刻都取不到（玩家离得远？）"
-							  "—— 先写第 1 个候选，靠近后由重试/换候选自愈",
+							  "—— 保持待生效：界面已提示、脚本会发 HUD 提示，靠近目标区域后自动生效"
+							  "（每 10~60 秒自动重试一次）",
 						entry->nameZh, a_formID, entry->candCount);
 				}
 			} else {
@@ -2042,7 +2110,10 @@ namespace SAQ
 			std::string detail;
 			// ★ 第 37 轮：按了「设定航线（R）」的请求 —— 状态写 5，脚本应用引导后打开星图；
 			//   Enter（只开始引导）走 0，行为与历史一致。
-			if (!Guide::SetGuideTarget(guideRefID, detail, /*a_starMap=*/a_wantMap)) {
+			// ★ 第 46 轮：「目标尚未加载」的请求**不带星图意图**（星图要等引导真的生效才有意义；
+			//   界面侧也据此不关菜单，见下面 approachPending 分支）。
+			const bool wantMap = a_wantMap && !approachPending;
+			if (!Guide::SetGuideTarget(guideRefID, detail, /*a_starMap=*/wantMap)) {
 				REX::WARN("引导请求：{}（0x{:08X}）写 ESM 通道失败｜{}", displayName, a_formID, detail);
 				NotifyGuideReply(a_seq, g_guide.questFormID, 2);
 				return;
@@ -2058,10 +2129,29 @@ namespace SAQ
 				: std::string{ "任务板入口" };
 			REX::INFO("引导请求：{}（0x{:08X}）→ 引用 0x{:08X}（{}）｜{}｜{}｜星图={}｜{}",
 				displayName, a_formID, guideRefID, whereZh, candNote, detail,
-				a_wantMap ? "是（设定航线）" : "否", As3PressNote());
+				wantMap ? "是（设定航线）"
+						: (a_wantMap ? "否（按了 R，但目标尚未加载）" : "否"),
+				As3PressNote());
+			if (approachPending) {
+				// ★★ 第 46 轮：目标尚未加载 —— 界面**不回滚**（结果码 5 = 保持引导 + 写明原因），
+				//   也不关菜单（星图这一半要等引导真的生效才有意义，见下）。
+				//   确认窗口不安排：这条引导的兑现时间取决于玩家什么时候靠近，不是几秒的事。
+				g_guide.approachPending = true;
+				g_guide.approachTries = 0;
+				g_guide.approachRetryAtMs = 0;   // 0 = 下一拍例行检查时立刻试第一次
+				NotifyGuideReply(a_seq, a_formID, 5);
+				REX::INFO("引导确认：目标尚未加载 —— 保持待生效（不做 19 秒超时判定）："
+						  "{}（0x{:08X}）｜靠近目标区域后会自动生效（脚本加载到引用即应用）",
+					displayName, a_formID);
+				if (a_wantMap) {
+					REX::INFO("星图：本次不打开（目标尚未加载）—— 引导生效后玩家再按一次"
+							  "「设定航线」即可；界面侧不关菜单");
+				}
+				return;
+			}
 			NotifyGuideReply(a_seq, a_formID, 0);
 			ScheduleGuideVerify(a_seq);
-			if (a_wantMap) {
+			if (wantMap) {
 				// ★ 第 37/38 轮：关掉任务菜单（或由界面侧关掉整个暂停菜单），让脚本打开星图
 				RequestStarMapOpen(a_formID, a_swfCloses);
 			}
@@ -2100,6 +2190,7 @@ namespace SAQ
 			g_guide.guideRef = 0;
 			g_guide.verifyAtMs = 0;
 			g_guide.verifySeq = 0;
+			g_guide.approachPending = false;  // ★ 第 46 轮：放弃引导时一并清「待生效」
 
 			REX::WARN("引导未生效：{}（0x{:08X}）—— {}；已放弃本次引导（清通道{}）",
 				DisplayNameOf(questID), questID, a_why,
@@ -2372,6 +2463,9 @@ namespace SAQ
 			}
 			g_guide.questFormID = 0;
 			g_guide.guideRef = 0;
+			g_guide.approachPending = false;   // ★ 第 46 轮：自动取消时不带「待生效」状态
+			g_guide.approachTries = 0;
+			g_guide.approachRetryAtMs = 0;
 		}
 
 		// ★★ 第 45 轮：把引导换到候选池里的**下一个**候选（循环回绕）。
@@ -2578,6 +2672,57 @@ namespace SAQ
 				currentAlive ? std::string_view{} : std::string_view{ "（原目标已不可用）" }, detail);
 		}
 
+		// ★★ 第 46 轮（大项 B）：等待「目标加载」的引导 —— **退避慢速重试**。
+		//
+		//   场景：玩家在远处点了一条候选全是非常驻的任务（或目标 cell 恰好没加载）。
+		//   DLL 在点击那一刻就知道「全不可得」⇒ 不安排 19 秒超时判定（见 ApplyGuideRequest），
+		//   改由这里在菜单关着时把通道重写一遍（GuideState 清 0）让脚本再试 ——
+		//   玩家飞/走进目标区域、cell 一加载，这一下就成功，蓝点自动出现；
+		//   界面上的「正在引导」自始至终没变（与真实状态一致），玩家侧另有 HUD 提示。
+		//
+		//   为什么退避（10 秒起步、上限 60 秒、约 35 分钟停手）：每次失败脚本都会写状态 2
+		//   并留一行 Trace —— 固定 2 秒重试会让两侧日志刷屏；而「等玩家靠近」本来就是分钟级的事。
+		//   停手后引导**保持**：下次打开菜单时 ReissueGuideIfScriptLost 会再试一次。
+		void PollApproachRetry(const Guide::Channel& a_ch, std::uint64_t a_now)
+		{
+			if (!g_guide.approachPending || g_guide.questFormID == 0) {
+				return;  // 没在等目标加载：零开销
+			}
+			if (a_ch.guideState == 1.0f) {
+				g_guide.approachPending = false;
+				REX::INFO("引导延迟生效：{}（0x{:08X}）目标已加载并被脚本应用（共重试 {} 次）"
+						  "—— 玩家在远处点引导时，靠这条路径兑现",
+					DisplayNameOf(g_guide.questFormID), g_guide.questFormID, g_guide.approachTries);
+				return;
+			}
+			if (g_guide.approachTries >= kApproachMaxTries) {
+				g_guide.approachPending = false;
+				REX::INFO("引导待生效（暂停重试）：{}（0x{:08X}）已重试 {} 次、目标区域仍未加载"
+						  "—— 引导保持（开一次任务菜单会再试），玩家靠近后按一次「设定航线」即可",
+					DisplayNameOf(g_guide.questFormID), g_guide.questFormID, g_guide.approachTries);
+				return;
+			}
+			if (g_guide.approachRetryAtMs != 0 && a_now < g_guide.approachRetryAtMs) {
+				return;  // 还没到下一次重试的时间
+			}
+			std::string detail;
+			if (!Guide::SetGuideTarget(g_guide.guideRef, detail)) {
+				g_guide.approachRetryAtMs = a_now + kApproachRetryMaxMs;
+				REX::WARN("引导重试（等待目标加载）写通道失败：{}（0x{:08X}）｜{}",
+					DisplayNameOf(g_guide.questFormID), g_guide.questFormID, detail);
+				return;
+			}
+			++g_guide.approachTries;
+			// 退避：10 / 20 / 40 / 60 / 60 … 秒
+			const auto shift = std::min<std::uint32_t>(g_guide.approachTries, 3);
+			const auto delay = std::min<std::uint64_t>(kApproachRetryMaxMs, kApproachRetryFirstMs << shift);
+			g_guide.approachRetryAtMs = a_now + delay;
+			REX::INFO("引导重试（等待目标加载）：{}（0x{:08X}）第 {} 次（目标 0x{:08X}，脚本状态={:.0f}）"
+					  "—— 约 {} 秒后再试；玩家靠近目标区域即自动生效",
+				DisplayNameOf(g_guide.questFormID), g_guide.questFormID, g_guide.approachTries,
+				g_guide.guideRef, a_ch.guideState, delay / 1000);
+		}
+
 		// ★★ 第 32 轮：菜单关着时的**例行认领 + 通道对账**（每 2 秒一次）。
 		//
 		// 起因（玩家本轮实测：重启游戏后蓝点仍然偏 3.41 m）：第 31 轮的「目标动态更新」
@@ -2593,6 +2738,8 @@ namespace SAQ
 		//   ② 在引导 + 通道里没有目标（读档到了「没有引导」的存档）⇒ 重置本侧状态；
 		//   ③ 在引导 + 通道目标与本侧不一致（同会话里读了另一个存档 / 通道被外部改）
 		//      ⇒ 清本侧状态，下一轮按通道值重新配对（认知以通道/存档为准）。
+		//   ★★ 第 46 轮：另加 ④ 目标一致、但这条引导还在「等目标加载」⇒ 退避重试
+		//      （PollApproachRetry）—— 玩家靠近后蓝点自动出现的兑现路径。
 		void PollGuideUpkeep()
 		{
 			const auto now = NowMs();
@@ -2612,7 +2759,9 @@ namespace SAQ
 				return;
 			}
 			if (ch.targetFormID == g_guide.guideRef) {
-				return;  // 一致：正常在引导
+				// ★ 第 46 轮：一致 —— 如果这条引导还在「等目标加载」，在这里推进退避重试。
+				PollApproachRetry(ch, now);
+				return;
 			}
 
 			// ② / ③：不一致，以通道（= 存档）为准，清本侧等重新配对。
@@ -2632,6 +2781,9 @@ namespace SAQ
 			g_guide.verifySilent = false;
 			g_guide.lastTargetCheckMs = 0;
 			g_guide.adoptWarnRef = 0;
+			g_guide.approachPending = false;   // ★ 第 46 轮：重新配对时不带「待生效」状态
+			g_guide.approachTries = 0;
+			g_guide.approachRetryAtMs = 0;
 		}
 
 		void OnMissionMenuClosed()

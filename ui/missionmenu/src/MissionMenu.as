@@ -621,7 +621,11 @@ package
                         "sNameEn":_loc7_.length >= 4 ? _loc7_[3] : _loc7_[2],
                         // ★ 第 23 轮：第 5 列 = 有没有引导目标（"1"/"0"）。
                         //   旧载荷缺这列时按 true（保持旧行为：点了由 DLL 判定）。
-                        "bSaqHasTarget":_loc7_.length >= 5 ? _loc7_[4] == "1" : true
+                        "bSaqHasTarget":_loc7_.length >= 5 ? _loc7_[4] == "1" : true,
+                        // ★★ 第 46 轮（大项 B）：第 6 列 = 「全部候选都非常驻」
+                        //   （远处一定取不到、必须靠近目标区域）—— 描述里提前告知玩家。
+                        //   旧载荷 / 内嵌回退数据缺这列 ⇒ false（不提这回事）。
+                        "bSaqNeedsApproach":_loc7_.length >= 6 ? _loc7_[5] == "1" : false
                      });
                   }
                }
@@ -703,10 +707,22 @@ package
          return _loc1_;
       }
       
+      // ★★ 第 46 轮（大项 B）：这条任务的导航目标**只在靠近后才可用**（候选全是非常驻引用）
+      //   —— 把原因写进描述，玩家点之前就知道（实测：远处点「营救机器人」⇒ 脚本取不到引用，
+      //   旧行为是 19 秒后静默放弃，看起来像坏了）。判据来自 C++ 载荷第 6 列（见 SAQ.cpp
+      //   的 AllCandidatesNonPersistent）；运行时另有 HUD 提示，见 SAQ_Main.psc。
+      private function SaqApproachNote() : String
+      {
+         return this.SaqUseChinese()
+            ? " 注意：它的导航目标要靠近目标区域后才加载 —— 距离较远时按「设定航线」可能暂时看不到标记（靠近后会自动生效）。"
+            : " Note: its navigation target loads only when you are near its area - from a distance SET COURSE may show no marker at first (it starts automatically once you get closer).";
+      }
+      
       // 右侧详情面板里的描述文案（固定内容，告诉玩家这条记录怎么用）。
       // ★ 第 27 轮：第 2 个参数 = 入口条目（任务板）—— 它没有「接取地点」的概念，
       //   描述改成「这是什么、怎么去」。
-      private function SaqDescriptionText(param1:Boolean, param2:Boolean = false) : String
+      // ★ 第 46 轮：第 3 个参数 = 需要靠近（见 SaqApproachNote）。
+      private function SaqDescriptionText(param1:Boolean, param2:Boolean = false, param3:Boolean = false) : String
       {
          // ★ 第 27 轮：无限任务入口（任务板）。
          // ★ 第 29 轮：入口引用已经在 ESM 里 override 成**常驻引用**（任何位置都能取到），
@@ -739,15 +755,17 @@ package
                : "This quest is available, but it has no navigation target yet - it cannot guide you to the pickup location.";
          }
          var _loc1_:String = this.SaqCourseKeyName();
+         // ★ 第 46 轮：全是非常驻候选的任务追加一句「需要靠近」（param3 = bSaqNeedsApproach）
+         var _loc2_:String = param3 == true ? this.SaqApproachNote() : "";
          if(_loc1_.length == 0)
          {
-            return this.SaqUseChinese()
+            return (this.SaqUseChinese()
                ? "这条任务当前可以接取。展开后选中目标，或使用底部的「设定航线」即可引导到接取地点。"
-               : "This quest is currently available. Expand it, then select the objective or use SET COURSE to be guided to the pickup location.";
+               : "This quest is currently available. Expand it, then select the objective or use SET COURSE to be guided to the pickup location.") + _loc2_;
          }
-         return this.SaqUseChinese()
+         return (this.SaqUseChinese()
             ? "这条任务当前可以接取。展开后选中目标，或按 " + _loc1_ + "（设定航线）即可引导到接取地点。"
-            : "This quest is currently available. Expand it, then select the objective or press " + _loc1_ + " (SET COURSE) to be guided to the pickup location.";
+            : "This quest is currently available. Expand it, then select the objective or press " + _loc1_ + " (SET COURSE) to be guided to the pickup location.") + _loc2_;
       }
       
       private function SaqBuildEntry(param1:Object) : Object
@@ -759,7 +777,7 @@ package
             "iFaction":FactionUtils.FACTION_NONE,
             "sName":this.SaqUseChinese() ? param1.sNameZh : param1.sNameEn,
             // ★ 第 27 轮：入口条目（任务板）的描述用专门文案（第 2 个参数）。
-            "sDescription":this.SaqDescriptionText(param1.bSaqHasTarget != false, param1.iType == SAQ_ENTRY_TYPE),
+            "sDescription":this.SaqDescriptionText(param1.bSaqHasTarget != false, param1.iType == SAQ_ENTRY_TYPE, param1.bSaqNeedsApproach == true),
             // 引导中的那条保持「追踪中」的视觉（左侧竖条）—— 列表重建（SaqRefresh）后不丢状态。
             "bActive":this.SaqGuideQuest != 0 && param1.uID == this.SaqGuideQuest,
             "bComplete":false,
@@ -1316,6 +1334,10 @@ package
       //           ★ 第 19 轮新增 4 = 引导未生效（脚本确认超时 / 别名不存在）——
       //           C++ 侧做过确认（PollGuideVerify）后仍未生效，必须回滚界面，
       //           否则界面会一直显示「已设为引导」而世界里什么都没有（界面说谎）。
+      //           ★★ 第 46 轮新增 5 = 「已排定，但目标的引用此刻还没加载」（玩家在远处
+      //           点了候选全是非常驻的任务）—— **不回滚**：引导保持、竖条不灭、不播
+      //           OFF 音、不关菜单（星图这次也不开）；C++ 侧会保持待生效并自动重试，
+      //           玩家靠近目标区域后蓝点自动出现（脚本侧另有 HUD 提示）。
       //  语义：**以「实际值」为准**——界面把 SaqGuideQuest 对齐到 C++ 报的实际值，
       //  与本地状态不一致时就是「被拒绝」，回滚竖条并给出失败文案。
       // ==================================================================
@@ -1353,6 +1375,15 @@ package
             this.SaqGuideNote = _loc4_ != 0 ? "已设为引导:" + this.SaqQuestNameByID(_loc4_) : "已取消引导";
             // ★ 第 38 轮：成功 ⇒ 若这次请求带星图意图，现在关菜单。
             this.SaqReturnToGameForStarMap();
+         }
+         else if(_loc5_ == 5)
+         {
+            // ★★ 第 46 轮：目标尚未加载 —— 引导**保持**（竖条不灭）：C++ 侧会保持待生效
+            //   并自动重试，玩家靠近后自动生效。所以这里：不回滚、不播 OFF 音、
+            //   不关菜单、不开星图（DLL 也没写状态 5、没安排星图）。
+            this.SaqGuideWantMap = false;
+            this.SaqPendingCloseToGame = false;
+            this.SaqGuideNote = "目标尚未加载:靠近后自动生效";
          }
          else
          {

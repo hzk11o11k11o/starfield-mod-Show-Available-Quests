@@ -336,6 +336,14 @@ def main() -> int:
         "按钮状态探针 btn=[": b" btn=[",
         "事件探针函数": b"SaqNoteUserEvent",
         "按钮状态字段": b"SaqLastBtnNote",
+        # ★★ 第 46 轮（大项 B）：引导可用性 + 提示收口 ——
+        #   ① 描述里**提前**告知「目标要靠近才加载」（载荷第 6 列 bSaqNeedsApproach）；
+        #   ② 结果码 5 = 已排定但目标尚未加载（保持竖条、不回滚、不关菜单）。
+        "需要靠近描述(中)": "它的导航目标要靠近目标区域后才加载".encode(),
+        "需要靠近描述(英)": b"its navigation target loads only when you are near its area",
+        "需要靠近函数": b"SaqApproachNote",
+        "载荷第 6 列": b"bSaqNeedsApproach",
+        "目标未加载 note": "目标尚未加载:靠近后自动生效".encode(),
     }
     swf_paths = [
         ROOT / "ui/missionmenu/build/missionmenu.swf",
@@ -500,6 +508,14 @@ def main() -> int:
             #   星图、改发 HUD 提示；DLL 侧不重试、超时文案改「按预期未打开」。
             "星图诊断全层未命中": "地点链全层节点=0".encode(),
             "星图按预期未打开": "星图：按预期未打开".encode(),
+            # ★★ 第 46 轮（大项 B）：引导可用性 + 提示收口 —— 点引导时「所有候选都取不到」
+            #   不再 19 秒后静默放弃，改为**保持待生效** + 退避重试 + 界面/HUD 提示。
+            "待生效判定日志": "保持待生效".encode(),
+            "待生效确认日志": "目标尚未加载".encode(),
+            "延迟生效日志": "引导延迟生效".encode(),
+            "退避重试日志": "引导重试（等待目标加载）".encode(),
+            "重试停手日志": "引导待生效（暂停重试）".encode(),
+            "星图本次不打开": "星图：本次不打开（目标尚未加载）".encode(),
         }.items():
             all_ok &= check(f"DLL · {name}", blob, needle)
         # 反向检查：第 31 轮把候选链顺序换掉，第 30 轮的「marker 优先」诊断文案不应再出现
@@ -588,12 +604,26 @@ def main() -> int:
         all_ok &= check("PEX · 不在星图上的通知", blob, b"not on the star map")
         # ★★ 第 45 轮补丁 2（玩家反馈「提示消失太快」）：引擎的 HUD 通知单条只停 ~2 秒，
         #   Papyrus 改不了 ⇒ 同一条文案再发 2 次、间隔 ~2 秒（轮询节拍驱动），总覆盖约 6 秒。
-        all_ok &= check("PEX · 提示重复函数", blob, b"ProcessStarMapNotice")
+        #   ★ 第 46 轮把这两个变量/函数从「星图专用」升级为**通用**（HUD 提示槽位）。
+        all_ok &= check("PEX · 提示重复函数", blob, b"ProcessNotice")
         all_ok &= check("PEX · 提示重复间隔", blob, b"StarMapNoticeInterval")
-        all_ok &= check("PEX · 提示重复 Trace", blob, "不在星图上的提示已重复".encode())
+        all_ok &= check("PEX · 提示重复 Trace", blob, "HUD 提示已补发".encode())
+        all_ok &= check("PEX · 提示统一入口", blob, b"ShowNotice")
+        all_ok &= check("PEX · 提示文案函数", blob, b"GuideNoticeText")
+        # ★★ 第 46 轮（大项 B）：目标尚未加载 —— 脚本如实提示玩家（可重复 3 次）
+        #   + 失败 Trace 节流 + 提示冷却（DLL 每 10~60 秒自动重试一次，不能每次都弹）。
+        all_ok &= check("PEX · 目标未加载提示", blob, "目标地点尚未加载".encode())
+        all_ok &= check("PEX · 提示冷却属性", blob, b"GuideNoticeCooldownTicks")
+        all_ok &= check("PEX · 失败次数节流", blob, b"GuideFailCount")
         # 反向检查：第 40 轮把「地点自己没有行星，改用父地点」并入候选链诊断，旧串不应再出现
         gone = "地点自己没有行星，改用父地点".encode() not in blob
         print(("OK  " if gone else "MISS") + " PEX · 旧父地点兜底文案已替换(反向检查)")
+        all_ok &= gone
+        # 反向检查：第 46 轮把「星图专用」的提示机制改成通用（HUD 提示槽位）——
+        #   旧函数名 / 旧变量不应再出现在 PEX 里。
+        gone = (b"ProcessStarMapNotice" not in blob and b"StarMapNoticeLeft" not in blob
+                and "不在星图上的提示已重复".encode() not in blob)
+        print(("OK  " if gone else "MISS") + " PEX · 旧星图专用提示机制已替换(反向检查)")
         all_ok &= gone
     else:
         print(f"MISS 缺少 PEX {pex}")

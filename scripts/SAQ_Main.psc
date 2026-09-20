@@ -65,6 +65,17 @@ Scriptname SAQ_Main extends Quest
 ;        DLL 在「星图没打开」时会自动重试并依次切换这三个候选（见 SAQ.cpp 的
 ;        kStarMapRetryMs），日志里能看出哪一次把星图打开了。
 ;
+;  ## ★★ 第 46 轮（大项 B）：目标尚未加载时「如实告知 + 保持待生效」
+;
+;  背景（实测「营救机器人」19:27 会话）：一条任务的候选**全是非常驻引用**、玩家又在远处时，
+;  Game.GetForm 取不到 ⇒ 本脚本连报 5 次「引导失败」，DLL 19 秒后把引导**静默放弃**、
+;  界面回滚 —— 玩家体感 =「按了没反应，过一会儿又自己取消了」。
+;  现在：① DLL 点引导时就知道「全不可得」⇒ 界面回写结果码 5（保持竖条 + 写明原因，
+;  不回滚、不开星图），并保持「待生效」状态、每 10~60 秒自动重试一次（见 SAQ.cpp
+;  的 PollApproachRetry）；② 本脚本在第一次取不到时发一条 HUD 提示（可重复 3 次），
+;  告诉玩家「目标地点尚未加载、靠近后会自动生效」；③ 玩家靠近、cell 一加载，
+;  下一次重试就成功 —— 蓝点自动出现（界面上的「正在引导」自始至终没变）。
+;
 ;  ## SAQ_Notify = 7777 + 菜单打开次数
 ;
 ;  两个用途：
@@ -106,12 +117,21 @@ int StarMapPendingFormID = 0
 ;   接受 ShowGalaxyStarMapMenuAndPlotToLocation 的时机，也不会被暂停吃掉。
 int StarMapPendingTicks = 0
 
-; ★★ 第 45 轮补丁 2（玩家反馈「右上角提示消失太快」）：星图无法定位时的 HUD 提示要**重复发**——
-;   `Debug.Notification` 单条的停留时长由引擎控制（约 2 秒，Papyrus 没有延长参数）⇒ 同一条
-;   文案再发 2 次、每次间隔 4 个轮询节拍（≈2 秒），总覆盖约 6 秒。
-;   首次在 OpenStarMapFor 的「不在星图上」分支里发；后续由 ProcessStarMapNotice 发。
-int StarMapNoticeLeft = 0
-int StarMapNoticeTicks = 0
+; ★★ 第 45 轮补丁 2 / 第 46 轮：HUD 提示的**统一机制**（同一条文案重复发几次）。
+;   起因：玩家反馈「右上角提示消失太快」—— `Debug.Notification` 单条的停留时长由引擎
+;   控制（约 2 秒，Papyrus 没有延长参数）⇒ 同一条文案再补发 2 次、每次间隔 4 个轮询
+;   节拍（≈2 秒），总覆盖约 6 秒。
+;   ★ 第 46 轮（大项 B）把它从「星图专用」升级成**通用**：另一个用途是「引导目标尚未
+;   加载」（玩家在远处点了导航 —— DLL 会保持待生效 + 退避重试，这里如实告诉玩家要靠近）。
+;   （第 45 轮的 StarMapNoticeLeft/StarMapNoticeTicks 就是这两个变量，只是改了名。）
+String NoticeText = ""
+int NoticeLeft = 0
+int NoticeTicks = 0
+
+; ★ 第 46 轮：引导目标取不到时的提示去重 —— 提示后 5 分钟内不再提示
+;   （DLL 每 10~60 秒自动重试一次，每次都失败；不去重会一直弹提示）。
+int GuideFailNoticeCooldown = 0
+int GuideFailCount = 0
 
 ; 本任务里引导目标用的别名 id 与目标索引（与 patch_saq_esm.py 保持一致）
 ; ★ Starfield 的 Papyrus 4.7 里没有 AutoConst 这个 flag（实测报 "Unknown user flag autoconst"），
@@ -126,8 +146,11 @@ float Property NotifyMagic = 7777.0 AutoReadOnly
 float Property PollInterval = 0.5 AutoReadOnly
 int Property PollTimerID = 1 AutoReadOnly
 
-; ★ 第 45 轮补丁 2：「不在星图上」的 HUD 提示，重复发送的间隔（轮询节拍数；4 拍 ≈ 2 秒）
+; ★ 第 45 轮补丁 2 / 第 46 轮：HUD 提示重复发送的间隔（轮询节拍数；4 拍 ≈ 2 秒）
 int Property StarMapNoticeInterval = 4 AutoReadOnly
+
+; ★ 第 46 轮：「引导目标尚未加载」的提示冷却（轮询节拍数；600 拍 ≈ 5 分钟）
+int Property GuideNoticeCooldownTicks = 600 AutoReadOnly
 
 ; ★ 第 37 轮：星图请求的延时与定时器 id。
 ;   ★★ 第 44 轮起**不再使用**（历史遗留，保留声明只为读旧存档时不缺属性）：
@@ -175,9 +198,9 @@ Event OnTimer(int aiTimerID)
 	;   放在 ApplyGuide 之后：这一拍刚装上的待办（DLL 在游戏运行中重发的 5/6/7）
 	;   也从这里开始倒数，不会漏。
 	ProcessStarMapPending()
-	; ★ 第 45 轮补丁 2：「不在星图上」的 HUD 提示重复发送
-	;   （首次在 OpenStarMapFor 里已发；这里按间隔补发剩下 2 次）。
-	ProcessStarMapNotice()
+	; ★ 第 45 轮补丁 2 / 第 46 轮：HUD 提示重复发送 + 提示冷却递减
+	;   （首次在调用点已发；这里按间隔补发剩下几次）。
+	ProcessNotice()
 EndEvent
 
 Event OnMenuOpenCloseEvent(String asMenuName, Bool abOpening)
@@ -251,13 +274,31 @@ Function ApplyGuide()
 		SetObjectiveDisplayed(GuideObjectiveID, False)
 		SetActive(False)
 		GuideState.SetValue(3)
+		GuideFailCount = 0
+		GuideFailNoticeCooldown = 0
 		Debug.Trace("[SAQ] 引导已清除")
 		Return
 	EndIf
 
 	ObjectReference target = Game.GetForm(targetFormID) as ObjectReference
 	If target == None
-		Debug.Trace("[SAQ] 引导失败：FormID " + targetFormID + " 取不到引用")
+		; ★★ 第 46 轮（大项 B）：目标此刻取不到（非常驻引用 + 所在 cell 没加载）。
+		;
+		;   实测（「营救机器人」19:27 会话）：DLL 侧旧行为是照常写通道、界面显示
+		;   「已设为引导」，然后这里连续失败、19 秒后引导被**静默放弃** + 界面回滚 ——
+		;   玩家体感 =「按了没反应，过一会儿又自己取消了」。
+		;   现在 DLL 会保持「待生效」并退避重试（每 10~60 秒一次，玩家靠近即自动生效），
+		;   这里负责**如实告诉玩家**为什么暂时看不到蓝点（第一次失败就提示；之后 5 分钟
+		;   冷却，免得 DLL 的自动重试每次都弹一遍）。
+		;   （注意：这条 Trace 也会被 DLL 的确认逻辑读到 —— 状态 2 的语义没变。）
+		GuideFailCount += 1
+		If GuideFailNoticeCooldown <= 0
+			ShowNotice(GuideNoticeText(), 2)
+			GuideFailNoticeCooldown = GuideNoticeCooldownTicks
+		EndIf
+		If GuideFailCount <= 3 || (GuideFailCount % 10) == 0
+			Debug.Trace("[SAQ] 引导失败：FormID " + targetFormID + " 取不到引用（第 " + GuideFailCount + " 次；目标区域尚未加载 —— DLL 会保持待生效并自动重试）")
+		EndIf
 		GuideState.SetValue(2)
 		Return
 	EndIf
@@ -266,6 +307,8 @@ Function ApplyGuide()
 	SetObjectiveDisplayed(GuideObjectiveID, True, True)
 	SetActive(True)
 	GuideState.SetValue(1)
+	GuideFailCount = 0
+	GuideFailNoticeCooldown = 0
 	Debug.Trace("[SAQ] 引导已应用：" + target)
 
 	; ★ 第 37 轮：玩家按了「设定航线（R）」—— 应用完引导后打开星图并把航线画到
@@ -344,28 +387,43 @@ Function ProcessStarMapPending()
 EndFunction
 
 ; ============================================================================
-;  ★★ 第 45 轮补丁 2：把「不在星图上」的 HUD 提示重复发完（由轮询节拍驱动）。
+;  ★★ 第 46 轮（大项 B）：HUD 提示 —— 全脚本共用一个「正在补发的提示」槽位。
 ;
-;  为什么：玩家反馈「右上角提示消失太快」——引擎的 HUD 通知默认只停约 2 秒，
-;  Papyrus 没有「延长单条停留时间」的参数 ⇒ 同一条文案再发 2 次、间隔 4 拍（≈2 秒），
-;  总覆盖约 6 秒（首次在 OpenStarMapFor 的「不在星图上」分支里已经发过一条）。
+;  首次在调用点立刻发，之后每 4 拍（≈2 秒）补发一条，补到 aiRepeats 次为止
+;  （引擎的单条通知只停约 2 秒，见 NoticeText 的说明）。
 ; ============================================================================
 String Function StarMapNoticeText()
 	Return "该目标不在星图上（飞船内/太空），请跟随任务标记 / Target not on the star map"
 EndFunction
 
-Function ProcessStarMapNotice()
-	If StarMapNoticeLeft <= 0
+String Function GuideNoticeText()
+	Return "目标地点尚未加载，暂时无法导航 —— 靠近后会自动生效 / Target area not loaded yet - guidance starts once you get closer"
+EndFunction
+
+Function ShowNotice(String asText, int aiRepeats)
+	NoticeText = asText
+	NoticeLeft = aiRepeats
+	NoticeTicks = StarMapNoticeInterval
+	Debug.Notification(asText)
+	Debug.Trace("[SAQ] HUD 提示：" + asText + "（共 " + (aiRepeats + 1) + " 次、间隔约 2 秒）")
+EndFunction
+
+Function ProcessNotice()
+	; 「引导目标尚未加载」的提示冷却（每次失败都会走到这里，靠它避免刷屏）
+	If GuideFailNoticeCooldown > 0
+		GuideFailNoticeCooldown -= 1
+	EndIf
+	If NoticeLeft <= 0
 		Return
 	EndIf
-	If StarMapNoticeTicks > 0
-		StarMapNoticeTicks -= 1
+	If NoticeTicks > 0
+		NoticeTicks -= 1
 		Return
 	EndIf
-	Debug.Notification(StarMapNoticeText())
-	StarMapNoticeLeft -= 1
-	StarMapNoticeTicks = StarMapNoticeInterval
-	Debug.Trace("[SAQ] 不在星图上的提示已重复（剩余 " + StarMapNoticeLeft + " 次）")
+	Debug.Notification(NoticeText)
+	NoticeLeft -= 1
+	NoticeTicks = StarMapNoticeInterval
+	Debug.Trace("[SAQ] HUD 提示已补发（剩余 " + NoticeLeft + " 次）")
 EndFunction
 
 ; ============================================================================
@@ -488,11 +546,9 @@ Function OpenStarMapFor(ObjectReference akTarget, int aiMode)
 	;   （DLL 侧同款判定：`星图诊断` 全层节点=0 时不重试、超时文案改「按预期未打开」。）
 	If body == None
 		Debug.Trace("[SAQ] 星图请求：目标地点不在星图上（行星=None、父地点链无行星；位置可能在飞船内部/动态创建的内部地点）—— 不打开星图，改发 HUD 提示（共 3 次、间隔约 2 秒）")
-		Debug.Notification(StarMapNoticeText())
-		; ★ 第 45 轮补丁 2：再补发 2 次（引擎单条只停 ~2 秒，玩家反馈「消失太快」）；
-		;   后续由 ProcessStarMapNotice 在轮询节拍里推进（每 4 拍 ≈ 2 秒一条）。
-		StarMapNoticeLeft = 2
-		StarMapNoticeTicks = StarMapNoticeInterval
+		; ★ 第 45 轮补丁 2：重复发（引擎单条只停 ~2 秒，玩家反馈「消失太快」）；
+		;   首次这里发，后续由 ProcessNotice 在轮询节拍里推进（每 4 拍 ≈ 2 秒一条）。
+		ShowNotice(StarMapNoticeText(), 2)
 		Return
 	EndIf
 
