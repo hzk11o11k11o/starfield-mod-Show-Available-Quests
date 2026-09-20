@@ -24,6 +24,11 @@
            同 cell 常驻兜底；DLL 依次 LookupByID 取第一个命中的 + 诊断日志）——
            第 29 轮的 override 路线已被实机 + 数据双重否定（override 不改变引用的加载分类，
            官方 70 条同类 override 的原记录本来就全是常驻）
+  第 33 轮：★ ESM 再加 11 条 **CELL 记录**（官方「空壳」写法：只留 EDID + flags 0x4000，
+           且与它自己的 CellChildren 组配对出现）—— 官方对同一条 cell（SFBGS003 → 霓虹城）
+           就是这么写的；实机 `marker 0` 说明缺它时引擎不并入我们的 CellChildren 组。
+           DLL 侧修「静态表只在开菜单时建」（菜单关着时的认领此前三条反查全落空 ⇒
+           第 32 轮的自愈形同虚设）
 
 用法：python tools/ui/verify_saq_build.py
 """
@@ -57,7 +62,7 @@ def check(name: str, blob: bytes, needle: bytes) -> bool:
 REF_SIGS = (b"REFR", b"ACHR", b"PGRE", b"PMIS", b"PARW", b"PBAR", b"PHZD")
 
 
-def check_esm_markers(path: pathlib.Path, expect_refs: set[int], label: str) -> bool:
+def check_esm_markers(path: pathlib.Path, expect_refs: dict[int, str], label: str) -> bool:
     """★ 第 30 轮：expect_refs 里的任务板必须各有一条**新建的常驻 XMarker marker**。
 
     第 29 轮的 override 路线已被实机 + 数据双重否定（override 只替换记录数据、不改变引用的
@@ -68,6 +73,12 @@ def check_esm_markers(path: pathlib.Path, expect_refs: set[int], label: str) -> 
       * flags = 0x400、组链 = … > CellChildren > CellPersistent
       * 记录头 FormID 的空间索引 = 本文件 MAST 数量（自身空间；写错会落进别的 master 空间）
 
+    ★ 第 33 轮**再加一条**：每个 marker 所在 cell 还必须有一条 **CELL 记录 override**
+    （整条照抄 Starfield.esm）。实机 `marker 0` + 官方先例（6/6 个 cell 都写了 CELL 记录）
+    说明引擎只把「本插件也写过该 CELL 记录」的 CellChildren 组并进那个 cell —— 缺它 =
+    11 条 marker 全部取不到。这里按组结构解析 + 解压校验 EDID 是否就是那个 cell。
+
+    expect_refs: {板记录号(低 24 位): 该 cell 的 EDID}（EDID 来自 ref/entry_targets.json）
     这是「任何位置都能导航」的**数据侧保证** —— 必须真正按组结构解析
     （顺带做组边界自检：结构被写坏时立刻能看出来）。
     """
@@ -83,6 +94,7 @@ def check_esm_markers(path: pathlib.Path, expect_refs: set[int], label: str) -> 
         p += 6 + ln
 
     found: dict[int, tuple] = {}
+    cells: dict[int, tuple] = {}
     problems: list[str] = []
 
     def walk(p: int, end_: int, chain: tuple) -> None:
@@ -100,7 +112,23 @@ def check_esm_markers(path: pathlib.Path, expect_refs: set[int], label: str) -> 
             size = struct.unpack_from("<I", buf, p + 4)[0]
             flags = struct.unpack_from("<I", buf, p + 8)[0]
             fid = struct.unpack_from("<I", buf, p + 12)[0]
-            if bytes(buf[p:p + 4]) in REF_SIGS:
+            sig4 = bytes(buf[p:p + 4])
+            if sig4 == b"CELL":
+                # ★ 第 33 轮：CELL 记录（官方空壳写法 —— 只有 EDID + flags 0x4000，非压缩）
+                payload = buf[p + 24:p + 24 + size]
+                edid = ""
+                subs: list[str] = []
+                if not (flags & 0x00040000):
+                    q = 0
+                    while q + 6 <= len(payload):
+                        s = payload[q:q + 4]
+                        n = struct.unpack_from("<H", payload, q + 4)[0]
+                        subs.append(s.decode("latin1"))
+                        if s == b"EDID":
+                            edid = payload[q + 6:q + 6 + n].split(b"\x00")[0].decode("latin1")
+                        q += 6 + n
+                cells[fid & 0xFFFFFF] = (flags, chain, fid, size, edid, subs)
+            elif sig4 in REF_SIGS:
                 payload = buf[p + 24:p + 24 + size]
                 edid = None
                 base = None
@@ -134,6 +162,8 @@ def check_esm_markers(path: pathlib.Path, expect_refs: set[int], label: str) -> 
         pos += gsize
 
     hit = 0
+    cell_hit = 0
+    want_cells: dict[int, str] = {}
     for low in sorted(expect_refs):
         got = found.get(low)
         if got is None:
@@ -153,10 +183,40 @@ def check_esm_markers(path: pathlib.Path, expect_refs: set[int], label: str) -> 
             problems.append(f"0x{low:06X}：" + "；".join(why))
         else:
             hit += 1
-    ok = hit == len(expect_refs) and not problems
+        if chain and [g for g, _ in chain][-4:] == [2, 3, 6, 8]:
+            want_cells[struct.unpack_from("<i", chain[-2][1])[0] & 0xFFFFFF] = expect_refs[low]
+
+    for cell_low in sorted(want_cells):
+        c = cells.get(cell_low)
+        want_edid = want_cells[cell_low]
+        if c is None:
+            problems.append(f"cell 0x{cell_low:06X} 没有 CELL 记录"
+                            f"（第 33 轮：缺它 = 引擎不会并入我们的 CellChildren 组）")
+            continue
+        cflags, cchain, cfid, csize, cedid, csubs = c
+        why = []
+        if (cfid >> 24) != 0:
+            why.append(f"不是 override（空间索引={cfid >> 24}，应 0）")
+        if [g for g, _ in cchain][-2:] != [2, 3]:
+            why.append(f"组链={[g for g, _ in cchain]}")
+        if not (cflags & 0x00004000):
+            why.append(f"flags=0x{cflags:X} 缺 0x4000（官方空壳标记）")
+        if cflags & 0x00040000:
+            why.append("是压缩记录（空壳应非压缩）")
+        if csubs != ["EDID"]:
+            why.append(f"子记录={csubs}≠['EDID']（空壳不许写数据字段，否则会覆盖 cell 数据）")
+        if cedid != want_edid:
+            why.append(f"EDID={cedid!r}≠{want_edid!r}")
+        if why:
+            problems.append(f"cell 0x{cell_low:06X} 的 CELL 空壳：" + "；".join(why))
+        else:
+            cell_hit += 1
+
+    ok = hit == len(expect_refs) and cell_hit == len(want_cells) and not problems
     print(("OK  " if ok else "MISS") +
           f" ESM({label}) · 新建常驻 marker {hit}/{len(expect_refs)} 条"
-          f"（XMarker + CellPersistent + 0x400）")
+          f"（XMarker + CellPersistent + 0x400）+ CELL 空壳 {cell_hit}/{len(want_cells)} 条"
+          f"（EDID + 0x4000，不覆盖 cell 数据）")
     for p_ in problems:
         print(f"       - {p_}")
     return ok
@@ -267,11 +327,19 @@ def main() -> int:
             "入口静默更新不清通道": "通道保持不动".encode(),
             # ★ 第 32 轮：菜单关着时的例行认领 + 通道对账（重启/读档后不进菜单也能自愈）
             "引导状态对账日志": "引导状态对账：".encode(),
+            # ★ 第 33 轮：菜单关着时**也要**保证静态表就绪（否则认领三条反查全落空，
+            #   第 32 轮的自愈形同虚设 —— 13:43 会话实证）
+            "静态表预建日志": "静态表已就绪（菜单关着时预建".encode(),
+            "静态表未就绪日志": "静态表尚未就绪".encode(),
         }.items():
             all_ok &= check(f"DLL · {name}", blob, needle)
         # 反向检查：第 31 轮把候选链顺序换掉，第 30 轮的「marker 优先」诊断文案不应再出现
         gone = "这些条目没走新建的常驻 marker".encode() not in blob
         print(("OK  " if gone else "MISS") + " DLL · 旧候选链诊断文案已替换(反向检查)")
+        all_ok &= gone
+        # 反向检查：第 33 轮把「认不出通道目标」的误导文案改掉（静态表没就绪 ≠ 另一个存档留下的）
+        gone = "另一个存档留下的？".encode() not in blob
+        print(("OK  " if gone else "MISS") + " DLL · 旧「认不出」误导文案已替换(反向检查)")
         all_ok &= gone
         # 反向检查：第 27 轮把「每次切条目打一行」的旧说明换成「每菜单一行」，旧串不应再出现
         gone = "脚本状态还是 0，但菜单还开着".encode() not in blob
@@ -320,7 +388,8 @@ def main() -> int:
     # ★ 第 30 轮：同时按组结构解析「11 条任务板的新建常驻 XMarker marker」（数据侧保证，
     #   不只是特征串）—— 第 29 轮的 override 路线已被实机否定，见 check_esm_markers。
     entries = json.loads((ROOT / "ref/entry_targets.json").read_text(encoding="utf-8"))
-    expect_markers = {e["refLocal"] for e in entries if e.get("markerLocal")}
+    # ★ 第 33 轮：marker 所在 cell 还必须有一条 CELL 记录 override（值 = 该 cell 的 EDID，用来比对）
+    expect_markers = {e["refLocal"]: e["cell"] for e in entries if e.get("markerLocal")}
     for label, path in (("工作区", ROOT / "esm/SAQ_ShowAvailableQuests.esm"),
                         ("MO2 部署", MO2_MOD / "SAQ_ShowAvailableQuests.esm")):
         if path.exists():

@@ -223,6 +223,12 @@ namespace SAQ::Masters
 					  g_masters[0].loaded, g_masters[0].small, g_masters[0].index));
 	}
 
+	// ★ 第 33 轮：本会话解析成功？（逐字见 SAQ_Masters.h 的说明）
+	bool Resolved()
+	{
+		return g_sessionResolved;
+	}
+
 	std::size_t Count()
 	{
 		return g_masters.size();

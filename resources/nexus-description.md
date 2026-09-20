@@ -60,7 +60,7 @@ Starfield 从不告诉你去哪接任务，全靠自己撞见。这个 mod 在�
 [/list]
 
 [b]兼容性[/b]
-仅使用 SFSE + ESM，不修改任何原版记录（无 dirty edit）。与不触碰任务菜单 UI 的 mod 完全兼容；与修改任务菜单 SWF 的 mod 冲突（需补丁）。
+仅使用 SFSE + ESM。**不改任何原版数据**：本插件只往那 12 个城市/据点的任务板所在 cell 里**新增**自己的常驻标记引用（用于精确导航）；为了让引擎接受这些新增引用，我们对这些 cell 各写一条**只含 EDID 的空壳 CELL 记录**（官方 Creation 对同一条 cell 用的就是这种写法），**不覆盖 cell 的任何数据字段**。与不触碰任务菜单 UI 的 mod 完全兼容；与修改任务菜单 SWF 的 mod 冲突（需补丁）。
 
 [b]反馈[/b]
 遇到问题请附上：SFSE\Plugins\SAQ_ShowAvailableQuests.log、安装方式（MO2 / 手动）、游戏与 SFSE 版本号。
@@ -108,7 +108,7 @@ Mission menu (TAB) -> "Available Quests" -> select an entry -> press the guidanc
 [/list]
 
 [b]Compatibility[/b]
-SFSE + ESM only — no vanilla records are edited (no dirty edits). Fully compatible with mods that don't touch the mission menu UI; conflicts with mission-menu SWF mods (patch required).
+SFSE + ESM only. **No vanilla data is changed**: the plugin only *adds* its own persistent marker references inside the cells that contain those 12 mission boards. So the engine accepts them, one EDID-only "stub" CELL record is written per cell (the exact pattern the official Creations use for the same cells) — **none of the cell's data fields are overridden**. Fully compatible with mods that don't touch the mission menu UI; conflicts with mission-menu SWF mods (patch required).
 
 [b]Feedback[/b]
 Please include SFSE\Plugins\SAQ_ShowAvailableQuests.log, install method (MO2 / manual), and your game & SFSE versions.

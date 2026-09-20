@@ -55,6 +55,7 @@
 #include <fstream>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -250,6 +251,8 @@ namespace SAQ
 			const StaticQuestInfo* info{};
 		};
 		std::vector<RuntimeRow> g_runtimeRows;
+		// ★ 第 33 轮：菜单关着时预建静态表 —— 「表还没就绪」只记一次（见 EnsureStaticTablesReady）
+		bool g_staticNotReadyLogged{};
 
 		// 解析 master + 建运行期行表。菜单打开时调用（读档换了加载顺序也能跟上）。
 		std::string BuildRuntimeRows(RuntimeFilterStats& a_stats)
@@ -278,6 +281,44 @@ namespace SAQ
 				g_runtimeRows.push_back(RuntimeRow{ id, form, &info });
 			}
 			return masters;
+		}
+
+		// ★★ 第 33 轮：菜单关着时也要保证「静态表」可用（master 前缀 + 运行期行表）。
+		//
+		// 起因（13:43 会话实证，docs/99 一·补十八）：第 32 轮的「例行认领」确实跑了，但认领要用的
+		// 两张表**只在菜单打开时才建**（BuildRuntimeRows 的唯一调用点在 OnMissionMenuOpened）——
+		// 于是没开过菜单的会话里 `Masters::MakeFormID()` 对未解析的 master 一律返回 0，
+		// 三条反查（任务 guideRef / 入口 uID / 入口候选）全部落空，日志打出「静态表里没有哪条
+		// 任务/入口的引导目标是它（另一个存档留下的？）」——**自愈形同虚设**，玩家的旧引导
+		// （偏 3.41 m 的兜底引用）继续生效。
+		//
+		// 现在菜单关着时也能把表建起来：已就绪 ⇒ 零开销直接返回；未就绪 ⇒ 试一次
+		// （Refresh 内部有会话级缓存、失败会打去重 WARN），失败不缓存、下次 Tick 再试。
+		// 返回 false 时调用方**不要**做任何「认不出目标」的判断 —— 那只是表还没建好。
+		bool EnsureStaticTablesReady(std::string_view a_why)
+		{
+			if (!Masters::Resolved()) {
+				Masters::Refresh();
+			}
+			if (!Masters::Resolved()) {
+				if (!g_staticNotReadyLogged) {
+					g_staticNotReadyLogged = true;
+					REX::INFO("静态表尚未就绪（{}）：master 前缀还没解析出来 —— 稍后自动重试"
+							  "（这期间不做认领、也不把通道目标当「认不出」）",
+						a_why);
+				}
+				return false;
+			}
+			if (g_runtimeRows.empty()) {
+				RuntimeFilterStats stats{};
+				const auto masters = BuildRuntimeRows(stats);
+				if (g_runtimeRows.empty()) {
+					return false;   // 极端情况：master 在、但一条记录都查不到 —— 下次再试
+				}
+				REX::INFO("静态表已就绪（菜单关着时预建，{}）：{}；运行期行 {}/{}（master 未加载而跳过 {}）",
+					a_why, masters, g_runtimeRows.size(), kQuestTableSize, stats.skippedMaster);
+			}
+			return true;
 		}
 
 		// ------------------------------------------------------------------
@@ -1401,6 +1442,12 @@ namespace SAQ
 			if (g_guide.questFormID != 0) {
 				return;  // 这次会话里已经设过引导了，不用认领
 			}
+			// ★ 第 33 轮：菜单关着时本函数会被例行调用，而**静态表可能还没建**
+			//   （它此前只在打开菜单时建）。表没就绪时三条反查全会落空 ——
+			//   那不代表「这条引导认不出来」，只代表「等会儿再试」，见 EnsureStaticTablesReady。
+			if (!EnsureStaticTablesReady("认领已有引导")) {
+				return;
+			}
 			const auto ch = Guide::EnsureChannel();
 			// ★ 第 21 轮：用拼好的完整 FormID（ch.targetFormID）—— 目标值在通道里是
 			//   「低 24 位 + 高 8 位」两个 GLOB（float 精度所限，见 SAQ_Guide.cpp）。
@@ -1434,11 +1481,14 @@ namespace SAQ
 					return;
 				}
 				// ★ 第 32 轮：菜单关着时本函数每 2 秒被调用一次 —— 同一个认不出的目标只 WARN 一次。
+				// ★ 第 33 轮：能走到这里说明静态表**就绪**（见函数开头的 EnsureStaticTablesReady），
+				//   所以「认不出」是真的认不出（不是表没建好）—— 文案里带上表的规模当证据。
 				if (g_guide.adoptWarnRef != targetID) {
 					g_guide.adoptWarnRef = targetID;
 					REX::WARN("ESM 通道里有引导目标 0x{:08X}，但静态表里没有哪条任务/入口的引导目标是它"
-							  "（另一个存档留下的？）—— 已按「没有引导」处理，下次点引导会覆盖它",
-						targetID);
+							  "（另一个存档 / 老版本留下的？；静态表已就绪：运行期行 {}/{}）"
+							  "—— 已按「没有引导」处理，下次点引导会覆盖它",
+						targetID, g_runtimeRows.size(), kQuestTableSize);
 				}
 				return;
 			}

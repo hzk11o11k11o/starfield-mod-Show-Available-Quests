@@ -61,7 +61,7 @@ begin
   end;
 end;
 
-procedure Walk(e: IInterface; depth: Integer; var hits: Integer);
+procedure Walk(e: IInterface; depth: Integer; var hits: Integer; var cells: Integer);
 var
   i: Integer;
   c: IInterface;
@@ -72,7 +72,7 @@ begin
     nm := Name(c);
     if Copy(nm, 1, 4) = 'GRUP' then begin
       sl.Add(StringOfChar(' ', depth * 2) + nm);
-      Walk(c, depth + 1, hits);
+      Walk(c, depth + 1, hits, cells);
     end else begin
       sig := Signature(c);
       line := StringOfChar(' ', depth * 2) + sig + ' ' + IntToHex(GetLoadOrderFormID(c), 8);
@@ -92,6 +92,13 @@ begin
         line := line + '   <<< marker';
         Inc(hits);
       end;
+      (* round 33: CELL record override (byte copy of Starfield.esm) --
+         the engine merges our CellChildren group only when the plugin also
+         writes that CELL record, so each marker must come with one. *)
+      if sig = 'CELL' then begin
+        line := line + '   <<< CELL override (round 33, host cell of a marker)';
+        Inc(cells);
+      end;
       sl.Add(line);
     end;
   end;
@@ -101,7 +108,7 @@ function Initialize: Integer;
 var
   f, g: IInterface;
   fs: TFileStream;
-  i, hits: Integer;
+  i, hits, cells: Integer;
 begin
   sl := TStringList.Create;
   sl.Add('=== SAQ verify markers begin ===');
@@ -122,14 +129,17 @@ begin
   sl.Add('=== ' + TargetFile + ' cell group tree ===');
   g := TopGroup(f, 'CELL');
   hits := 0;
+  cells := 0;
   if not Assigned(g) then begin
     sl.Add('NO GRUP Top "CELL" -- markers missing?');
   end else begin
-    Walk(g, 0, hits);
+    Walk(g, 0, hits, cells);
   end;
   sl.Add('marker hits = ' + IntToStr(hits) + ' (expect 11)');
+  sl.Add('CELL overrides = ' + IntToStr(cells) + ' (expect 11, round 33)');
   sl.Add('note: FormID here is xEdit load-order formid; a NEW record of this file shows');
   sl.Add('      with the file own prefix and 0x900+i low bits, NOT as 00xxxxxx override.');
+  sl.Add('      The CELL records MUST show as master-space 00xxxxxx (override of Starfield.esm).');
 
   try
     fs := TFileStream.Create(OutDir + 'SAQ_resaved.esm', fmCreate);
