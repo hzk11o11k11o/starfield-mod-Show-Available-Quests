@@ -199,6 +199,22 @@ package
       //   0 = 不知道（内嵌回退表 / 旧版 DLL）⇒ 跳过原版流程，只做我们自己的引导。
       private var SaqProxyQuestID:Number = 0;
 
+      // ★ 第 42 轮：玩家最近一次按键（R / Enter）用的是**哪一行** —— 进 SAQ_Report 的 press=[…]。
+      //
+      //   为什么需要：玩家反馈「R 键的导航结果不太稳定，有时候导航的目标似乎不是鼠标悬停的
+      //   任务的目标」。此前日志里只有「C++ 解析出来的任务」（引导请求：<任务名>），
+      //   没有任何一行能证明**界面当时用的是哪一行** —— 是把 hover 判错的锅，还是 C++/脚本
+      //   的锅，无法区分。加上这一格后，`界面状态[N]` 与 `引导请求：…` 两行并排就能对上：
+      //     press=R@0x351a@平衡账目   ← 界面按键时用的条目（uID 十六进制 @ 名字）
+      //     sel=idx=137:0x351a@平衡账目 ← 那一刻列表的选中项（鼠标悬停会更新它）
+      //   两者 uID 不一致 ⇒ 按钮那一刻界面用的不是鼠标悬停的那一行（真 bug，可查）；
+      //   一致而 C++ 收到的任务不同 ⇒ 问题在通道/静态表侧。格式用方括号包起来，
+      //   C++ 侧按括号取值（名字里可能有空格，不能按空格切）。
+      private var SaqLastPressNote:String = "-";
+
+      // ★ 第 42 轮：最近一次「列表选中项变化」（鼠标悬停 / 键盘上下 / 程序设置都会触发）。
+      private var SaqLastSelNote:String = "-";
+
       private var StoredLastOpenedIds:Array = null;
       
       private var StoredLastCategory:uint = 0;
@@ -959,6 +975,11 @@ package
          _loc8_ += " map=" + (this.SaqGuideWantMap ? "1" : "0");
          // ★ 第 36 轮：代理任务 FormID（0x… = 已知，`0` = 载荷没带 P 行 ⇒ 星图流程降级）
          _loc8_ += " proxy=0x" + Number(this.SaqProxyQuestID).toString(16);
+         // ★ 第 42 轮：「玩家按键用的是哪一行」与「列表当前选中项」。
+         //   press=[R@0x351a@平衡账目] = 按 R 那一刻界面选的条目；sel=[idx=137:0x351a@…] = 列表选中项。
+         //   C++ 侧会把 press/sel 抄进 `引导请求：…` 那一行（见 SAQ.cpp::As3PressNote），
+         //   于是「悬停的那条 / 界面用的那条 / C++ 解析出的那条」三者在日志里能一次对齐。
+         _loc8_ += " press=[" + this.SaqLastPressNote + "] sel=[" + this.SaqLastSelNote + "]";
          // 玩家任务日志名单（第 11 轮，诊断用）：QuestData 的「FormID:名字」，最多 12 条。
          // 用途：玩家说「某条可接任务没找到」时，先看它是不是**已经在玩家日志里**
          // （那样它被 C++/AS3 两层过滤中的某一层正当挡掉）—— 在这个名单里一查便知。
@@ -995,6 +1016,18 @@ package
       private function SaqIsOurEntry(param1:Object) : Boolean
       {
          return param1 != null && param1.bSaqAvailable == true;
+      }
+      
+      // ★ 第 42 轮：条目 → 日志标签 `0x<uID 十六进制>@<名字>`（见 SaqLastPressNote 的说明）。
+      //   分隔行（bIsDivider 对象）/ 空选中也都安全：给出 "0xNaN@?" 或 "无"，绝不抛异常。
+      private function SaqEntryTag(param1:Object) : String
+      {
+         if(param1 == null)
+         {
+            return "无";
+         }
+         var _loc1_:String = param1.sName != null ? String(param1.sName) : "?";
+         return "0x" + Number(param1.uID).toString(16) + "@" + _loc1_;
       }
       
       // 条目的显示名：选中的如果是**子项**（「前往接取地点」），名字取它的父任务名 ——
@@ -1544,6 +1577,10 @@ package
       public function onMissionSelectionChange() : *
       {
          var _loc1_:Object = this.MissionsList_mc.selectedEntry;
+         // ★ 第 42 轮：记下「列表当前选中的那一行」（鼠标悬停、键盘上下、程序设置都会走到这里）
+         //   —— 进报告的 sel=[…]，与 press=[…]（玩家按键那一刻用的行）对照，
+         //   两者不是同一条 ⇒ 「按键用的是哪一行」与「鼠标悬停的是哪一行」不一致（可查的 bug）。
+         this.SaqLastSelNote = "idx=" + this.MissionsList_mc.selectedIndex + ":" + this.SaqEntryTag(_loc1_);
          var _loc2_:Boolean = _loc1_ != null ? MissionsListEntry.IsMission(_loc1_) : false;
          var _loc3_:Object = null;
          if(!_loc2_)
@@ -1685,9 +1722,21 @@ package
       
       private function OnPlotCourseEvent() : void
       {
+         // ★ 第 42 轮（玩家反馈「R 的导航目标有时不是鼠标悬停的那条」）两处加固：
+         //   ① **按键这一刻先钉住用的是哪一行**（进报告 press=[…]，C++ 侧抄进引导请求日志）
+         //      —— 「界面选了哪条」从此有硬证据，不再只能推断；
+         //   ② 选中项为空（悬停到分隔行 / 还没渲染的行）时直接返回：下面的原版分支里
+         //      `MissionsListEntry.IsMission(undefined)` 会在 hasOwnProperty 上抛异常，
+         //      异常冒到按钮栏会被吞掉 —— 玩家看到的是「按 R 没反应」（也是「不稳定」的一种）。
+         var _loc1_:Object = this.MissionsList_mc.selectedEntry;
+         this.SaqLastPressNote = "R@" + this.SaqEntryTag(_loc1_);
+         if(_loc1_ == null)
+         {
+            return;
+         }
          // 「可接任务」条目：SET COURSE（键盘 R / 手柄 X）改成我们自己的引导请求，
          // 不把不存在的任务 ID 丢给原版的数据层（那样只会静默失败）。
-         if(this.SaqIsOurEntry(this.MissionsList_mc.selectedEntry))
+         if(this.SaqIsOurEntry(_loc1_))
          {
             // ★ 第 36 轮：行为与原版对齐 —— SET COURSE 除了「设定引导」，还要走**原版的
             //   星图流程**（打开星图 → 聚焦到接取地点所在星球 → 询问玩家是否导航）。
@@ -1707,25 +1756,27 @@ package
             //   再写一遍通道并触发「关菜单 → 脚本开星图」），而不是取消条目
             //   （此前正是「已选中的任务按 R = 取消选中、星图打不开」，玩家实测反馈）。
             //   取消引导仍有一条路：Enter 选中子项「前往接取地点」（默认 param3 = true）。
-            var _loc1_:Boolean = this.SaqToggleGuide(this.MissionsList_mc.selectedEntry, true, false);
-            if(_loc1_)
+            // ★ 第 42 轮：改用上面已经取好的 _loc1_（同一行对象），不再重读 selectedEntry ——
+            //   避免「按键时读一次、真正引导时又读一次」之间被列表重建换掉（两次读到不同行）。
+            var _loc2_:Boolean = this.SaqToggleGuide(_loc1_, true, false);
+            if(_loc2_)
             {
                this.SaqPlotToLocationViaEngine();
             }
             return;
          }
-         if(MissionsListEntry.IsMission(this.MissionsList_mc.selectedEntry))
+         if(MissionsListEntry.IsMission(_loc1_))
          {
             BSUIDataManager.dispatchEvent(new CustomEvent(MissionMenu_PlotToLocation,{
-               "questID":this.MissionsList_mc.selectedEntry.uID,
+               "questID":_loc1_.uID,
                "objectiveID":-1
             }));
          }
          else
          {
             BSUIDataManager.dispatchEvent(new CustomEvent(MissionMenu_PlotToLocation,{
-               "questID":this.MissionsList_mc.selectedEntry.uOwnerQuestFormID,
-               "objectiveID":this.MissionsList_mc.selectedEntry.uIndex
+               "questID":_loc1_.uOwnerQuestFormID,
+               "objectiveID":_loc1_.uIndex
             }));
          }
          GlobalFunc.PlayMenuSound(MISSION_SHOW_ON_MAP_SOUND);
@@ -1743,13 +1794,21 @@ package
          //     主标题左侧的竖条（TrackIndicator）随之点亮（引导中 = 追踪中的视觉）。
          // 必须在 CanTrackOrUntrack 判定**之前**处理：我们的条目在引擎侧不存在，
          // 落进原版分支会往数据层发一条引擎找不到的任务 ID。
+         // ★ 第 42 轮：Enter 也记一行 press=[E@…]（与 R 的 press=[R@…] 区分）——
+         //   「只引导」与「设定航线」两条路各自的入口条目都能在日志里对上。
          if(this.SaqIsOurEntry(this.MissionsList_mc.selectedEntry))
          {
+            this.SaqLastPressNote = "E@" + this.SaqEntryTag(this.MissionsList_mc.selectedEntry);
             if(!MissionsListEntry.IsMission(this.MissionsList_mc.selectedEntry))
             {
                this.SaqToggleGuide(this.MissionsList_mc.selectedEntry);
             }
             return;
+         }
+         var _loc4_:String = this.SaqEntryTag(this.MissionsList_mc.selectedEntry);
+         if(_loc4_ != "无")
+         {
+            this.SaqLastPressNote = "E(原版)@" + _loc4_;
          }
          if(this.CanTrackOrUntrack)
          {

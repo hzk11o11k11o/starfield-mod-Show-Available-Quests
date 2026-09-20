@@ -1025,6 +1025,41 @@ namespace SAQ
 			g_poll.logged = 0;
 		}
 
+		// ★★ 第 42 轮：把 AS3 报告里的 `press=[…]` / `sel=[…]` 抄出来（诊断用，见 MissionMenu.as）。
+		//
+		//   为什么需要：玩家反馈「R 键的导航结果似乎不太稳定，有时候导航的目标似乎不是鼠标
+		//   悬停的任务的目标」。此前日志里只有「引导请求：<任务名>」（= C++ 解析出的任务），
+		//   没有办法区分两种可能：① 界面按键那一刻用的行**本来就不是**鼠标悬停的那条；
+		//   ② 界面选对了，是后面的通道/脚本/星图环节错了。
+		//   现在 AS3 会把「按键用的行（press）」与「列表选中项（sel）」都写进报告，
+		//   这里抄进引导请求日志 —— 一次会话即可定性，不用再猜。
+		//   取值：方括号包起来（任务名里可能有空格，不能按空格切），找不到给 "?"。
+		std::string ExtractBracketField(std::string_view a_report, std::string_view a_key)
+		{
+			const std::string needle = std::string{ a_key } + "=[";
+			const auto at = a_report.find(needle);
+			if (at == std::string_view::npos) {
+				return "?";
+			}
+			const auto begin = at + needle.size();
+			const auto end = a_report.find(']', begin);
+			if (end == std::string_view::npos) {
+				return "?";
+			}
+			return std::string{ a_report.substr(begin, end - begin) };
+		}
+
+		// 现场读一次界面报告（不缓存）并拼成 `press=… sel=…`；桥不通就给一句话说明。
+		std::string As3PressNote()
+		{
+			std::string report;
+			if (!UI::ReadUiReport(report)) {
+				return "press=? sel=?（界面报告读不到）";
+			}
+			return std::format("press={} sel={}",
+				ExtractBracketField(report, "press"), ExtractBracketField(report, "sel"));
+		}
+
 		void PollUiReport()
 		{
 			if (g_poll.logged >= kReportPollMaxLines) {
@@ -1541,6 +1576,20 @@ namespace SAQ
 			int           attempts{};     // 已尝试次数（1 = 玩家按 R 的那一次）
 			std::uint64_t retryAtMs{};    // 下一次重试的时间点
 			std::uint32_t guideRef{};     // 请求时的引导引用（变了/取消了就放弃重试）
+			// ★★ 第 42 轮：重试的**前置条件** —— 必须先看到脚本把这次引导应用了
+			//   （GuideState == 1），再等 kStarMapRetryAfterAppliedMs 才允许重试换候选。
+			//
+			//   起因（玩家反馈「R 的导航结果不太稳定，有时目标不是悬停那条」）：第 40 轮的
+			//   重试只看「距请求多少秒」，于是有两类**会换掉目的地**的抢跑：
+			//     ① 脚本还没跑到（状态还是 5/6/7）就把候选从 5 改成 6 —— 第一个候选
+			//        （行星自己的地点）**根本没被试过**，日志里却是「第 2 次尝试」；
+			//     ② 脚本刚应用完、它自己的 1.5 秒延时还没到，重试就把候选改掉了 ——
+			//        星图先按候选 5 打开、随后又被重画成候选 6/7（玩家看到航线/焦点跳变）。
+			//   现在：appliedAtMs = 脚本报告「已应用」的时刻（0 = 还没看到）；
+			//   到点后先问一句通道状态，只有「脚本确实应用过 + 再等一段余量」才换候选。
+			std::uint64_t appliedAtMs{};    // 脚本确认应用（GuideState==1）的时刻
+			std::uint64_t appliedProbeMs{}; // 上面那次状态检查的节流
+			bool          appliedNoted{};   // 「脚本已应用」只记一行
 		};
 		StarMapProbe g_starMap;
 
@@ -1560,6 +1609,13 @@ namespace SAQ
 		//   三个候选各试一次，日志里能看出「哪一次把星图打开了」。
 		constexpr std::uint64_t kStarMapRetryMs = 2500;
 		constexpr int           kStarMapMaxAttempts = 3;
+		// ★★ 第 42 轮：**换候选前必须给脚本自己的尝试留足时间**。
+		//   脚本拿到「待处理 + 星图」后：先应用引导（写状态 1），再等它自己的
+		//   StarMapDelay（1.5 s）调原生函数 —— 也就是说「脚本报 1」之后还要约 1.5~2 秒
+		//   星图才会出现。第 40 轮的重试从**请求时刻**起算 2.5 秒，正好落在这段窗口里
+		//   ⇒ 星图其实马上要开了，却被重试改掉候选、重画一次航线（玩家看到目的地跳变）。
+		//   现在改成「从脚本确认已应用那一刻起 + 3 秒」才允许重试（余量 > 脚本的 1.5 s）。
+		constexpr std::uint64_t kStarMapRetryAfterAppliedMs = 3000;
 
 		// 请求「关菜单 + 开星图」。调用方保证通道已经写好状态 5。
 		// ★ 第 38 轮：a_swfCloses = 新 SWF 会在收到回写后自己调 CloseMenu(true)
@@ -1581,6 +1637,10 @@ namespace SAQ
 			g_starMap.attempts = 1;
 			g_starMap.retryAtMs = now + kStarMapRetryMs;
 			g_starMap.guideRef = g_guide.guideRef;
+			// ★ 第 42 轮：重试的「脚本已应用」前置条件（见 StarMapProbe::appliedAtMs）
+			g_starMap.appliedAtMs = 0;
+			g_starMap.appliedProbeMs = 0;
+			g_starMap.appliedNoted = false;
 			// ★ 第 40 轮：把「引擎认不认这个地点」写进日志（只读诊断，见上面注释）
 			LogStarMapDiagnosis("R 请求");
 			if (a_swfCloses) {
@@ -1692,7 +1752,27 @@ namespace SAQ
 			}
 			// ★ 第 40 轮：自动重试。只在「没有任何菜单开着」时重试 —— 菜单开着时游戏暂停、
 			//   脚本定时器不走，重试请求要等菜单关了才会被处理；与其干等，不如推迟。
-			if (now >= g_starMap.retryAtMs && g_starMap.attempts < kStarMapMaxAttempts) {
+			//   ★★ 第 42 轮：再补一道**前置条件** —— 必须先看到脚本应用了这次引导（状态 1），
+			//   并从那一刻起再等 kStarMapRetryAfterAppliedMs，才允许换地点候选重试。
+			//   理由见 StarMapProbe::appliedAtMs：脚本自己还要 1.5 秒才调原生函数，
+			//   从「请求时刻」起算 2.5 秒的重试正好落在它的窗口里 ⇒ 星图本来就要开了，
+			//   却被我们改掉候选重画一次（玩家看到航线/目的地跳变 = 「不稳定」）。
+			if (g_starMap.appliedAtMs == 0 && now >= g_starMap.appliedProbeMs) {
+				g_starMap.appliedProbeMs = now + 1000;   // 节流：每秒问一次通道状态
+				const auto ch = Guide::EnsureChannel();
+				if (ch.resolved && ch.guideState == 1.0f) {
+					g_starMap.appliedAtMs = now;
+					if (!g_starMap.appliedNoted) {
+						g_starMap.appliedNoted = true;
+						REX::INFO("星图：脚本已应用这次引导（状态=1）—— 它的星图调用约 1.5 秒后到达；"
+								  "这段时间内不改地点候选，只等星图出现（{:.1f} 秒后仍没有才考虑换候选重试）",
+							static_cast<double>(kStarMapRetryAfterAppliedMs) / 1000.0);
+					}
+				}
+			}
+			const bool retryDue = g_starMap.appliedAtMs != 0 &&
+				now >= g_starMap.appliedAtMs + kStarMapRetryAfterAppliedMs;
+			if (retryDue && g_starMap.attempts < kStarMapMaxAttempts) {
 				const auto menus = OpenMenusSummary();
 				if (menus != "无") {
 					g_starMap.retryAtMs = now + 1000;
@@ -1708,12 +1788,17 @@ namespace SAQ
 				const float state = g_starMap.attempts == 2 ? 6.0f : 7.0f;
 				std::string detail;
 				if (Guide::SetGuideTarget(g_guide.guideRef, detail, /*a_starMap=*/true, state)) {
-					REX::INFO("星图：第 {} 次尝试（把通道重设为待处理 + 星图 {:.0f}：脚本会在菜单关着时"
-							  "再调一次原生函数，地点候选随之切换）｜R 后约 {:.1f} 秒",
-						g_starMap.attempts, state, elapsed);
+					REX::INFO("星图：第 {} 次尝试（脚本已应用 {:.1f} 秒仍未出现 ⇒ 把通道重设为待处理 + "
+							  "星图 {:.0f}：脚本会在菜单关着时再调一次原生函数，地点候选随之切换）｜R 后约 {:.1f} 秒",
+						g_starMap.attempts,
+						static_cast<double>(now - g_starMap.appliedAtMs) / 1000.0, state, elapsed);
 				} else {
 					REX::WARN("星图：第 {} 次尝试写通道失败｜{}", g_starMap.attempts, detail);
 				}
+				// 换候选后脚本要重新应用一次 ⇒ 重新等它的「已应用 + 延时」
+				g_starMap.appliedAtMs = 0;
+				g_starMap.appliedProbeMs = 0;
+				g_starMap.appliedNoted = false;
 				g_starMap.retryAtMs = now + kStarMapRetryMs;
 				g_starMap.deadlineMs = now + kStarMapWindowMs;   // 窗口跟着顺延
 				return;
@@ -1810,9 +1895,11 @@ namespace SAQ
 			}
 			g_guide.questFormID = a_formID;
 			g_guide.guideRef = guideRefID;
-			REX::INFO("引导请求：{}（0x{:08X}）→ 引用 0x{:08X}（{}）｜{}｜星图={}",
+			// ★ 第 42 轮：尾上带 `界面按键行` —— 与这里的任务名并排即可回答
+			//   「导航的目标不是我悬停的那条」到底是界面选错了行，还是后面某一段错了（见 As3PressNote）。
+			REX::INFO("引导请求：{}（0x{:08X}）→ 引用 0x{:08X}（{}）｜{}｜星图={}｜{}",
 				displayName, a_formID, guideRefID, whereZh, detail,
-				a_wantMap ? "是（设定航线）" : "否");
+				a_wantMap ? "是（设定航线）" : "否", As3PressNote());
 			NotifyGuideReply(a_seq, a_formID, 0);
 			ScheduleGuideVerify(a_seq);
 			if (a_wantMap) {

@@ -89,7 +89,10 @@ GlobalVariable Property GuideState Auto
 GlobalVariable Property NotifyFlag Auto
 
 ; ★ 第 37 轮：星图请求的「待打开目标」（菜单关闭事件里记下，延后 0.5 秒执行）
+; ★ 第 42 轮：再加一个「待打开目标的 FormID」—— 定时器到点时与通道里的**当前**目标核对，
+;   不一致就放弃（见 OnTimer 与 ApplyGuide 的说明）。
 ObjectReference StarMapPendingRef = None
+int StarMapPendingFormID = 0
 
 ; 本任务里引导目标用的别名 id 与目标索引（与 patch_saq_esm.py 保持一致）
 ; ★ Starfield 的 Papyrus 4.7 里没有 AutoConst 这个 flag（实测报 "Unknown user flag autoconst"），
@@ -145,7 +148,22 @@ Event OnTimer(int aiTimerID)
 	; ★ 第 37 轮：星图请求的延后执行（先把待办取出来再调，避免重入时重复打开）
 	If aiTimerID == StarMapTimerID
 		ObjectReference pendingTarget = StarMapPendingRef
+		int pendingFormID = StarMapPendingFormID
 		StarMapPendingRef = None
+		StarMapPendingFormID = 0
+		If pendingTarget == None
+			Return
+		EndIf
+		; ★★ 第 42 轮：**过期校验**（玩家反馈「R 的导航目标有时不是鼠标悬停的那条」）。
+		;   这一段延时（StarMapDelay）里玩家完全可能又去引导了别的任务（Enter 点「前往接取地点」/
+		;   取消引导 / 自动取消），而通道里的目标已经换了 —— 旧代码会把**上一条**任务的航线
+		;   开出来（星图上指的地方与玩家刚才选的对不上 = 看起来像「指错了任务」）。
+		;   判据：待办目标的 FormID == 此刻通道里的目标 FormID；不等就丢掉这次请求。
+		int nowFormID = CurrentGuideTargetFormID()
+		If pendingFormID != nowFormID
+			Debug.Trace("[SAQ] 星图请求已过期：待办目标 " + pendingFormID + " ≠ 当前目标 " + nowFormID + "（引导已换/已取消）—— 跳过打开星图")
+			Return
+		EndIf
 		OpenStarMapFor(pendingTarget, StarMapPendingMode)
 		Return
 	EndIf
@@ -200,6 +218,13 @@ Function ApplyGuide()
 		Return
 	EndIf
 
+	; ★ 第 42 轮：**任何一次新请求**都先把上一条「待打开的星图」作废（下面 starMapWanted
+	;   分支会重新装上）。否则：R（待开星图）→ 这段延时里玩家又引导了别的任务/取消引导 →
+	;   旧待办仍然躺在那里，定时器到点就把**上一条任务**的航线开出来
+	;   —— 玩家看到的就是「导航的目标不是我选的那条」。
+	StarMapPendingRef = None
+	StarMapPendingFormID = 0
+
 	ReferenceAlias guideAlias = GetAlias(GuideAliasID) as ReferenceAlias
 	If guideAlias == None
 		Debug.Trace("[SAQ] 引导失败：别名 " + GuideAliasID + " 不存在（ESM 补丁没生效？）")
@@ -209,13 +234,8 @@ Function ApplyGuide()
 
 	; ★ 第 21 轮：把「低 24 位 + 高 8 位」拼回完整 FormID（见 GuideTargetRef 的说明）。
 	;   旧 ESM（没有 GuidePrefix）时按历史行为：GuideTargetRef 里就是完整 FormID。
-	float targetLocal = GuideTargetRef.GetValue()
-	int targetFormID
-	If GuidePrefix != None
-		targetFormID = ((GuidePrefix.GetValue() as int) * 16777216) + (targetLocal as int)
-	Else
-		targetFormID = targetLocal as int
-	EndIf
+	;   ★ 第 42 轮：拼装逻辑收进 CurrentGuideTargetFormID()（定时器到点的过期校验也要用同一套）。
+	int targetFormID = CurrentGuideTargetFormID()
 	If targetFormID <= 0
 		; 清除引导（玩家取消了，或者那条任务已经被接取）
 		guideAlias.Clear()
@@ -241,14 +261,33 @@ Function ApplyGuide()
 
 	; ★ 第 37 轮：玩家按了「设定航线（R）」—— 应用完引导后打开星图并把航线画到
 	;   接取地点（引擎原生函数，只负责「打开 + 定位 / 设航线」，引导本身不受影响）。
-	;   这里**延后 0.5 秒**执行：本函数多半是在「任务菜单关闭」事件里被调用的，
-	;   那一刻菜单还在销毁流程里，直接开另一个菜单容易被引擎吞掉（见 OpenStarMapFor）。
+	;   这里**延后 StarMapDelay 秒**（第 40 轮起 = 1.5）执行：本函数多半是在「任务菜单关闭」
+	;   事件里被调用的，那一刻菜单还在销毁流程里，直接开另一个菜单容易被引擎吞掉
+	;   （见 OpenStarMapFor）。★ 第 42 轮：这段延时窗口里玩家可能又换了引导 ⇒
+	;   定时器到点时会用 StarMapPendingFormID 与当前目标核对，不一致就跳过（见 OnTimer）。
 	If starMapWanted
 		StarMapPendingRef = target
+		StarMapPendingFormID = targetFormID
 		StarMapPendingMode = pendingState as int
 		StartTimer(StarMapDelay, StarMapTimerID)
-		Debug.Trace("[SAQ] 星图请求：" + StarMapDelay + " 秒后打开（目标 " + target + "，地点候选=" + StarMapPendingMode + "）")
+		Debug.Trace("[SAQ] 星图请求：" + StarMapDelay + " 秒后打开（目标 " + target + "，FormID=" + targetFormID + "，地点候选=" + StarMapPendingMode + "）")
 	EndIf
+EndFunction
+
+; ============================================================================
+;  ★ 第 42 轮：通道里「此刻的引导目标」的完整 FormID（低 24 位 + 高 8 位）。
+;  由 ApplyGuide() 与 OnTimer(StarMapTimerID) 共用 —— 后者用来判断「待打开的星图」
+;  还是不是当前这条引导（玩家可能在这段延时里换了任务）。
+; ============================================================================
+int Function CurrentGuideTargetFormID()
+	If GuideTargetRef == None
+		Return 0
+	EndIf
+	float targetLocal = GuideTargetRef.GetValue()
+	If GuidePrefix != None
+		Return ((GuidePrefix.GetValue() as int) * 16777216) + (targetLocal as int)
+	EndIf
+	Return targetLocal as int
 EndFunction
 
 ; ============================================================================

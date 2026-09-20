@@ -292,6 +292,13 @@ def main() -> int:
         # ★ 第 39 轮：R 在「已引导」的条目上重复按下时不取消引导，只再请求一次星图
         #   （note 进报告/日志，与「已设为引导」区分）。
         "R 重复请求 note": "重复设定航线:".encode(),
+        # ★★ 第 42 轮：R 键「导航目标不是我悬停的那条」的定性证据 ——
+        #   报告里新增 press=[…]（按键那一刻界面用的是哪一行）与 sel=[…]（列表选中项）。
+        #   这两个字段是「界面到底选了哪条」的唯一硬证据（C++ 侧抄进引导请求日志）。
+        "按键行 press=[": b" press=[",
+        "选中行 sel=[": b" sel=[",
+        "R 按键行标记": b"R@",
+        "Enter 按键行标记": b"E@",
     }
     swf_paths = [
         ROOT / "ui/missionmenu/build/missionmenu.swf",
@@ -418,6 +425,15 @@ def main() -> int:
             #   —— 上面的字符串检查只证明「有这么一句日志」，这一条才证明字节真的修了
             #   （数组是 constexpr，MSVC 把它放在 .rdata，二进制里能直接查到）
             "星图节点解析器特征字节": b"\x4c\x8b\xdc\x49\x89\x5b\x20\x55",
+            # ★★ 第 42 轮：R 键「导航目标不是我悬停的那条」——
+            #   ① 引导请求日志尾上带界面的 press/sel（ExtractBracketField/As3PressNote）；
+            #   ② 星图重试改成「脚本确认应用（状态 1）后再等一段余量」，不再抢在脚本
+            #      自己的 1.5 秒延时前面改地点候选（那会让星图航线/目的地跳变）。
+            "界面按键行抄录": b"press={} sel={}",
+            "界面报告读不到的说明": "press=? sel=?（界面报告读不到）".encode(),
+            "星图等脚本确认应用": "脚本已应用这次引导（状态=1）".encode(),
+            "星图不改候选只等待": "这段时间内不改地点候选，只等星图出现".encode(),
+            "星图重试带上已应用时长": "脚本已应用 {:.1f} 秒仍未出现".encode(),
         }.items():
             all_ok &= check(f"DLL · {name}", blob, needle)
         # 反向检查：第 31 轮把候选链顺序换掉，第 30 轮的「marker 优先」诊断文案不应再出现
@@ -490,6 +506,11 @@ def main() -> int:
         all_ok &= check("PEX · 候选号诊断", blob, "候选号=".encode())
         all_ok &= check("PEX · 行星地点 API", blob, b"GetLocation")
         all_ok &= check("PEX · 地点候选属性", blob, b"StarMapPendingMode")
+        # ★★ 第 42 轮：星图延时请求的**过期校验** —— 延时窗口里玩家换了引导（或取消）时
+        #   不能把上一条任务的航线开出来（玩家反馈「导航目标不是悬停那条」的脚本侧根因）。
+        all_ok &= check("PEX · 星图过期校验 Trace", blob, "星图请求已过期".encode())
+        all_ok &= check("PEX · 当前目标 FormID 助手", blob, b"CurrentGuideTargetFormID")
+        all_ok &= check("PEX · 待开星图目标 FormID", blob, b"StarMapPendingFormID")
         # 反向检查：第 40 轮把「地点自己没有行星，改用父地点」并入候选链诊断，旧串不应再出现
         gone = "地点自己没有行星，改用父地点".encode() not in blob
         print(("OK  " if gone else "MISS") + " PEX · 旧父地点兜底文案已替换(反向检查)")
