@@ -1024,10 +1024,12 @@ namespace SAQ
 				return;  // 这次会话里已经设过引导了，不用认领
 			}
 			const auto ch = Guide::EnsureChannel();
-			if (!ch.resolved || ch.targetRef == 0.0f) {
+			// ★ 第 21 轮：用拼好的完整 FormID（ch.targetFormID）—— 目标值在通道里是
+			//   「低 24 位 + 高 8 位」两个 GLOB（float 精度所限，见 SAQ_Guide.cpp）。
+			const auto targetID = ch.targetFormID;
+			if (!ch.resolved || targetID == 0) {
 				return;
 			}
-			const auto targetID = static_cast<std::uint32_t>(ch.targetRef);
 			const auto* entry = FindQuestByGuideRef(targetID);
 			if (!entry) {
 				REX::WARN("ESM 通道里有引导目标 0x{:08X}，但静态表里没有哪条任务的引导目标是它"

@@ -86,6 +86,22 @@ QUEST_NAME = "可接任务".encode("utf-8") + b"\x00"
 TEST_MODE_EDID = "SAQ_TestMode"
 TEST_MODE_FORMID = 0x804
 
+# ★ 第 21 轮：引导目标的「高位字节」（FormID >> 24）。
+#
+# 起因（实机 bug）：GLOB 是 float（尾数 24 位），完整 FormID 一旦 > 2^24
+# （DLC 的引用，如 0x0107BDB2 = 17,284,530）就可能丢精度（奇数不可表示）——
+# 轻则引导失效，重则指向**相邻的另一条记录**（错误的引导目标）。
+# 拆成「低 24 位（≤0xFFFFFF 永远精确）+ 高 8 位（≤0xFF 永远精确）」两个 GLOB 后，
+# 运行期拼接 = 精确。脚本按 `GuidePrefix 是否存在` 自动兼容旧通道。
+GUIDE_PREFIX_EDID = "SAQ_GuidePrefix"
+GUIDE_PREFIX_FORMID = 0x805
+
+# 需要保证存在的 GLOB：(EDID, 记录号, 说明)
+EXTRA_GLOBS = (
+    (TEST_MODE_EDID, TEST_MODE_FORMID, "测试过滤开关（ini / 控制台，见 docs/05 第八节）"),
+    (GUIDE_PREFIX_EDID, GUIDE_PREFIX_FORMID, "引导目标 FormID 高位（float 精度问题，见 docs/05）"),
+)
+
 # 记录里「目标 / 别名」相关的子记录（重建时先全部删掉）
 ALIAS_SUBS = {b"ALST", b"ALLS", b"ALID", b"ALFG", b"ALED", b"VTCK", b"ALFA", b"ALRT",
               b"ALUA", b"ALFR", b"ALFL", b"ALCS", b"ALCO", b"ALFE", b"ALFI", b"ALPS",
@@ -263,15 +279,15 @@ def describe(path: Path) -> int:
 
 
 def rebuild_file(buf: bytes, target_formid: int, new_payload: bytes,
-                 glob_extra: tuple[int, bytes] | None = None) -> bytes:
+                 glob_extras: list[tuple[int, bytes]] | None = None) -> bytes:
     """整体重新序列化（文件只有几百字节）：只换目标记录的 payload，其余原样搬运。
 
     组 size 是**重算**出来的，不是「原值 + 增量」—— 万一之前有过一次写坏（组 size 与
     记录对不上），增量法会把错误继承下去（踩过一次）。
 
-    glob_extra = (记录号低 24 位, payload)：往 GLOB 组的**末尾**追加一条新记录
-    （第 20 轮的测试开关 GLOB）。记录头以组内第一条记录为模板（flags/时间戳/
-    FormVersion 全继承），只改 size 与 FormID 低位 —— 不靠猜字段。
+    glob_extras = [(记录号低 24 位, payload), …]：往 GLOB 组的**末尾**追加新记录
+    （测试开关 / 引导目标高位，见 EXTRA_GLOBS）。记录头以组内第一条记录为模板
+    （flags/时间戳/FormVersion 全继承），只改 size 与 FormID 低位 —— 不靠猜字段。
     """
     head_size = struct.unpack_from("<I", buf, 4)[0]
     out = bytearray(buf[:24 + head_size])
@@ -283,16 +299,17 @@ def rebuild_file(buf: bytes, target_formid: int, new_payload: bytes,
         nonlocal pending_hdr, pending_records, pending_is_glob
         if pending_hdr is None:
             return
-        if pending_is_glob and glob_extra is not None:
-            formid_low, extra_payload = glob_extra
+        if pending_is_glob and glob_extras:
             if not pending_records:
                 raise SystemExit("GLOB 组是空的 —— 没有可用的记录头模板，先跑一次 xEdit 生成")
             tmpl = bytearray(pending_records[0][0])
-            struct.pack_into("<I", tmpl, 4, len(extra_payload))
-            cur_id = struct.unpack_from("<I", tmpl, 12)[0]
-            struct.pack_into("<I", tmpl, 12, (cur_id & 0xFF000000) | formid_low)
-            pending_records.append((bytes(tmpl), extra_payload))
-            bump_tes4_hedr(out, 1, formid_low + 1)
+            for formid_low, extra_payload in glob_extras:
+                hdr = bytearray(tmpl)
+                struct.pack_into("<I", hdr, 4, len(extra_payload))
+                cur_id = struct.unpack_from("<I", hdr, 12)[0]
+                struct.pack_into("<I", hdr, 12, (cur_id & 0xFF000000) | formid_low)
+                pending_records.append((bytes(hdr), extra_payload))
+            bump_tes4_hedr(out, len(glob_extras), max(low for low, _ in glob_extras) + 1)
         gsize = 24 + sum(24 + len(pl) for _, pl in pending_records)
         hdr = bytearray(pending_hdr)
         hdr[4:8] = struct.pack("<I", gsize)
@@ -378,16 +395,16 @@ def main() -> int:
           f"payload {len(payload_old)} -> {len(new_payload)} B"
           f"（清掉 {len(info['dropped'])} 个子记录）")
 
-    # ★ 第 20 轮：保证测试开关 GLOB 存在（已存在则原样保留 —— 玩家设置的值不能被清掉）
-    glob_extra = None
-    if has_edid(buf, TEST_MODE_EDID):
-        print(f"GLOB {TEST_MODE_EDID}：已存在（保留当前值）")
-    else:
-        glob_extra = (TEST_MODE_FORMID, make_glob_payload(TEST_MODE_EDID, 0.0))
-        print(f"GLOB {TEST_MODE_EDID}：将新增（记录号 0x{TEST_MODE_FORMID:03X}，初值 0）"
-              f"—— 控制台 `set {TEST_MODE_EDID} to N` 切换测试过滤，见 docs/05")
+    # ★ 第 20/21 轮：保证附加 GLOB 存在（已存在则原样保留 —— 玩家设置的值不能被清掉）
+    glob_extras: list[tuple[int, bytes]] = []
+    for edid, low, label in EXTRA_GLOBS:
+        if has_edid(buf, edid):
+            print(f"GLOB {edid}：已存在（保留当前值）")
+        else:
+            glob_extras.append((low, make_glob_payload(edid, 0.0)))
+            print(f"GLOB {edid}：将新增（记录号 0x{low:03X}，初值 0）—— {label}")
 
-    out = rebuild_file(buf, quest_formid, new_payload, glob_extra)
+    out = rebuild_file(buf, quest_formid, new_payload, glob_extras)
     path.write_bytes(out)
     print(f"已写回 {path}（{len(out)} B）")
 

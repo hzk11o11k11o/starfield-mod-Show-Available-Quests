@@ -20,6 +20,13 @@ namespace SAQ::Guide
 		// ★ 第 20 轮：控制台测试开关（玩家 `set SAQ_TestMode to N`）。可选记录 ——
 		//   旧 ESM 里没有它，读不到就保持 -1（不过滤），不影响任何既有功能。
 		constexpr std::uint32_t kFormIDTestMode = 0x804;    // GLOB SAQ_TestMode
+		// ★ 第 21 轮：引导目标的「高位字节」（FormID >> 24）。可选记录 ——
+		//   为什么要拆（实机 bug 的根治）：GLOB 是 float（尾数 24 位），完整 FormID
+		//   超过 2^24（DLC 的引用，如 0x0107BDB2）后**奇数不可精确表示**，轻则
+		//   GetForm 取不到（状态 2），重则指向相邻的另一条记录（错误的引导目标）。
+		//   低 24 位（≤0xFFFFFF）+ 高 8 位（≤0xFF）分别存两个 float ⇒ 都精确。
+		//   旧 ESM 没有它 ⇒ -1，按旧语义（target 里就是完整 FormID）处理。
+		constexpr std::uint32_t kFormIDGuidePrefix = 0x805; // GLOB SAQ_GuidePrefix
 
 		// 脚本写的身份锚点：7777 + 菜单打开次数（允许 1000 次）
 		constexpr float kNotifyMagic = 7777.0f;
@@ -35,6 +42,22 @@ namespace SAQ::Guide
 		{
 			auto* form = RE::TESForm::LookupByID((a_prefix << 24) | a_lowId);
 			return form ? form->As<RE::TESGlobal>() : nullptr;
+		}
+
+		// 把「低 24 位 + 高 8 位」拼成完整 FormID（第 21 轮）。
+		//   a_prefix < 0  ⇒ ESM 旧版没有 SAQ_GuidePrefix ⇒ a_targetRef 本身就是完整 FormID；
+		//   a_targetRef > 0xFFFFFF ⇒ 通道里是修复前的「遗留完整值」⇒ 同样按完整值处理。
+		std::uint32_t CombineTargetFormID(float a_targetRef, float a_prefix)
+		{
+			if (!(a_targetRef > 0.0f)) {
+				return 0;  // 0 或 NaN 都当「没有引导」
+			}
+			const auto local = static_cast<std::uint32_t>(a_targetRef);
+			if (local > 0xFFFFFFu || a_prefix < 0.0f) {
+				return local;  // 旧语义：完整 FormID
+			}
+			const auto high = static_cast<std::uint32_t>(a_prefix);
+			return ((high & 0xFFu) << 24) | (local & 0xFFFFFFu);
 		}
 	}
 
@@ -95,13 +118,16 @@ namespace SAQ::Guide
 		if (auto* tm = GlobAt(g_prefix, kFormIDTestMode)) {
 			out.testMode = tm->value;
 		}
+		// ★ 第 21 轮：引导目标高位（可选 GLOB）+ 拼出完整 FormID（见 CombineTargetFormID）
+		if (auto* pfx = GlobAt(g_prefix, kFormIDGuidePrefix)) {
+			out.targetPrefix = pfx->value;
+		}
+		out.targetFormID = CombineTargetFormID(out.targetRef, out.targetPrefix);
 		const std::string testNote = out.testMode >= 0.0f
 			? std::format("{:.0f}", out.testMode)
 			: std::string{ "无(ESM 旧版)" };
-		out.summary = std::format("前缀=0x{:02X} 目标={:.0f}(0x{:X}) 状态={:.0f} 通知={:.0f} 测试={}",
-			g_prefix,
-			out.targetRef, static_cast<std::uint32_t>(out.targetRef),
-			out.guideState, out.notify, testNote);
+		out.summary = std::format("前缀=0x{:02X} 目标=0x{:08X} 状态={:.0f} 通知={:.0f} 测试={}",
+			g_prefix, out.targetFormID, out.guideState, out.notify, testNote);
 		return out;
 	}
 
@@ -124,12 +150,39 @@ namespace SAQ::Guide
 		// ★ 写之前再自检一次当前值：认领靠的是「SAQ_Notify 的值落在魔数区间」，
 		//   已经证明 TESGlobal::value 的偏移在这台机器上是对的；这里再加一道，
 		//   万一另两个 GLOB 的读数是垃圾（偏移不对 / 认错对象），就拒绝写内存。
+		//
+		//   ★★ 第 21 轮修正（实机 bug）：这里原来把上限写成 `16777215`（= 0xFFFFFF），
+		//   那是「低 24 位」的上限，而 target 里存的是**完整 FormID** —— 第 17 轮支持
+		//   DLC 后，目标引用会超过它（如 0x0107BDB2 = 17,284,530）。后果：只要通道里
+		//   存过这种值，之后**每一次**写入都被这里拒绝（结果码 2）—— 玩家看到的是
+		//   「点亮一条 DLC 任务后，其余条目全都点不亮、取消也失败」。
+		//   现在：有拆分 GLOB（kFormIDGuidePrefix）时按「低 24 位 + 高 8 位」分别检查
+		//   并分别写入（顺便根治 float 精度问题）；旧 ESM 按完整 FormID 上限 0xFEFFFFFF。
 		if (state->value < -0.5f || state->value > 8.0f) {
 			g_resolved = false;
 			a_detail = std::format("拒绝写入：SAQ_GuideState 读出来是 {}（不像状态值）", state->value);
 			return false;
 		}
-		if (target->value < 0.0f || target->value > 16777215.0f) {  // FormID 上限 0xFFFFFF
+		if (auto* prefixGlob = GlobAt(g_prefix, kFormIDGuidePrefix)) {
+			// 上限用**完整 FormID** 的范围：修复前的存档里 target 可能残留
+			// 「完整 FormID」（如 0x0107BDB2 = 17,284,530，此时 prefix 还是初值 0）——
+			// 那正是这次要覆盖掉的值，不能因为「它不像新语义的低 24 位」而拒绝。
+			if (target->value < 0.0f || target->value > 4278190080.0f ||
+				prefixGlob->value < 0.0f || prefixGlob->value > 255.0f) {
+				g_resolved = false;
+				a_detail = std::format("拒绝写入：通道读数是垃圾（低位={} 高位={}）",
+					target->value, prefixGlob->value);
+				return false;
+			}
+			target->value = static_cast<float>(a_formID & 0xFFFFFFu);
+			prefixGlob->value = static_cast<float>((a_formID >> 24) & 0xFFu);
+			state->value = 0.0f;
+			a_detail = std::format(
+				"写入 SAQ_GuideTargetRef=0x{:06X} + SAQ_GuidePrefix={}（完整 0x{:08X}）并把 SAQ_GuideState 清 0",
+				a_formID & 0xFFFFFFu, (a_formID >> 24) & 0xFFu, a_formID);
+			return true;
+		}
+		if (target->value < 0.0f || target->value > 4278190080.0f) {  // 完整 FormID 上限 0xFEFFFFFF
 			g_resolved = false;
 			a_detail = std::format("拒绝写入：SAQ_GuideTargetRef 读出来是 {}（不像 FormID）", target->value);
 			return false;

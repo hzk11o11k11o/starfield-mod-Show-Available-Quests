@@ -15,12 +15,21 @@ unit SAQ_BuildPlugin;
 //
 //    0x800  QUST  SAQ_MainQuest       Start Game Enabled + Starts Enabled,
 //                                     VMAD -> SAQ_Main.psc
-//    0x801  GLOB  SAQ_GuideTargetRef  DLL writes the FormID of the guide
-//                                     target (0 = clear). float type.
+//    0x801  GLOB  SAQ_GuideTargetRef  DLL writes the guide target FormID
+//                                     low 24 bits (0 = clear). float type.
 //    0x802  GLOB  SAQ_GuideState      script -> DLL diagnostic channel
 //                                     (0 idle, 1 ok, 2 target not found)
 //    0x803  GLOB  SAQ_Notify          HUD notification flag (script reads,
 //                                     then zeroes it)
+//    0x804  GLOB  SAQ_TestMode        test filter switch for the in-game list
+//                                     (0 = off; 1/2/3/4 = only show entries
+//                                     matching that test mode)
+//    0x805  GLOB  SAQ_GuidePrefix     high byte of the guide target FormID.
+//                                     A GLOB is a float, so a full FormID
+//                                     above 2^24 (DLC refs like 0x0107BDB2)
+//                                     loses precision in odd values; the low
+//                                     24 bits (0x801) plus this byte are
+//                                     always exact.
 //
 //  New records MUST be appended at the END so the earlier FormIDs never move
 //  (form ids are archived in save games).
@@ -36,6 +45,7 @@ var
   srcFile: IwbFile;
   questRec: IInterface;
   globTarget, globState, globNotify: IInterface;
+  globTestMode, globPrefix: IInterface;
 
 procedure Log(s: string);
 begin
@@ -234,12 +244,17 @@ begin
   globTarget := MakeGlobal(newFile, 'SAQ_GuideTargetRef', globTpl, 0.0);
   globState  := MakeGlobal(newFile, 'SAQ_GuideState', globTpl, 0.0);
   globNotify := MakeGlobal(newFile, 'SAQ_Notify', globTpl, 0.0);
+  // ------- 0x804 / 0x805 (appended so the older FormIDs never move) -------
+  globTestMode := MakeGlobal(newFile, 'SAQ_TestMode', globTpl, 0.0);
+  globPrefix   := MakeGlobal(newFile, 'SAQ_GuidePrefix', globTpl, 0.0);
   Flush('04_globals');
 
-  // VMAD properties (added after all target records exist)
+  // VMAD properties (added after all target records exist).
+  // SAQ_TestMode is read by the DLL only - no script property needed.
   AddQuestProp(questRec, 'GuideTargetRef', globTarget);
   AddQuestProp(questRec, 'GuideState', globState);
   AddQuestProp(questRec, 'NotifyFlag', globNotify);
+  AddQuestProp(questRec, 'GuidePrefix', globPrefix);
   Flush('05_vmad');
 
   try
@@ -268,6 +283,8 @@ begin
   Log('  0x801 SAQ_GuideTargetRef  ' + IntToHex(GetLoadOrderFormID(globTarget) and $FFFFFF, 6));
   Log('  0x802 SAQ_GuideState      ' + IntToHex(GetLoadOrderFormID(globState) and $FFFFFF, 6));
   Log('  0x803 SAQ_Notify          ' + IntToHex(GetLoadOrderFormID(globNotify) and $FFFFFF, 6));
+  Log('  0x804 SAQ_TestMode        ' + IntToHex(GetLoadOrderFormID(globTestMode) and $FFFFFF, 6));
+  Log('  0x805 SAQ_GuidePrefix     ' + IntToHex(GetLoadOrderFormID(globPrefix) and $FFFFFF, 6));
 
   Log('=== build done ===');
   Flush('99_done');

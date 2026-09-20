@@ -98,6 +98,9 @@ def main() -> int:
             # 第 20 轮补丁：实机上控制台 `set` 不认 EDID（Unknown variable）⇒ ini 文件兜底
             "ini 兜底开关": "SAQ_ShowAvailableQuests.ini".encode(),
             "测试模式来源": "[来源=".encode(),
+            # 第 21 轮：引导目标 FormID 拆「低 24 位 + 高 8 位」（float 精度 + 上限 bug 修复）
+            "引导目标高位拆分": "SAQ_GuidePrefix".encode(),
+            "通道垃圾值文案": "通道读数是垃圾".encode(),
         }.items():
             all_ok &= check(f"DLL · {name}", blob, needle)
         # 反向检查：第 18 轮换掉的旧「未加载」文案不应再出现（新文案不含完整旧串）
@@ -129,6 +132,8 @@ def main() -> int:
         all_ok &= check("PEX · 重挂自愈", blob, "脚本重挂且引导目标仍在".encode())
         # 第 19 轮：菜单事件 Trace（DLL 侧「脚本活性探测」的 Papyrus 佐证）
         all_ok &= check("PEX · 菜单事件 Trace", blob, "[SAQ] 菜单打开".encode())
+        # 第 21 轮：引导目标高位属性（与 ESM VMAD 绑定对应）
+        all_ok &= check("PEX · 引导目标高位属性", blob, b"GuidePrefix")
     else:
         print(f"MISS 缺少 PEX {pex}")
         all_ok = False
@@ -137,7 +142,10 @@ def main() -> int:
     for label, path in (("工作区", ROOT / "esm/SAQ_ShowAvailableQuests.esm"),
                         ("MO2 部署", MO2_MOD / "SAQ_ShowAvailableQuests.esm")):
         if path.exists():
-            all_ok &= check(f"ESM({label}) · 测试开关 GLOB", path.read_bytes(), b"SAQ_TestMode")
+            blob = path.read_bytes()
+            all_ok &= check(f"ESM({label}) · 测试开关 GLOB", blob, b"SAQ_TestMode")
+            # ★ 第 21 轮：引导目标高位 GLOB（+ VMAD 属性绑定）
+            all_ok &= check(f"ESM({label}) · 引导目标高位 GLOB", blob, b"SAQ_GuidePrefix")
         else:
             print(f"MISS 缺少 {path}")
             all_ok = False

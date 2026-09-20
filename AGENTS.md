@@ -15,6 +15,7 @@
 - 基于SFSE
 - 要有ESM文件
 - 要有日志，但日志文件不能超过1MB，旧内容要做到滚动删除
+- 日志、配置文件要放在mod目录里，不要放在C盘用户目录下，否则删除mod的时候会导致残留文件产生，不合理
 
 ## starfield安装位置
 D:\SteamLibrary\steamapps\common\Starfield（sfse已安装）

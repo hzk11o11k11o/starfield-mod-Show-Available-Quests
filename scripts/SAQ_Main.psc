@@ -48,8 +48,16 @@ Scriptname SAQ_Main extends Quest
 ;    ② 证据链：值是 7777 ⇒ ESM 加载了、任务在跑、脚本活着；值在涨 ⇒ 脚本看得到菜单事件。
 ; ============================================================================
 
-; DLL -> 脚本：引导目标的世界引用 FormID（0 = 清除引导）
+; DLL -> 脚本：引导目标的世界引用 FormID 的**低 24 位**（0 = 清除引导）
+; ★ 第 21 轮：完整 FormID 拆成两个 GLOB —— 本属性存低 24 位，GuidePrefix 存高 8 位。
+;   原因：GLOB 是 float（尾数 24 位），完整 FormID 超过 2^24（DLC 的引用，
+;   如 0x0107BDB2 = 17,284,530）后**奇数不可精确表示**（会 ±1，指向相邻记录）。
+;   拆开后（低 24 位 ≤0xFFFFFF、高 8 位 ≤0xFF）两个分量都精确。
 GlobalVariable Property GuideTargetRef Auto
+
+; DLL -> 脚本：引导目标 FormID 的**高 8 位**（= master 序号）。旧 ESM 没有这条记录时
+; 属性为 None ⇒ 按历史行为处理（GuideTargetRef 本身就是完整 FormID）。
+GlobalVariable Property GuidePrefix Auto
 
 ; 脚本 -> DLL：处理结果（见上面取值表）
 GlobalVariable Property GuideState Auto
@@ -135,8 +143,16 @@ Function ApplyGuide()
 		Return
 	EndIf
 
-	float targetFormID = GuideTargetRef.GetValue()
-	If targetFormID <= 0.0
+	; ★ 第 21 轮：把「低 24 位 + 高 8 位」拼回完整 FormID（见 GuideTargetRef 的说明）。
+	;   旧 ESM（没有 GuidePrefix）时按历史行为：GuideTargetRef 里就是完整 FormID。
+	float targetLocal = GuideTargetRef.GetValue()
+	int targetFormID
+	If GuidePrefix != None
+		targetFormID = ((GuidePrefix.GetValue() as int) * 16777216) + (targetLocal as int)
+	Else
+		targetFormID = targetLocal as int
+	EndIf
+	If targetFormID <= 0
 		; 清除引导（玩家取消了，或者那条任务已经被接取）
 		guideAlias.Clear()
 		SetObjectiveDisplayed(GuideObjectiveID, False)
@@ -146,9 +162,9 @@ Function ApplyGuide()
 		Return
 	EndIf
 
-	ObjectReference target = Game.GetForm(targetFormID as int) as ObjectReference
+	ObjectReference target = Game.GetForm(targetFormID) as ObjectReference
 	If target == None
-		Debug.Trace("[SAQ] 引导失败：FormID " + (targetFormID as int) + " 取不到引用")
+		Debug.Trace("[SAQ] 引导失败：FormID " + targetFormID + " 取不到引用")
 		GuideState.SetValue(2)
 		Return
 	EndIf

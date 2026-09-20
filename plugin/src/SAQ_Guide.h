@@ -50,7 +50,12 @@ namespace SAQ
 		{
 			bool          resolved{};   // 三个 GLOB 都认领到了
 			std::uint32_t prefix{};     // 插件在加载顺序里的序号（FormID 高位）
-			float         targetRef{};  // SAQ_GuideTargetRef：当前引导目标引用（0 = 无）
+			float         targetRef{};  // SAQ_GuideTargetRef：目标低 24 位（旧 ESM = 完整 FormID）
+			// ★ 第 21 轮：SAQ_GuidePrefix（目标 FormID 的高 8 位）。
+			//   -1 = ESM 旧版没有这条 GLOB（此时 targetRef 本身就是完整 FormID）。
+			//   拆两半是为了绕开「GLOB 是 float，完整 FormID > 2^24 时精度丢失」的坑。
+			float         targetPrefix{ -1.0f };
+			std::uint32_t targetFormID{};  // 拼好的完整 FormID（0 = 无引导）—— 上层只读这个
 			float         guideState{}; // SAQ_GuideState：脚本处理结果（0 待处理/1 已应用/2 取不到/3 已清除/4 无别名）
 			float         notify{};     // SAQ_Notify：7777 + 菜单打开次数
 			// ★ 第 20 轮：控制台测试开关（SAQ_TestMode，0x804）。玩家在游戏控制台输入
