@@ -912,8 +912,13 @@ namespace SAQ::UI
 		//   为什么要推给界面：原版任务菜单按 R（SET COURSE）时，引擎取「目标位置」→
 		//   打开星图 → 聚焦目标星球 → 询问是否导航。我们的可接任务在引擎侧不存在，
 		//   但**代理任务**是真实任务、它的目标别名此刻绑着「接取地点」引用（脚本
-		//   ForceRefTo）—— 所以 AS3 把这个 FormID 交给原版的 MissionMenu_PlotToLocation
-		//   流程，效果就与原版一致（见 MissionMenu.as::SaqPlotToLocationViaEngine）。
+		//   ForceRefTo）—— 第 36 轮因此把它交给原版的 MissionMenu_PlotToLocation 流程。
+		//
+		//   ★★ 第 44 轮实测更正：那条 dispatch **确实生效**，但用的是代理任务**上一次**
+		//   的目标位置（此刻脚本还没 ForceRefTo）⇒ 星图位置永远滞后一条；而且它一打开
+		//   星图游戏就暂停，脚本的补救调用再也跑不到。所以 AS3 侧已删掉 dispatch，
+		//   星图改由 Papyrus 用本次引导目标的地点打开（见 SAQ_Main.psc 的
+		//   ProcessStarMapPending）。这个 FormID 现在只用于报告里的 `proxy=0x…` 诊断。
 		//
 		//   FormID = (插件加载前缀 << 24) | 0x800（记录号，见 SAQ.cpp::kOwnQuestLocal）。
 		//   前缀是**运行期**才知道的（ESM 通道认领时得到）；没认领（ESM 没启用 /

@@ -46,9 +46,11 @@ Scriptname SAQ_Main extends Quest
 ;    3 = 已清除（DLL 传 0：取消引导）
 ;    4 = 别名不存在（ESM 没打补丁 / 别名 id 变了）
 ;    5 = ★ 第 37 轮：待处理 + **应用完打开星图**（玩家在「可接任务」里按了
-;        「设定航线（R）」）。DLL 用引擎的 UI 消息（kHide）把任务菜单关掉，
-;        本脚本随即在「菜单关闭」事件里跑：① 照常应用引导；② 取引导目标的
-;        地点（GetCurrentLocation / GetEditorLocation），调用引擎原生的
+;        「设定航线（R）」）。界面侧（第 38 轮新协议）收到 C++ 成功回写后走原版
+;        「退回游戏」路径把整个暂停菜单关掉，本脚本随即在「菜单关闭」事件里跑：
+;        ① 照常应用引导；② 把「待打开星图」记进待办（StarMapPendingTicks）。
+;        ★★ 第 44 轮：调用改由**轮询节拍**推进（见 ProcessStarMapPending）——
+;        取引导目标的地点（GetCurrentLocation / GetEditorLocation），调用引擎原生的
 ;          Game.ShowGalaxyStarMapMenuAndPlotToLocation(地点)
 ;        打开星图并把航线画到那里（= 原版 SET COURSE 的同款能力）。
 ;        为什么必须这么绕：任务菜单开着时 Papyrus 定时器不走（第 27 轮实测定案），
@@ -88,11 +90,21 @@ GlobalVariable Property GuideState Auto
 ; 脚本 -> DLL：身份锚点 + 菜单打开计数（见上面说明）
 GlobalVariable Property NotifyFlag Auto
 
-; ★ 第 37 轮：星图请求的「待打开目标」（菜单关闭事件里记下，延后 0.5 秒执行）
-; ★ 第 42 轮：再加一个「待打开目标的 FormID」—— 定时器到点时与通道里的**当前**目标核对，
-;   不一致就放弃（见 OnTimer 与 ApplyGuide 的说明）。
+; ★ 第 37 轮：星图请求的「待打开目标」（菜单关闭事件里记下，随后由轮询节拍执行）
+; ★ 第 42 轮：再加一个「待打开目标的 FormID」—— 执行时与通道里的**当前**目标核对，
+;   不一致就放弃（见 ProcessStarMapPending 与 ApplyGuide 的说明）。
 ObjectReference StarMapPendingRef = None
 int StarMapPendingFormID = 0
+
+; ★★ 第 44 轮：「还要等几个轮询节拍才打开星图」。
+;   为什么不用独立定时器（第 37~43 轮的 StarMapDelay/StarMapTimerID）：实测（18:34~18:35
+;   会话）三次按 R 那个 1.5 秒定时器**一次都没跑到** —— 星图被界面侧更早的 dispatch
+;   打开（那个 dispatch 用代理任务**上一次**的目标位置，见 MissionMenu.as 的
+;   SaqNoteStarMapHandoff），星图是暂停菜单 ⇒ 游戏暂停 ⇒ 定时器冻结。
+;   现在 dispatch 已删掉，改由**轮询定时器**（0.5 秒一拍）推进：轮询定时器只在游戏
+;   运行时才走，「节拍到点」本身就意味着「菜单关闭动画已过、游戏在跑」—— 正是引擎
+;   接受 ShowGalaxyStarMapMenuAndPlotToLocation 的时机，也不会被暂停吃掉。
+int StarMapPendingTicks = 0
 
 ; 本任务里引导目标用的别名 id 与目标索引（与 patch_saq_esm.py 保持一致）
 ; ★ Starfield 的 Papyrus 4.7 里没有 AutoConst 这个 flag（实测报 "Unknown user flag autoconst"），
@@ -107,13 +119,11 @@ float Property NotifyMagic = 7777.0 AutoReadOnly
 float Property PollInterval = 0.5 AutoReadOnly
 int Property PollTimerID = 1 AutoReadOnly
 
-; ★ 第 37 轮：星图请求的延时与定时器 id（见 OpenStarMapFor 的说明）。
-;   为什么不在「菜单关闭」事件里直接调：那一刻菜单还在销毁流程里，
-;   延后一段时间（菜单关掉后游戏已恢复运行 ⇒ 定时器会走）更稳。
-;   ★ 第 40 轮：0.5 秒 → **1.5 秒**。实测（16:28 会话）：脚本在「菜单关闭」后 0.5 秒就调了
-;   原生函数，而那一刻暂停菜单还在关（关闭动画/收尾）⇒ **星图根本没开**
-;   （DLL 每帧查 MapMenu，12 秒窗口内一次都没出现）。而 15:55 那几次「星图开了」的会话里，
-;   脚本调用发生在菜单关掉 4~5 秒之后。所以把延时拉长，并且 DLL 侧还有自动重试兜底。
+; ★ 第 37 轮：星图请求的延时与定时器 id。
+;   ★★ 第 44 轮起**不再使用**（历史遗留，保留声明只为读旧存档时不缺属性）：
+;   延时的角色已由 StarMapPendingTicks + 轮询节拍接管（见上面的说明）。
+;   历史：第 37 轮 0.5 秒、第 40 轮拉到 1.5 秒 —— 当时观察到的「星图没开」其实是
+;   界面侧 dispatch 抢先把星图打开后、脚本这条路被暂停冻住造成的（第 44 轮定案）。
 float Property StarMapDelay = 1.5 AutoReadOnly
 int Property StarMapTimerID = 2 AutoReadOnly
 
@@ -145,31 +155,16 @@ Event OnInit()
 EndEvent
 
 Event OnTimer(int aiTimerID)
-	; ★ 第 37 轮：星图请求的延后执行（先把待办取出来再调，避免重入时重复打开）
-	If aiTimerID == StarMapTimerID
-		ObjectReference pendingTarget = StarMapPendingRef
-		int pendingFormID = StarMapPendingFormID
-		StarMapPendingRef = None
-		StarMapPendingFormID = 0
-		If pendingTarget == None
-			Return
-		EndIf
-		; ★★ 第 42 轮：**过期校验**（玩家反馈「R 的导航目标有时不是鼠标悬停的那条」）。
-		;   这一段延时（StarMapDelay）里玩家完全可能又去引导了别的任务（Enter 点「前往接取地点」/
-		;   取消引导 / 自动取消），而通道里的目标已经换了 —— 旧代码会把**上一条**任务的航线
-		;   开出来（星图上指的地方与玩家刚才选的对不上 = 看起来像「指错了任务」）。
-		;   判据：待办目标的 FormID == 此刻通道里的目标 FormID；不等就丢掉这次请求。
-		int nowFormID = CurrentGuideTargetFormID()
-		If pendingFormID != nowFormID
-			Debug.Trace("[SAQ] 星图请求已过期：待办目标 " + pendingFormID + " ≠ 当前目标 " + nowFormID + "（引导已换/已取消）—— 跳过打开星图")
-			Return
-		EndIf
-		OpenStarMapFor(pendingTarget, StarMapPendingMode)
-		Return
-	EndIf
-	; 重新排下一拍（Starfield 的定时器是一次性的）
+	; 重新排下一拍（Starfield 的定时器是一次性的）。
+	; ★★ 第 44 轮：不再按 id 分支 —— 旧存档里可能还留着一个 id=2 的定时器
+	;   （第 37~43 轮的 StarMapTimerID），让它照常走「重挂轮询 + 应用引导 + 推进星图待办」，
+	;   与轮询节拍完全同构（重挂同一个 id 只是重置，无副作用）。
 	StartTimer(PollInterval, PollTimerID)
 	ApplyGuide()
+	; ★★ 第 44 轮：星图待办改由**轮询节拍**推进（见 ProcessStarMapPending）。
+	;   放在 ApplyGuide 之后：这一拍刚装上的待办（DLL 在游戏运行中重发的 5/6/7）
+	;   也从这里开始倒数，不会漏。
+	ProcessStarMapPending()
 EndEvent
 
 Event OnMenuOpenCloseEvent(String asMenuName, Bool abOpening)
@@ -219,11 +214,12 @@ Function ApplyGuide()
 	EndIf
 
 	; ★ 第 42 轮：**任何一次新请求**都先把上一条「待打开的星图」作废（下面 starMapWanted
-	;   分支会重新装上）。否则：R（待开星图）→ 这段延时里玩家又引导了别的任务/取消引导 →
-	;   旧待办仍然躺在那里，定时器到点就把**上一条任务**的航线开出来
+	;   分支会重新装上）。否则：R（待开星图）→ 这段窗口里玩家又引导了别的任务/取消引导 →
+	;   旧待办仍然躺在那里，节拍到点就把**上一条任务**的航线开出来
 	;   —— 玩家看到的就是「导航的目标不是我选的那条」。
 	StarMapPendingRef = None
 	StarMapPendingFormID = 0
+	StarMapPendingTicks = 0
 
 	ReferenceAlias guideAlias = GetAlias(GuideAliasID) as ReferenceAlias
 	If guideAlias == None
@@ -261,23 +257,26 @@ Function ApplyGuide()
 
 	; ★ 第 37 轮：玩家按了「设定航线（R）」—— 应用完引导后打开星图并把航线画到
 	;   接取地点（引擎原生函数，只负责「打开 + 定位 / 设航线」，引导本身不受影响）。
-	;   这里**延后 StarMapDelay 秒**（第 40 轮起 = 1.5）执行：本函数多半是在「任务菜单关闭」
-	;   事件里被调用的，那一刻菜单还在销毁流程里，直接开另一个菜单容易被引擎吞掉
-	;   （见 OpenStarMapFor）。★ 第 42 轮：这段延时窗口里玩家可能又换了引导 ⇒
-	;   定时器到点时会用 StarMapPendingFormID 与当前目标核对，不一致就跳过（见 OnTimer）。
+	;   本函数多半是在「任务菜单关闭」事件里被调用，那一刻菜单还在销毁流程里，
+	;   直接开另一个菜单容易被引擎吞掉 ⇒ 装进待办，由下一个**轮询节拍**执行。
+	;   ★★ 第 44 轮：原来是「StartTimer(StarMapDelay=1.5, StarMapTimerID)」，实测
+	;   三次按 R 一次都没跑到（星图被界面侧 dispatch 提前打开 ⇒ 暂停 ⇒ 定时器冻结；
+	;   见 StarMapPendingTicks 的说明）。现在节拍本身就要求「游戏在运行」，不会被冻结吃掉。
+	;   ★ 第 42 轮：这段窗口里玩家可能又换了引导 ⇒ 执行时用 StarMapPendingFormID
+	;   与通道当前目标核对，不一致就跳过（见 ProcessStarMapPending）。
 	If starMapWanted
 		StarMapPendingRef = target
 		StarMapPendingFormID = targetFormID
 		StarMapPendingMode = pendingState as int
-		StartTimer(StarMapDelay, StarMapTimerID)
-		Debug.Trace("[SAQ] 星图请求：" + StarMapDelay + " 秒后打开（目标 " + target + "，FormID=" + targetFormID + "，地点候选=" + StarMapPendingMode + "）")
+		StarMapPendingTicks = 1
+		Debug.Trace("[SAQ] 星图请求：下一个轮询节拍（约 0.5 秒）打开（目标 " + FormText(target) + "，FormID=" + targetFormID + "，地点候选=" + StarMapPendingMode + "）")
 	EndIf
 EndFunction
 
 ; ============================================================================
 ;  ★ 第 42 轮：通道里「此刻的引导目标」的完整 FormID（低 24 位 + 高 8 位）。
-;  由 ApplyGuide() 与 OnTimer(StarMapTimerID) 共用 —— 后者用来判断「待打开的星图」
-;  还是不是当前这条引导（玩家可能在这段延时里换了任务）。
+;  由 ApplyGuide() 与 ProcessStarMapPending() 共用 —— 后者用来判断「待打开的星图」
+;  还是不是当前这条引导（玩家可能在这段窗口里换了任务）。
 ; ============================================================================
 int Function CurrentGuideTargetFormID()
 	If GuideTargetRef == None
@@ -291,15 +290,60 @@ int Function CurrentGuideTargetFormID()
 EndFunction
 
 ; ============================================================================
+;  ★★ 第 44 轮：星图待办的执行（由**轮询节拍**调用，见 StarMapPendingTicks）。
+;
+;  1) 每次新请求（ApplyGuide 的 starMapWanted 分支）把待办装上、Ticks = 1；
+;  2) 本函数每一拍先把 Ticks 减 1，减到 0 的那一拍才真正调用引擎 —— 于是
+;     「菜单关闭动画已经走完、游戏确认在运行」这两个条件天然满足：轮询定时器
+;     只在游戏运行时才走（第 27 轮定案：菜单开着 = 暂停 = 定时器冻结）；
+;  3) 到点时做**过期校验**（第 42 轮）：待办目标必须仍是通道里的当前目标，
+;     否则说明玩家在这段时间里又换了引导/取消 —— 丢掉，不打开星图
+;     （否则会把**上一条**任务的航线开出来）。
+;
+;  实测背景（第 44 轮，18:34~18:35 会话）：原来的「StartTimer(1.5, StarMapTimerID)」
+;  三次按 R **一次都没跑到** —— 界面侧那条原版 dispatch 抢先把星图打开了（用的是
+;  代理任务上一次的目标位置），星图是暂停菜单 ⇒ 游戏暂停 ⇒ 定时器冻结 ⇒ 本函数
+;  永远等不到节拍。dispatch 删除后（见 MissionMenu.as 的 SaqNoteStarMapHandoff），
+;  这里成为打开星图的**唯一**入口。
+; ============================================================================
+Function ProcessStarMapPending()
+	If StarMapPendingRef == None
+		Return
+	EndIf
+	If StarMapPendingTicks > 0
+		StarMapPendingTicks -= 1
+		Return
+	EndIf
+	; 先把待办取出来并清空（避免 OpenStarMapFor 里重入时重复打开）
+	ObjectReference pendingTarget = StarMapPendingRef
+	int pendingFormID = StarMapPendingFormID
+	int pendingMode = StarMapPendingMode
+	StarMapPendingRef = None
+	StarMapPendingFormID = 0
+	StarMapPendingTicks = 0
+	; ★ 第 42 轮：过期校验（见上面的第 3 点）
+	int nowFormID = CurrentGuideTargetFormID()
+	If pendingFormID != nowFormID
+		Debug.Trace("[SAQ] 星图请求已过期：待办目标 " + pendingFormID + " ≠ 当前目标 " + nowFormID + "（引导已换/已取消）—— 跳过打开星图")
+		Return
+	EndIf
+	OpenStarMapFor(pendingTarget, pendingMode)
+EndFunction
+
+; ============================================================================
 ;  ★ 第 37 轮：SET COURSE（键盘 R / 手柄 X）的「星图」这一半
 ;
-;  玩家按 R 时 DLL 会：① 写引导目标 + 把 GuideState 置 5（= 要打开星图）；
-;  ② 用引擎的 UI 消息（kHide）关掉任务菜单 —— 本脚本才能在「菜单关闭」事件里跑到。
-;  本函数由**延时定时器**（StarMapTimerID，0.5 秒）调用，不在关闭事件里直接调。
+;  玩家按 R 时：① 界面侧（第 38 轮新协议）收到 C++ 成功回写后走原版「退回游戏」
+;  路径把整个暂停菜单关掉；② 本脚本在「菜单关闭」事件里应用引导并把待办装上；
+;  ③ **下一拍轮询节拍**（ProcessStarMapPending）调用本函数 —— 那一刻菜单关闭动画
+;  已走完、游戏已恢复运行。
 ;
-;  为什么必须是**引擎原生函数**（而不是第 36 轮那条「照抄原版」的 AS3 dispatch）：
-;  离线复核证明 `MissionMenu_PlotToLocation` 这个事件在整个 exe 里**没有任何 C++ sink**
-;  （详见 docs/05 第十一节）⇒ 只能调引擎真正实现了的能力：
+;  ★★ 第 44 轮：本函数的唯一调用点是 ProcessStarMapPending。
+;  第 36 轮那条「照抄原版」的 AS3 dispatch（MissionMenu_PlotToLocation）**实测是有效的**
+;  （第 37 轮的「无 sink」结论被 18:34~18:35 会话日志推翻），但它用的是代理任务
+;  **上一次**的目标位置 ⇒ 星图位置永远滞后一条；而且它先把星图打开、游戏一暂停，
+;  本函数就再也跑不到（这正是玩家反馈「R 打开的星图位置永远是上一条任务」的病根）。
+;  现在 dispatch 已删除，这里成为唯一入口，调的是引擎真正实现了的能力：
 ;    Game.ShowGalaxyStarMapMenuAndPlotToLocation(Location)
 ;  = 打开星图 + 把航线画到那个地点（原版 SET COURSE 的同款行为）。
 ;

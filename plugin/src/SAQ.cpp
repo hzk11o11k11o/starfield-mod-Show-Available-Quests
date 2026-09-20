@@ -1610,12 +1610,15 @@ namespace SAQ
 		constexpr std::uint64_t kStarMapRetryMs = 2500;
 		constexpr int           kStarMapMaxAttempts = 3;
 		// ★★ 第 42 轮：**换候选前必须给脚本自己的尝试留足时间**。
-		//   脚本拿到「待处理 + 星图」后：先应用引导（写状态 1），再等它自己的
-		//   StarMapDelay（1.5 s）调原生函数 —— 也就是说「脚本报 1」之后还要约 1.5~2 秒
-		//   星图才会出现。第 40 轮的重试从**请求时刻**起算 2.5 秒，正好落在这段窗口里
-		//   ⇒ 星图其实马上要开了，却被重试改掉候选、重画一次航线（玩家看到目的地跳变）。
-		//   现在改成「从脚本确认已应用那一刻起 + 3 秒」才允许重试（余量 > 脚本的 1.5 s）。
-		constexpr std::uint64_t kStarMapRetryAfterAppliedMs = 3000;
+		//   脚本拿到「待处理 + 星图」后：先应用引导（写状态 1），再由**轮询节拍**
+		//   调原生函数（★ 第 44 轮起约 0.5~1 秒，见 SAQ_Main.psc 的 ProcessStarMapPending）。
+		//   第 40 轮的重试从**请求时刻**起算 2.5 秒，正好落在那段窗口里 ⇒ 星图其实马上
+		//   要开了，却被重试改掉候选、重画一次航线（玩家看到目的地跳变 = 「不稳定」）。
+		//   第 42 轮改成「从脚本确认已应用那一刻起 + 3 秒」才允许重试。
+		//   ★ 第 44 轮：脚本侧的窗口从「1.5 s 延时定时器」缩短成「1 个轮询节拍」，这里
+		//   也同步收到 1.5 s（仍明显大于脚本那段窗口，不会抢跑；也没有再缩的必要 ——
+		//   缩得比脚本窗口小才是问题）。
+		constexpr std::uint64_t kStarMapRetryAfterAppliedMs = 1500;
 
 		// 请求「关菜单 + 开星图」。调用方保证通道已经写好状态 5。
 		// ★ 第 38 轮：a_swfCloses = 新 SWF 会在收到回写后自己调 CloseMenu(true)
@@ -1644,8 +1647,13 @@ namespace SAQ
 			// ★ 第 40 轮：把「引擎认不认这个地点」写进日志（只读诊断，见上面注释）
 			LogStarMapDiagnosis("R 请求");
 			if (a_swfCloses) {
-				REX::INFO("星图：界面侧会自己关掉整个暂停菜单（新协议，不发 kHide）"
-						  "｜引导任务={}（0x{:08X}）",
+				// ★ 第 44 轮：星图的**唯一**打开入口 = 脚本的 ProcessStarMapPending
+				//   （菜单关闭后的第一个轮询节拍，约 0.5~1 秒后）。界面侧曾经另外
+				//   dispatch 一次原版 MissionMenu_PlotToLocation，但它用的是代理任务
+				//   **上一次**的目标位置 ⇒ 星图位置永远滞后一条，已删除（见
+				//   MissionMenu.as 的 SaqNoteStarMapHandoff）。
+				REX::INFO("星图：界面侧会自己关掉整个暂停菜单（新协议，不发 kHide）；"
+						  "星图由脚本在菜单关闭后的下一个轮询节拍打开｜引导任务={}（0x{:08X}）",
 					DisplayNameOf(a_questID), a_questID);
 				return;
 			}
@@ -1764,8 +1772,9 @@ namespace SAQ
 					g_starMap.appliedAtMs = now;
 					if (!g_starMap.appliedNoted) {
 						g_starMap.appliedNoted = true;
-						REX::INFO("星图：脚本已应用这次引导（状态=1）—— 它的星图调用约 1.5 秒后到达；"
-								  "这段时间内不改地点候选，只等星图出现（{:.1f} 秒后仍没有才考虑换候选重试）",
+						REX::INFO("星图：脚本已应用这次引导（状态=1）—— 它的星图调用在下一个轮询节拍"
+								  "（约 0.5~1 秒）内到达；这段时间内不改地点候选，只等星图出现"
+								  "（{:.1f} 秒后仍没有才考虑换候选重试）",
 							static_cast<double>(kStarMapRetryAfterAppliedMs) / 1000.0);
 					}
 				}

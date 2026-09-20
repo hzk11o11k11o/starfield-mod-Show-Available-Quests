@@ -600,8 +600,9 @@ package
                else if(_loc5_.substr(0,2) == "P\t")
                {
                   // ★ 第 36 轮：P 行 = 代理任务（SAQ_MainQuest）的运行期 FormID。
-                  //   有了它，「设定航线」才能走原版的星图流程（见 SaqPlotToLocationViaEngine）。
-                  //   旧载荷没有这一行 ⇒ 保持 0（功能降级，不报错）。
+                  //   ★ 第 44 轮起它只用于报告里的 `proxy=0x…`（诊断）；「设定航线」的
+                  //   星图流程改由 Papyrus 脚本打开（第 44 轮删掉了原来的原版 dispatch，
+                  //   见 SaqNoteStarMapHandoff 的说明）。旧载荷没有这一行 ⇒ 保持 0（不报错）。
                   var _loc8_:Number = Number(_loc5_.substr(2));
                   if(_loc8_ > 0)
                   {
@@ -1188,55 +1189,40 @@ package
       }
       
       // ==================================================================
-      //  ★ 第 36 轮：SET COURSE 的「原版星图」这一半
+      //  ★ 第 44 轮：SET COURSE 的「星图」这一半 —— **不再**走原版 dispatch
       //
-      //  原版（真实任务）按 R 时做的事情：dispatch MissionMenu_PlotToLocation{questID} →
-      //  引擎取该任务的目标位置 → 目标不在当前星球就**打开星图**、聚焦到那颗星球，
-      //  并询问玩家是否导航；在同一星球上则直接设置本地航线。
+      //  第 36 轮起这里会 dispatch 原版的 `MissionMenu_PlotToLocation`（带**代理任务**
+      //  SAQ_MainQuest 的 FormID），第 37 轮的离线复核判定「这个事件在引擎里没有 sink」。
       //
-      //  第 36 轮的设想：把**代理任务**（SAQ_MainQuest，真实任务、目标别名绑着接取地点）
-      //  的 FormID 丢进同一条流程，效果就与原版一致。
+      //  ★★ 第 44 轮的实机日志推翻了那个结论：**它其实生效**，而且正是玩家反馈
+      //  「R 打开的星图位置永远是上一条任务」的病根。证据（18:34~18:35 会话，DLL 与
+      //  Papyrus 双日志对齐）：
+      //    ① DLL 写完引导通道后 **9 毫秒**（18:35:00.033 → 18:35:00.042）就探测到星图
+      //       已在屏幕上；而脚本那条路要先等菜单关闭、再等它自己的延时 —— 不可能这么快
+      //       ⇒ 打开星图的就是这次 dispatch（它在按键那一刻同步发生）；
+      //    ② Papyrus 三次「星图请求：1.5 秒后打开」之后**一次都没有**出现
+      //       「打开星图并设定航线」—— 因为 dispatch 先把星图打开了 ⇒ 星图是暂停菜单
+      //       ⇒ 游戏暂停 ⇒ 脚本定时器冻结 ⇒ 我们那条「用正确目标再开一次」的补救
+      //       永远跑不到，玩家看到的就是 dispatch 那一次的结果；
+      //    ③ dispatch 用的是**代理任务的当前目标位置**，而那一刻脚本还没 ForceRefTo
+      //       （引导更新要等菜单关闭）⇒ 星图拿到的是**上一次**绑定的引用。这正好解释
+      //       玩家的原话「我点了阿基拉城任务板，再去点火卫二任务板，导向目标才会是
+      //       阿基拉城」；也解释了更早的两条反馈：「所有任务都被导航至沃利阿尔法星」
+      //       （别名还没绑定 ⇒ 引擎按默认焦点 = 玩家所在星球打开星图）、
+      //       「有一次打开了其他任务的位置」（别名 = 上一条引导的目标）。
       //
-      //  ★ 第 37 轮实测更正：**这条 dispatch 在引擎里没有任何处理** —— 离线复核证明
-      //   `BSTGlobalEvent::EventSource<MissionMenu_PlotToLocation>` 在整个 exe 里除了
-      //   它自己的静态初始化之外没有任何引用（= 没有 C++ sink；同族的
-      //   MissionMenu_ShowItemLocation / DataMenu_PlotToLocation 也一样）。所以这里
-      //   照抄原版是死路，星图改由 **DLL + Papyrus 脚本**实现（见 SAQ.cpp 的
-      //   RequestStarMapOpen / SAQ_Main.psc 的 OpenStarMapFor，docs/05 第十一节）：
-      //     DLL 把 GuideState 置 5 并用 UI 消息关掉任务菜单 → 脚本在「菜单关闭」事件里
-      //     应用引导并调用 Game.ShowGalaxyStarMapMenuAndPlotToLocation(地点)。
-      //   本函数保留下来：① 与未来版本对齐（若某个版本真注册了 sink，这里立刻有用）；
-      //   ② `星图:已请求(代理任务 0x…)` 这行 note 是日志里的链路证据。
+      //  ⇒ 现在这里只留「音效 + 日志 note」。星图改由 **Papyrus 脚本**在菜单关闭后
+      //    （SAQ_Main.psc 的 ProcessStarMapPending → OpenStarMapFor）用**本次**引导目标
+      //    的地点打开（Game.ShowGalaxyStarMapMenuAndPlotToLocation），位置必定是玩家
+      //    刚选的那条；`星图:交给脚本(菜单关闭后)` 这行 note 是链路证据。
       //
-      //  代理任务的运行期 FormID 只有 C++ 侧知道（插件加载前缀是运行期的），由载荷的
-      //  `P\t<FormID>` 行推来（见 SAQ_UI.cpp::BuildPayloadUtf8 / SaqParsePayload）。
-      //  拿不到（内嵌回退表 / 旧 DLL）就静默跳过 —— 只保留我们自己的引导，不报错。
-      //
-      //  返回值只用于日志（SAQ_Report 的 guide 段）。
+      //  代理任务的运行期 FormID（SaqProxyQuestID，由载荷的 `P\t<FormID>` 行推来）仍保留：
+      //  报告里的 `proxy=0x…` 用于诊断。
       // ==================================================================
-      private function SaqPlotToLocationViaEngine() : Boolean
+      private function SaqNoteStarMapHandoff() : void
       {
-         if(Number(this.SaqProxyQuestID) <= 0)
-         {
-            this.SaqGuideNote += "｜星图:无代理任务ID";
-            return false;
-         }
-         try
-         {
-            BSUIDataManager.dispatchEvent(new CustomEvent(MissionMenu_PlotToLocation,{
-               "questID":this.SaqProxyQuestID,
-               "objectiveID":-1
-            }));
-            GlobalFunc.PlayMenuSound(MISSION_SHOW_ON_MAP_SOUND);
-            this.SaqGuideNote += "｜星图:已请求(代理任务 0x" + Number(this.SaqProxyQuestID).toString(16) + ")";
-            return true;
-         }
-         catch(_loc1_:Error)
-         {
-            // 引擎拒绝（例如任务菜单要关了）时不要让异常冒出去把菜单带崩。
-            this.SaqGuideNote += "｜星图:异常 " + _loc1_.message;
-            return false;
-         }
+         GlobalFunc.PlayMenuSound(MISSION_SHOW_ON_MAP_SOUND);
+         this.SaqGuideNote += "｜星图:交给脚本(菜单关闭后)";
       }
       
       // 把「当前引导的任务」写进条目的 bActive，并就地刷新受影响的条目。
@@ -1285,7 +1271,9 @@ package
       //   `CloseMenu(true)` = 原版「退回游戏」路径：
       //     设置 bReturningToGame → StartGameRender + DataMenu_SetMenuForQuickEntry
       //     → 播关闭动画 → OnTimelineCloseEvent → SaveMissionMenuState + GlobalFunc.CloseAllMenus()
-      //   整个暂停菜单随之关掉 —— 游戏恢复运行，脚本的定时器 0.5 秒后走到、星图打开。
+      //   整个暂停菜单随之关掉 —— 游戏恢复运行，脚本的轮询节拍随即推进
+      //   （★ 第 44 轮起：约 0.5~1 秒后由 Papyrus 的 ProcessStarMapPending 打开星图，
+      //    用的是本次引导目标的地点；见 SaqNoteStarMapHandoff 的说明）。
       private function SaqReturnToGameForStarMap() : void
       {
          if(!this.SaqPendingCloseToGame)
@@ -1802,10 +1790,14 @@ package
             //   取消引导仍有一条路：Enter 选中子项「前往接取地点」（默认 param3 = true）。
             // ★ 第 42 轮：改用上面已经取好的 _loc1_（同一行对象），不再重读 selectedEntry ——
             //   避免「按键时读一次、真正引导时又读一次」之间被列表重建换掉（两次读到不同行）。
+            // ★★ 第 44 轮：这里**不再** dispatch 原版 MissionMenu_PlotToLocation（那个
+            //   dispatch 其实生效，但用的是代理任务**上一次**的目标位置 ⇒ 星图位置滞后
+            //   一条，见 SaqNoteStarMapHandoff 的说明）。只留音效 + note；星图由 Papyrus
+            //   在菜单关闭后用本次引导目标的地点打开。
             var _loc2_:Boolean = this.SaqToggleGuide(_loc1_, true, false);
             if(_loc2_)
             {
-               this.SaqPlotToLocationViaEngine();
+               this.SaqNoteStarMapHandoff();
             }
             return;
          }

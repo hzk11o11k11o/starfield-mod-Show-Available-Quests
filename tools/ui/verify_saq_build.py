@@ -62,6 +62,20 @@
            特征字节抄反（`mov r11,rsp` = `4C 8B DC`，不是 `4C 89 1C 24`）⇒ 运行时
            特征校验永远失败、诊断不可用。本脚本检查：注册名特征 + 修正后的特征字节
            （含反向检查：旧的错误字节不应再出现在 DLL 里）
+  第 42 轮：R 键「导航目标不是我悬停的那条」—— 补 press=/sel= 硬证据 + 修两处会改掉
+           目的地的缺陷（DLL 重试抢跑 / 脚本星图延时待办不失效）
+  第 43 轮：「按 R 没反应」的分诊探针（ev=/btn=）+ 关闭时刻现场读报告 +
+           关闭前补一次引导请求轮询 + SET COURSE 不再置灰
+  第 44 轮：★★ R 键「星图位置永远是上一个导航的位置」—— 第 36 轮那条原版 dispatch
+           在实机日志（18:34~18:35 会话）里被证明确实生效（第 37 轮「无 sink」的结论
+           不成立）：它用**代理任务上一次的目标位置**打开星图，而且一打开游戏就暂停
+           ⇒ 脚本那条补救调用永远跑不到（三次按 R 全无 Papyrus Trace）。
+           修法：删除 dispatch（SWF 只留音效 + 「星图:交给脚本」note）；脚本侧把
+           「StartTimer(1.5 s)」换成**轮询节拍**驱动（StarMapPendingTicks →
+           ProcessStarMapPending）—— 节拍到点 = 菜单已关、游戏在跑，不会被暂停吃掉；
+           DLL 的重试等待从 3 s 收到 1.5 s 与脚本新窗口对齐。
+           本脚本检查：SWF 新 note（+ 反向检查：旧 note 不应再出现）+ PEX 节拍待办三件套
+           + DLL 两条新文案
 
 用法：python tools/ui/verify_saq_build.py
 """
@@ -281,9 +295,12 @@ def main() -> int:
         "入口不可用描述(中)": "这个位置此刻取不到".encode(),
         "入口不可用描述(英)": b"the location is not available at the moment",
         "入口不可用提示": "暂时无法导航:".encode(),
-        # 第 36 轮：SET COURSE 的「原版流程」请求（第 37 轮证明引擎无 sink，
-        # 但这条 note 仍是链路证据：证明 AS3 侧确实发过请求）
-        "星图请求 note": "星图:已请求(代理任务 0x".encode(),
+        # ★★ 第 44 轮：SET COURSE 的星图改由 Papyrus 打开 —— 第 36 轮那条原版
+        #   dispatch 已**删除**。它在实机日志里被证明确实生效（第 37 轮的「无 sink」
+        #   结论不成立），但用的是代理任务**上一次**的目标位置 ⇒ 星图位置永远滞后
+        #   一条；而且它先把星图打开（暂停 ⇒ 脚本定时器冻结）⇒ 补救调用永远跑不到。
+        #   现在只留音效 + 这行 note（「已交给脚本」的链路证据）。
+        "星图交给脚本 note": "星图:交给脚本(菜单关闭后)".encode(),
         # ★ 第 37 轮：报告里的星图标记（R = 1 / Enter = 0），与 peek 第三段同源
         "星图标记(map=)": b" map=",
         # ★ 第 38 轮：界面侧会在回写成功后关掉整个暂停菜单（CloseMenu(true) 路径），
@@ -326,6 +343,11 @@ def main() -> int:
         # 反向检查：第 29 轮起「太远」的说法退场（玩家反馈不该有这种限制）
         gone = "离得太远".encode() not in blob and b"You are too far from this location" not in blob
         print(("OK  " if gone else "MISS") + f" {p.name} · 旧「太远」文案已移除(反向检查)")
+        all_ok &= gone
+        # 反向检查：★★ 第 44 轮 —— 原版星图 dispatch 已删除（星图位置滞后一条的病根），
+        #   SWF 里不应再有那条「星图:已请求(代理任务 …)」note。
+        gone = "星图:已请求(代理任务".encode() not in blob
+        print(("OK  " if gone else "MISS") + f" {p.name} · 已删除原版星图 dispatch(反向检查)")
         all_ok &= gone
 
     dll = ROOT / "plugin/build/windows/x64/releasedbg/SAQ_ShowAvailableQuests.dll"
@@ -413,6 +435,11 @@ def main() -> int:
             # ★★ 第 38 轮：SET COURSE 的「最外层主菜单 / 要等好久」修复 ——
             #   新协议（界面侧关整个暂停菜单）+ 多段探测（还开着哪些菜单 / R 后多少秒打开）
             "星图请求(新协议 界面关菜单)": "星图：界面侧会自己关掉整个暂停菜单".encode(),
+            # ★★ 第 44 轮：R 键星图位置滞后一条的修复 ——
+            #   ① 日志写明星图的唯一入口 = 脚本的轮询节拍（原版 dispatch 已删）；
+            #   ② 重试等待文案与脚本新窗口（1 个轮询节拍）对齐。
+            "星图唯一入口说明": "星图由脚本在菜单关闭后的下一个轮询节拍打开".encode(),
+            "星图脚本应用后窗口": "它的星图调用在下一个轮询节拍".encode(),
             "星图等待(通用)": "星图：等待中".encode(),
             "星图等待(任务菜单仍开着)": "星图：等待中——任务菜单仍开着".encode(),
             "星图等待(列出开着的菜单)": "还开着：".encode(),
@@ -525,6 +552,11 @@ def main() -> int:
         all_ok &= check("PEX · 星图过期校验 Trace", blob, "星图请求已过期".encode())
         all_ok &= check("PEX · 当前目标 FormID 助手", blob, b"CurrentGuideTargetFormID")
         all_ok &= check("PEX · 待开星图目标 FormID", blob, b"StarMapPendingFormID")
+        # ★★ 第 44 轮：星图待办改由**轮询节拍**推进（原来那个 1.5 秒的延时定时器实测
+        #   三次按 R 一次都没跑到 —— 星图被界面侧 dispatch 提前打开 ⇒ 暂停 ⇒ 冻结）。
+        all_ok &= check("PEX · 星图节拍待办", blob, b"StarMapPendingTicks")
+        all_ok &= check("PEX · 星图待办处理函数", blob, b"ProcessStarMapPending")
+        all_ok &= check("PEX · 星图节拍文案", blob, "下一个轮询节拍".encode())
         # 反向检查：第 40 轮把「地点自己没有行星，改用父地点」并入候选链诊断，旧串不应再出现
         gone = "地点自己没有行星，改用父地点".encode() not in blob
         print(("OK  " if gone else "MISS") + " PEX · 旧父地点兜底文案已替换(反向检查)")
