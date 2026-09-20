@@ -119,7 +119,7 @@ step = <操作> [参数] [timeout=毫秒]
 | `SAQ_TestDriveKey` | `ProcessUserEvent(事件名, false)`（与玩家按键同一条链，含**按钮启用判定**）；`Accept` 走 `MissionsList.onEntryPress`（与鼠标点击同一条链） |
 | `SAQ_TestDriveSelect` | 设 `selectedIndex` 后派发 `ScrollingEvent.SELECTION_CHANGE`（原版列表自己派发的就是它） |
 | `SAQ_TestDriveExpand` | `MissionsList.ExpandOrCollapseSelection()` |
-| `SAQ_TestDriveTab` | `onFilterChanged` + `SaqRefresh()`（与切 tab 同一条路） |
+| `SAQ_TestDriveTab` | `MissionTabbedSelection.SetSelectedCategoryIndex(idx)` → 内部 `SetSelectedIndex` → 派发 `BSTabbedSelectionEvent` → `onFilterChanged`（与玩家切 tab / 原版读档恢复分类同一条路）+ `SaqRefresh()`；★ 第 52 轮修正：**不能写 `selectedIndex`（只读，抛 `Error #1074`）**，见第十二节 |
 | `SAQ_TestDriveState` | 轻量状态串（tab/mask/条数/选中项），给断言用 |
 
 按键语义核对过官方 Interface 源码：`MinimalButton.HandleUserEvent` 只在
@@ -332,3 +332,60 @@ harness 的代码**编进 DLL**（同一份源码），但：
 | `ui.tab` 步返回 `err|ex:…` | 入口函数内部异常（消息即真因） |
 
 ★ 跑测试流程不变：**先构建部署 → 再启动游戏**（SWF 在启动阶段加载）。
+
+## 十二、第 52 轮：`ui.tab` 的真因 —— 向只读属性写入（`Error #1074`）
+
+06:45 会话（`stamp=51`、`ep=pub=ok,ep=ok`）的判读表命中了最后一行：
+
+```
+[W] harness：  [FAIL] ui.tab（0 ms）—— err|ex:Error #1074（SAQ_TestDriveTab）
+```
+
+`Error #1074` = **Illegal write to read-only property**（AS3 运行时错误表）——
+「往只有 getter 的属性赋值」。对照 `Shared/AS3/BSTabbedSelection.as`：
+
+```as
+public function get selectedIndex() : int   // ← 只有 getter，没有 setter
+{
+   return this.iSelectedIndex;
+}
+```
+
+而 `SAQ_TestDriveTab` 当时写的是 `this.TabbedFilterSelection_mc.selectedIndex = idx;`
+⇒ 必抛异常（第 51 轮的 try-catch 把它变成可读的 `err|ex:…`；否则它的外形与
+「路径不存在」的 0 ms 失败**完全一样**）。
+
+### 修法：走原版公开入口
+
+| 旧（错） | 新（对） |
+| --- | --- |
+| `TabbedFilterSelection_mc.selectedIndex = idx`（抛 #1074） | `TabbedFilterSelection_mc.SetSelectedCategoryIndex(idx)` |
+
+`MissionTabbedSelection.SetSelectedCategoryIndex(uint)` 是 public（`MissionTabbedSelection.as`；
+原版 `InitializeLastState` 用它恢复「上次的分类」）⇒ 内部 `SetSelectedIndex` →
+改 `iSelectedIndex` → `dispatchEvent(BSTabbedSelectionEvent)` → `MissionMenu.onFilterChanged`
+（掩码同步 + 切换音 + tab 快照）——**与玩家按肩键切 tab 完全同一条链**。
+因此不再手动调 `onFilterChanged`；只有「本来就在该 tab」时 `SetSelectedIndex` 判定
+「没变化」直接 return、不派发事件，代码里为这种情况补一次。
+
+新增拒绝码 `err|tab-refused|from=…|want=…|now=…`：`SetSelectedIndex` 静默不生效
+（`bDisableInput` / 越界）时**不再装作成功**。
+
+### 同批核对（其余测试入口用到的 AS3 API）
+
+| 入口 | 用到的 API | 结论 |
+| --- | --- | --- |
+| `SAQ_TestDriveSelect` / `Expand` | `MissionsList_mc.selectedIndex = n` | ✅ 可写（`BSScrollingContainer` 有 setter；原版自己也这么写） |
+| `SAQ_TestDriveSelect` | `dispatchEvent(new ScrollingEvent(SELECTION_CHANGE))` | ✅ 常量在 `Shared/AS3/Events/ScrollingEvent.as` |
+| `SAQ_TestDriveKey` | `MissionsList.onEntryPress` / `MissionMenu.ProcessUserEvent` | ✅ public |
+| `SAQ_TestDriveExpand` | `MissionsList.ExpandOrCollapseSelection()` | ✅ public |
+
+### 产物与验证
+
+* `stamp=51 → 52`；
+* `verify_saq_build.py` 新增 `测试入口-切tab拒绝码`（查 `tab-refused`：只在第 52 轮代码里
+  出现 ⇒ 证明新逻辑进了两份 SWF 与 MO2 部署副本）；构建后 verify 全通过。
+
+★ 教训：**AS3 里给属性赋值前先确认对方有 `set x()`** —— BS 组件里「只有 getter」的属性
+（设计上只让组件自己改）赋值必抛 #1074，而且症状会被 Scaleform 的 Invoke 层压成
+「0 ms 失败 / 路径不存在」的假象。

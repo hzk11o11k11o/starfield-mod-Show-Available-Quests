@@ -1034,7 +1034,7 @@ package
          //   指纹写进本报告 ⇒ 日志里一眼看出游戏加载的是哪一版 SWF：
          //     有 `stamp=50` = 本次构建；没有 = 旧版（**完全重启游戏**后才会更新）。
          //   ★ 以后每改一次 SWF，就把这个数字 +1（verify 检查 `stamp=` 是否存在）。
-         _loc8_ += " stamp=51";
+         _loc8_ += " stamp=52";
          // ★★ 第 51 轮：入口自检（ep=）—— 见 SaqEntryProbe 的说明。
          //   位置在 stamp 之后、其余字段之前：报告有长度上限，这个字段是当前排查
          //   「测试入口调不到」问题的关键证据，必须优先保下来。
@@ -1392,7 +1392,7 @@ package
       //                          / Accept 走 MissionsList.onEntryPress（与鼠标点击同一条链）
       //    SAQ_TestDriveSelect → 设 selectedIndex 后派发 ScrollingEvent.SELECTION_CHANGE
       //                          （原版列表自己派发的就是同一个事件、同一个处理函数）
-      //    SAQ_TestDriveTab    → onFilterChanged + SaqRefresh（与原版切 tab 同一条路）
+      //    SAQ_TestDriveTab    → SetSelectedCategoryIndex + SaqRefresh（与原版切 tab 同一条路）
       //    否则测的就是测试代码，不是产品代码。
       //
       //  返回串约定："ok|…" = 动作已送出（调用方继续断言）；"err|…" = 前置条件不满足。
@@ -1409,10 +1409,30 @@ package
             {
                return "err|no-tabs";
             }
-            this.TabbedFilterSelection_mc.selectedIndex = _loc1_;
-            this.onFilterChanged(null);
+            // ★★ 第 52 轮：这里**不能写 `TabbedFilterSelection_mc.selectedIndex`** ——
+            //   BSTabbedSelection 的 selectedIndex 只有 getter（只读），赋值会抛
+            //   `Error #1074: Illegal write to read-only property`（09-21 06:45 会话
+            //   `ui.tab` FAIL 的真因：第 51 轮的 try-catch 把它变成 `err|ex:Error #1074`，
+            //   否则看上去和「路径不存在」一模一样）。
+            //   程序化切 tab 的原版入口是 MissionTabbedSelection.SetSelectedCategoryIndex
+            //   （public；原版「读档恢复上次分类」用的就是它）⇒ 内部 SetSelectedIndex →
+            //   派发 BSTabbedSelectionEvent → MissionMenu.onFilterChanged ——
+            //   与玩家按肩键 / 点 tab 完全同一条链（掩码同步 + 切换音 + tab 快照）。
+            var _loc2_:int = this.currentFilterIndex;
+            this.TabbedFilterSelection_mc.SetSelectedCategoryIndex(_loc1_);
+            if(this.TabbedFilterSelection_mc.selectedIndex != _loc1_)
+            {
+               // SetSelectedIndex 静默拒绝（bDisableInput / 越界）—— 报出来，别装作成功
+               return "err|tab-refused|from=" + _loc2_ + "|want=" + _loc1_ + "|now=" + this.TabbedFilterSelection_mc.selectedIndex;
+            }
+            if(_loc2_ == _loc1_)
+            {
+               // 本来就在这个 tab：SetSelectedIndex 判定「没变化」直接 return、不派发事件
+               // ⇒ 原版处理链没跑，这里补一次（掩码/快照不能不同步）
+               this.onFilterChanged(null);
+            }
             this.SaqRefresh();
-            return "ok|tab=" + _loc1_ + "|mask=" + this.MissionsList_mc.filterMask + "|n=" + this.MissionsList_mc.entryCount;
+            return "ok|tab=" + this.currentFilterIndex + "|mask=" + this.MissionsList_mc.filterMask + "|n=" + this.MissionsList_mc.entryCount;
          }
          catch(_loc9_:Error)
          {

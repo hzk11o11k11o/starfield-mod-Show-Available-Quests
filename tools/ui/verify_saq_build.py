@@ -445,6 +445,14 @@ def main() -> int:
         "测试入口-按键": b"SAQ_TestDriveKey",
         "测试入口-切 tab": b"SAQ_TestDriveTab",
         "测试入口-状态": b"SAQ_TestDriveState",
+        # ★★ 第 52 轮：`ui.tab` 修「向只读属性 selectedIndex 写入」——
+        #   真因 `Error #1074: Illegal write to read-only property`（BSTabbedSelection
+        #   的 selectedIndex 只有 getter）。新逻辑改走原版 public 入口
+        #   `MissionTabbedSelection.SetSelectedCategoryIndex`，并新增拒绝码
+        #   `tab-refused`（SetSelectedIndex 静默不生效时不再装作成功）。
+        #   两个片段都只在第 52 轮的代码里出现（SetSelectedCategoryIndex 这个 multiname
+        #   原版就有，单查它证明不了什么；tab-refused 是新增的）。
+        "测试入口-切tab拒绝码": b"tab-refused",
         "列表按 uID 找行": b"SAQ_FindEntryIndexByUID",
         # ★★ 第 50 轮：SWF 构建指纹（进 SAQ_Report 的输出）—— 诊断「游戏加载的是
         #   哪一版 SWF」。起因：第 49 轮补丁③ 的产物经字节码级验证（FFDec P-code）
