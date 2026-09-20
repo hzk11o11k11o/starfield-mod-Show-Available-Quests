@@ -482,6 +482,29 @@ def main() -> int:
         print(("OK  " if gone else "MISS") + f" {p.name} · 已删除原版星图 dispatch(反向检查)")
         all_ok &= gone
 
+    # ★★ 第 49 轮补丁③（复测复查）：**入口发布清单**检查 —— 新增 root 入口必须挂到 root。
+    #   事故：第 49 轮的 `SAQ_TestDrive*` 只加进了 MissionMenu 类，漏了
+    #   `SaqPublishEntryPoint()`（把函数挂到 `_root` 的那份清单）—— 而 C++ 只能调
+    #   `_root.*`（MissionMenu 是主时间轴的子元件）⇒ 首测与复测连续两轮 `ui.tab`
+    #   都是 0 ms 失败（`fail(路径不存在或调用失败)`），排查一度被「参数个数」误导。
+    #   为什么查 patch 源而不是 SWF：SWF 常量池里同名常量只有一份 —— 字符串检查
+    #   **区分不了**「定义」与「挂载」；patch 源是 SWF 的直接上游（构建产物、同源文本）
+    #   ⇒ 每个入口名至少出现 2 次（一次 `public function` 定义 + 一次挂载清单引用）。
+    for p in [ROOT / "ui/missionmenu/patch/MissionMenu.as",
+              ROOT / "ui/missionmenu_lrg/patch/MissionMenu.as"]:
+        if not p.exists():
+            print(f"MISS 缺少产物 {p}（先跑构建）")
+            all_ok = False
+            continue
+        text = p.read_text(encoding="utf-8", errors="replace")
+        for fn in ("SAQ_TestDriveTab", "SAQ_TestDriveSelect", "SAQ_TestDriveExpand",
+                   "SAQ_TestDriveKey", "SAQ_TestDriveState"):
+            cnt = text.count(fn)
+            ok = cnt >= 2
+            print(("OK  " if ok else "MISS")
+                  + f" {p.parent.parent.name} · 入口已挂 root：{fn}（出现 {cnt} 次，需 ≥2 = 定义 + 挂载）")
+            all_ok &= ok
+
     dll = ROOT / "plugin/build/windows/x64/releasedbg/SAQ_ShowAvailableQuests.dll"
     if dll.exists():
         blob = dll.read_bytes()

@@ -192,6 +192,58 @@ python tools\test\check_results.py
 
 `harness：…` 开头的行是驱动器自己的日志（每一步 PASS/FAIL 都有一行）。
 
+## 八·补、两轮实测的坑与修复（第 49 轮补丁）
+
+### 1. ★★ 真因：新入口**没有挂到 `_root`**（补丁③，复测复查）
+
+症状：首测（22:25）与复测（22:41）**失败形态完全相同** —— `ui.tab` 步 0 ms 失败：
+
+```
+_root.SAQ_TestDriveTab=fail(路径不存在或调用失败；SWF 是旧版？)
+```
+
+排查链（这次一步到位）：
+
+| 疑点 | 排除方式 | 结论 |
+| --- | --- | --- |
+| 部署的是旧 DLL？ | 部署 DLL 907264 B / 22:36:28 == 工作区产物；会话 22:39:54 启动（在构建之后） | 排除 |
+| 方法不在 SWF 里？ | SWF 特征串 + 反编译导出（首测已做）；verify 5 条测试入口检查通过 | 排除（**方法在类里**） |
+| 参数个数？ | 补丁①已按 0 参调用（对 `SAQ_TestDriveTab()` 是正确约定），复测仍 0 ms 失败 | 不是（主）因 |
+
+真因在 AS3 的**入口发布清单**：`MissionMenu` 是主时间轴的**子元件**，不是 root 本身
+（第 8 轮的结论，见 `SaqPublishEntryPoint` 上方的背景注释）——C++ 只能调 `_root.xxx`，
+所以每个入口都必须在 `SaqPublishEntryPoint()` 里挂一份函数引用。
+第 49 轮加 `SAQ_TestDrive*` 时**只加进了类里、漏了这份清单** ⇒ `_root.SAQ_TestDriveTab`
+在 root 上根本不存在 ⇒ Invoke 0 ms 失败。
+
+同一 root 上的对照（同一会话、同一调用通道）：
+
+| 入口 | 挂 root？ | 调用方式 | 结果 |
+| --- | --- | --- | --- |
+| `SAQ_Report` | ✅ | 0 参 | 一直成功（每 500ms 轮询在读） |
+| `SAQ_Probe` | ✅ | 1 参 | 成功 |
+| `SAQ_TestDriveTab` | ❌ | 0 参（补丁①后） | **仍失败** |
+
+修法：`SaqPublishEntryPoint()` 追加 5 个挂载（Tab / Select / Expand / Key / State）。
+教训：**加了新入口，必须同时加到那份清单里** —— 已固化成 verify 检查（见下）。
+
+### 2. 防再犯检查（verify，+10 条）
+
+SWF 常量池里同名常量只有一份 ⇒ 字符串检查**区分不了**「定义」与「挂载」。
+所以 `verify_saq_build.py` 直接查 SWF 的**上游文本**（`ui/missionmenu/patch/MissionMenu.as`
+与 lrg 版，均为构建产物、与编译进 SWF 的内容同源）：每个 `SAQ_TestDrive*` 名字
+至少出现 2 次（一次 `public function` 定义 + 一次挂载清单引用）。
+
+### 3. 补丁①（保留的有效部分）与其余修正
+
+* **0 参入口按 0 参调用**（`InvokeUiTestDrive`）：`SAQ_TestDriveTab()` 是 0 参，
+  此前无条件传 1 个空串占位 —— 这个约定本身是对的（实参个数必须与 AS3 签名一致），
+  只是**不是本次的真因**；
+* **失败中止也清菜单**（`finishAll`）：首测失败中止后 `menu.close` 没跑到，
+  任务菜单留在屏幕上、游戏暂停；
+* **降级观察期 20 秒**（候选复算，`kDowngradeHoldMs`）：读档后目标持续取不到
+  ≈19 秒 ⇒ 不再误降级（[1]→[3]→[1] 对 + WARN 消失）。
+
 ## 九、后续（本轮未做，按需排期）
 
 1. **自动读档**：本轮起不做（读档会让通道序号回退、且 `BGSSaveLoadManager` 的

@@ -903,7 +903,19 @@ package
                //   SAQ_SyncGuideState = 菜单打开后同步「当前实际引导任务」
                _loc1_["SAQ_GuideReply"] = this.SAQ_GuideReply;
                _loc1_["SAQ_SyncGuideState"] = this.SAQ_SyncGuideState;
-            }
+               // ★★ 第 49 轮补丁③（首测 + 复测复查）：**测试驱动入口也必须挂在这里**。
+               //   第 49 轮只把 SAQ_TestDrive* 加进了类里 —— 而 C++ 只能调 `_root.xxx`
+               //   （本函数上方的背景说明），于是 `_root.SAQ_TestDriveTab` 在 root 上
+               //   根本不存在 ⇒ Invoke 0 ms 失败（`fail(路径不存在或调用失败)`）。
+               //   两轮实测的失败形态完全一样（0 ms）—— 与参数个数无关：
+               //   `SAQ_Report`（挂了的）0 参调用一直成功，`SAQ_TestDriveTab`（没挂的）
+               //   用 0 参也照样失败。教训：**加了新入口，必须同时加到这份清单里**。
+               _loc1_["SAQ_TestDriveTab"] = this.SAQ_TestDriveTab;
+               _loc1_["SAQ_TestDriveSelect"] = this.SAQ_TestDriveSelect;
+               _loc1_["SAQ_TestDriveExpand"] = this.SAQ_TestDriveExpand;
+               _loc1_["SAQ_TestDriveKey"] = this.SAQ_TestDriveKey;
+               _loc1_["SAQ_TestDriveState"] = this.SAQ_TestDriveState;
+               }
          }
          catch(e:Error)
          {
