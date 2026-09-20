@@ -1044,10 +1044,17 @@ package
          }
       }
       
-      // 切换引导：同一条再按一次 = 取消（返回 true 表示现在是「已设为引导」）。
+      // 切换引导（返回 true 表示现在是「已设为引导」）。
+      //
       // ★ 第 37 轮：param2 = 这一次请求是否要**打开星图**（只有「设定航线（R）」传 true；
       //   点「前往接取地点」子项 / 自动取消都传 false）。取消引导时永远是 false。
-      private function SaqToggleGuide(param1:Object, param2:Boolean = false) : Boolean
+      //
+      // ★ 第 39 轮：param3 = 是否保留「同一条再按一次 = 取消引导」的切换语义（默认 true）。
+      //   只有 Enter（点子项「前往接取地点」）走切换；**SET COURSE（键盘 R / 手柄 X）
+      //   传 false** —— 原版按 R 只会「在星图里显示目标位置」（未追踪时再多问一句
+      //   是否追踪），**不会**取消已经追踪的任务。此前 R 走切换，于是已引导的条目
+      //   再按 R 变成「取消选中」而星图打不开（玩家实测反馈：R 键不该有选中/取消选中的效果）。
+      private function SaqToggleGuide(param1:Object, param2:Boolean = false, param3:Boolean = true) : Boolean
       {
          if(!SaqIsOurEntry(param1))
          {
@@ -1074,7 +1081,11 @@ package
             }
             return false;
          }
-         var _loc2_:Number = this.SaqGuideQuest == param1.uID ? 0 : param1.uID;
+         // ★ 第 39 轮：已经在这条上（= 重复按 R / 重复点子项）。
+         var _loc4_:Boolean = this.SaqGuideQuest == param1.uID;
+         // 取消只在「允许切换取消（param3）」时发生；否则永远是「设/保持引导这条」
+         // （R 的重复请求因此退化为「把这条再交给星图显示一次」，引导状态原样保留）。
+         var _loc2_:Number = _loc4_ && param3 ? 0 : param1.uID;
          var _loc3_:Number = this.SaqGuideQuest;
          this.SaqGuideSeq = this.SaqGuideSeq + 1;
          this.SaqGuideQuest = _loc2_;
@@ -1085,8 +1096,17 @@ package
          this.SaqPendingCloseToGame = this.SaqGuideWantMap;
          if(_loc2_ != 0)
          {
-            GlobalFunc.PlayMenuSound(MISSION_TRACKING_TOGGLE_ON_SOUND);
-            this.SaqGuideNote = "已设为引导:" + this.SaqQuestName(param1);
+            if(_loc4_)
+            {
+               // ★ 第 39 轮：刚刚就在引导这条 ⇒ 不播「开始追踪」音（没有状态变化），
+               //   本次请求的实质是「再打开一次星图」（note 进日志，能区分两种按法）。
+               this.SaqGuideNote = "重复设定航线:" + this.SaqQuestName(param1);
+            }
+            else
+            {
+               GlobalFunc.PlayMenuSound(MISSION_TRACKING_TOGGLE_ON_SOUND);
+               this.SaqGuideNote = "已设为引导:" + this.SaqQuestName(param1);
+            }
          }
          else
          {
@@ -1676,11 +1696,17 @@ package
             //   引用上（ForceRefTo）。所以把**代理任务**的 FormID 传进去，引擎就会
             //   像对待原版任务一样：算出目标位置 → 打开星图 → 聚焦星球 → 询问导航。
             //
-            //   只在「新设定」时发（同一条再按一次 = 取消引导，那时不该再弹星图）。
-            var _loc1_:Number = this.SaqGuideQuest;
             // ★ 第 37 轮：R = 「设定航线」——把自己引导 + **打开星图**（第二参数）。
-            var _loc2_:Boolean = this.SaqToggleGuide(this.MissionsList_mc.selectedEntry, true);
-            if(_loc2_ && _loc1_ != this.MissionsList_mc.selectedEntry.uID)
+            //
+            // ★ 第 39 轮：第三参数 false = **R 永远不取消引导**。
+            //   原版：未追踪 → 星图打开并询问是否追踪；已追踪 → 星图直接显示目标位置。
+            //   我们的对应实现：无论哪种情况，都「保持/建立引导 + 请求星图」——
+            //   已引导的条目再按 R，只是把这条任务再交给星图显示一次（序号 +1，C++ 会
+            //   再写一遍通道并触发「关菜单 → 脚本开星图」），而不是取消条目
+            //   （此前正是「已选中的任务按 R = 取消选中、星图打不开」，玩家实测反馈）。
+            //   取消引导仍有一条路：Enter 选中子项「前往接取地点」（默认 param3 = true）。
+            var _loc1_:Boolean = this.SaqToggleGuide(this.MissionsList_mc.selectedEntry, true, false);
+            if(_loc1_)
             {
                this.SaqPlotToLocationViaEngine();
             }

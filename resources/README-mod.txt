@@ -38,7 +38,9 @@
     · 展开子项「前往接取地点」（Enter）= 开始引导（HUD 蓝点 + 扫描仪路径线）；
     · 按 SET COURSE（键盘 R / 手柄 X）= 引导 + 自动打开星图并把航线画到接取地点
       （与原版任务按 R 的表现一致；此时会先自动关闭任务菜单）。
-  再按一次同一条 = 取消引导。被引导的任务一旦接取，引导会自动取消。
+  同一条再按一次 R = 保持引导并把星图**再打开一次**（与原版一致：R 只负责「显示目标
+  位置」，不会取消追踪）；要**取消**引导，展开条目后选中子项「前往接取地点」再按 Enter。
+  被引导的任务一旦接取，引导会自动取消。
   列表末尾还有「任务板 · XX」入口条目（无限任务 / 悬赏的接取点），用法相同。
   提示：引导在关闭任务菜单后生效（与原版一致，HUD 蓝点要关菜单才可见）。
 
@@ -111,8 +113,11 @@
     - press SET COURSE (R / X) to start the guidance AND open the star map
       with the route plotted to the pickup location (same as a vanilla
       quest does; the mission menu closes automatically first).
-  Press again on the same entry to cancel. Guidance is cancelled
-  automatically once you accept the quest.
+  Pressing R again on the same entry keeps the guidance and simply opens
+  the star map again (like vanilla: R only shows the target location, it
+  never cancels tracking). To CANCEL the guidance, expand the entry,
+  select the "Go to the pickup location" sub-entry and press Enter.
+  Guidance is cancelled automatically once you accept the quest.
   The list also ends with "Mission Board - XX" entries (pickup points of
   radiant quests) - same usage.
   Note: guidance applies after you close the mission menu (same as

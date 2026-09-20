@@ -1,0 +1,25 @@
+第 39 轮：R（SET COURSE）不再取消引导 —— 已引导的条目再按 R = 保持引导并再开星图
+
+玩家实测：可接任务 tab 里 R 有「选中/取消选中」效果（原版没有），于是已引导的
+条目再按 R 会取消引导，星图完全打不开。修法只动 AS3 一处语义：
+
+- SaqToggleGuide 加第三参数 allowUntoggle（默认 true = 保留「再按一次 = 取消」的
+  切换语义，Enter 点子项仍用它）；OnPlotCourseEvent（R / 手柄 X）传 false ——
+  已引导时保持引导，本次请求退化为「把这条再交给星图显示一次」
+  （seq+1 / quest 不变 / wantMap=1 / pendingClose=1）。
+- DLL / Papyrus / peek 协议都不用改：PollGuideRequest 的去重判据是**序号变化**
+  （不是任务是否变化），同一条任务 + 新序号 + wantMap=1 会被照常处理
+  （再写一遍通道状态 5 → 回写 → 界面 CloseMenu(true) → 脚本再开一次星图）。
+- 取消引导仍有一条明路：Enter 选中子项「前往接取地点」。
+- 新增 note「重复设定航线:<任务名>」（进 SAQ_Report 的 guide 段 / DLL 日志），
+  与首次的「已设为引导:<任务名>」可区分。
+
+验证：build-saq.ps1（-SkipTable -SkipPapyrus -SkipPlugin）→ SWF 725886 / 726145 B
++ MO2 部署；verify_saq_build.py 全部通过（新增两个 SWF 的「R 重复请求 note」特征）。
+
+文档 / 交付：
+- docs/05 第十三节（第 39 轮完整技术细节：根因 / 修法 / 与原版差别 / 判据）；
+- docs/99 一·补二十四 + 当前状态表与「下一步」同步；
+- docs/99 逼近 100 KB 上限 ⇒ 第 21~25 轮整段迁至 docs/98（内容一字未改）；
+- resources README / Nexus 文案同步「再按一次 R 不再取消引导，取消走 Enter 子项」；
+- 重打 Nexus 包：dist/SAQ-ShowAvailableQuests-0.1.0.zip（1,772,349 B）。

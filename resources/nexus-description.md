@@ -48,7 +48,7 @@ Starfield 从不告诉你去哪接任务，全靠自己撞见。这个 mod 在�
 用 MO2「从压缩包安装」，启用后确认 SAQ_ShowAvailableQuests.esm 已在插件列表勾选。手动安装：解压后把文件放进 Starfield\Data\（详见包内 README.txt）。
 
 [b]使用[/b]
-任务菜单（TAB）→ 「可接任务」→ 选中条目 → 展开子项「前往接取地点」（Enter）= 开始引导（HUD 蓝点 + 扫描仪路径线）；按 SET COURSE（键盘 R / 手柄 X）= 引导 + **自动打开星图并把航线画到接取地点**（与按原版任务一样）。再按一次同一条 = 取消引导。
+任务菜单（TAB）→ 「可接任务」→ 选中条目 → 展开子项「前往接取地点」（Enter）= 开始引导（HUD 蓝点 + 扫描仪路径线）；按 SET COURSE（键盘 R / 手柄 X）= 引导 + **自动打开星图并把航线画到接取地点**（与按原版任务一样）。同一条再按一次 R = 引导保持不变、星图**再打开一次**（与原版一致：R 只负责显示目标位置，不会取消追踪）；要取消引导，展开条目选中子项「前往接取地点」再按 Enter。
 
 [b]已知限制[/b]
 [list]
@@ -97,7 +97,7 @@ Starfield never tells you where to pick up quests — you just have to stumble i
 Install the archive with MO2 ("Install from archive"), then make sure SAQ_ShowAvailableQuests.esm is ticked. Manual install: copy the files into Starfield\Data\ (see README.txt in the archive).
 
 [b]Usage[/b]
-Mission menu (TAB) -> "Available Quests" -> select an entry -> expand the "Go to the pickup location" sub-entry (Enter) to start the guidance (HUD marker + scanner route line); press SET COURSE (R / X) to start the guidance **and** open the star map with the route plotted to the pickup location (just like a vanilla quest). Press again on the same entry to cancel.
+Mission menu (TAB) -> "Available Quests" -> select an entry -> expand the "Go to the pickup location" sub-entry (Enter) to start the guidance (HUD marker + scanner route line); press SET COURSE (R / X) to start the guidance **and** open the star map with the route plotted to the pickup location (just like a vanilla quest). Pressing R again on the same entry keeps the guidance and just opens the star map again (like vanilla: R never cancels tracking); to cancel, expand the entry, select the sub-entry and press Enter.
 
 [b]Known limitations[/b]
 [list]
