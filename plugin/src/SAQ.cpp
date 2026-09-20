@@ -148,6 +148,7 @@ namespace SAQ
 			std::size_t infoGated{};          // 带 INFO 门槛的任务数（静态表 infoGroupCount>0 的）
 			std::size_t infoPassed{};         // 全部对话都有「已知为假」以外的出路 → 显示
 			std::size_t infoHidden{};         // 全部对话都有已知为假的条件 → 隐藏
+			std::size_t infoExempt{};         // ★ 第 48 轮补丁：判「进度没到」但引擎已开始 → 放行
 			std::size_t infoUnknown{};        // 结构异常 → 放行（保守）
 			bool        infoFilterOff{};      // ini 把过滤关了（只统计不隐藏）
 			std::string infoSamples;          // 「INFO 没到」的名单（名字 + 已知为假的条件）
@@ -867,37 +868,44 @@ namespace SAQ
 					//   求值语义（保守）：任何一条对话「没有已知为假的条件」（全真 / 不可判定）
 					//   ⇒ 显示；数据结构异常 ⇒ 放行。
 					if (info.infoGroupCount) {
-					++a_stats.infoGated;
-					const auto infoGate = EvaluateInfoGates(info.infoGroupBegin, info.infoGroupCount);
-					switch (infoGate.verdict) {
-					case CondVerdict::kPass:
-						++a_stats.infoPassed;
-						break;
-					case CondVerdict::kFail:
-						// 交叉验证：引擎已把这个任务标成「已开始」（第 11 轮证明它不能当
-						// 「已接取」用，但表示引擎为它做了启动准备）—— 与我们的隐藏判定冲突，
-						// 只记 WARN 提示可能误判（名单照进日志，便于实机核对）。
-						if (state.started) {
-							REX::WARN("INFO 门槛要隐藏『{}』（0x{:08X}）但引擎已开始 —— 可能误判，"
-									  "请反馈这一行（{}）", info.nameZh, row.formID, infoGate.detail);
+						++a_stats.infoGated;
+						const auto infoGate = EvaluateInfoGates(info.infoGroupBegin, info.infoGroupCount);
+						switch (infoGate.verdict) {
+						case CondVerdict::kPass:
+							++a_stats.infoPassed;
+							break;
+						case CondVerdict::kFail:
+							// ★ 第 48 轮补丁（实机日志复查抓到的误藏）：引擎已把这个任务标成
+							//   「已开始」⇒ **放行**，不隐藏。依据 = 第 11 轮的实证：引擎 started
+							//   的任务玩家**仍可能接到**（「全数到期」RAD05 就是那一轮的案例 ——
+							//   它在 21:46 会话里又被 INFO 门槛误藏，交叉验证 WARN 自动抓出）。
+							//   判据因此收窄为：「引擎**没启动** + 全部对话都有已知假条件 ⇒ 隐藏」
+							//   （引擎都没启动的任务，大概率确实还没到接取点）。
+							if (state.started) {
+								++a_stats.infoExempt;
+								REX::INFO("INFO 门槛判定『进度没到』但引擎已开始 —— 放行"
+										  "（引擎自启的任务玩家仍可能接到，第 11 轮经验）："
+										  "{}（0x{:08X}）｜{}",
+									info.nameZh, row.formID, infoGate.detail);
+								break;
+							}
+							// 名单无条件记录（即使 ini 把过滤关了 —— 那是实机对照的对照物）。
+							if (infoSampleCount < kMaxSamples) {
+								++infoSampleCount;
+								a_stats.infoSamples += std::format("{}[0x{:08X} {}] ",
+									info.nameZh, row.formID, infoGate.detail);
+							}
+							if (infoFilter) {
+								++a_stats.infoHidden;
+								continue;
+							}
+							break;
+						case CondVerdict::kUnknown:
+							++a_stats.infoUnknown;
+							break;
+						default:
+							break;
 						}
-						// 名单无条件记录（即使 ini 把过滤关了 —— 那是实机对照的对照物）。
-						if (infoSampleCount < kMaxSamples) {
-							++infoSampleCount;
-							a_stats.infoSamples += std::format("{}[0x{:08X} {}] ",
-								info.nameZh, row.formID, infoGate.detail);
-						}
-						if (infoFilter) {
-							++a_stats.infoHidden;
-							continue;
-						}
-						break;
-					case CondVerdict::kUnknown:
-						++a_stats.infoUnknown;
-						break;
-					default:
-						break;
-					}
 					}
 
 				// ★ 第 20 轮：控制台测试过滤（`set SAQ_TestMode to N`，见 PassesTestFilter）。
@@ -1020,10 +1028,12 @@ namespace SAQ
 				out += " 进度没到: " + a_stats.progressSamples;
 			}
 			// ★★ 大项 D（第 48 轮）：INFO 门槛（对话侧条件）的统计与名单。
+			//   ★ 第 48 轮补丁：「放行」= 判「进度没到」但引擎已开始（引擎自启的任务
+			//   玩家仍可能接到 ⇒ 不隐藏，见 CollectAvailableQuests 的注释）。
 			if (a_stats.infoGated) {
-				out += std::format(" INFO门槛={}(过{}/藏{}/未知{}",
+				out += std::format(" INFO门槛={}(过{}/藏{}/放行{}/未知{}",
 					a_stats.infoGated, a_stats.infoPassed,
-					a_stats.infoHidden, a_stats.infoUnknown);
+					a_stats.infoHidden, a_stats.infoExempt, a_stats.infoUnknown);
 				out += a_stats.infoFilterOff ? "｜过滤=ini关闭)" : ")";
 			}
 			if (!a_stats.infoSamples.empty()) {

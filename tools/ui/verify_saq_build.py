@@ -548,7 +548,11 @@ def main() -> int:
             #   误判告警（引擎已开始却要隐藏 ⇒ WARN）/ ini 开关与说明。
             "INFO 门槛统计": "INFO门槛=".encode(),
             "INFO 没到名单": "INFO没到:".encode(),
-            "INFO 门槛误判告警": "INFO 门槛要隐藏".encode(),
+            #   ★ 第 48 轮补丁（实机日志复查抓到的误藏）：引擎已开始 ⇒ **放行**（不隐藏）。
+            #   依据：第 11 轮实证「引擎 started 的任务玩家仍可能接到」（RAD05「全数到期」）；
+            #   21:46 会话的交叉验证自动抓出它 + 「陌生人的善意」两条误藏。
+            "INFO 门槛引擎自启放行": "INFO 门槛判定『进度没到』但引擎已开始 —— 放行".encode(),
+            "INFO 统计含放行": "/放行".encode(),
             "ini INFO 开关": "InfoCond=1".encode(),
             "ini 对话条件说明": "对话条件过滤".encode(),
             # ★ 第 48 轮：认领后的复算宽限期（读档瞬间引擎查询不可靠）+ 引导更新未确认
@@ -564,10 +568,12 @@ def main() -> int:
         all_ok &= gone
         # 反向检查（第 48 轮）：① 「首选候选非常驻」的放宽判据文案已回退；
         #   ② 「入口引导目标更新未被脚本确认」的旧 WARN 文案去掉「入口」二字；
-        #   ③ 星图旧「还开着：」文案已替换（空列表时自相矛盾）。
+        #   ③ 星图旧「还开着：」文案已替换（空列表时自相矛盾）；
+        #   ④ 补丁：旧「INFO 门槛要隐藏…但引擎已开始」的 WARN 已换成「放行」。
         gone = ("首选候选非常驻".encode() not in blob
                 and "入口引导目标更新未被脚本确认".encode() not in blob
-                and "还开着：".encode() not in blob)
+                and "还开着：".encode() not in blob
+                and "INFO 门槛要隐藏".encode() not in blob)
         print(("OK  " if gone else "MISS") + " DLL · 第 48 轮旧文案已替换(反向检查)")
         all_ok &= gone
         # 反向检查：第 31 轮把候选链顺序换掉，第 30 轮的「marker 优先」诊断文案不应再出现
