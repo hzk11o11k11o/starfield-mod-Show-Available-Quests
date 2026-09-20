@@ -586,6 +586,11 @@ def main() -> int:
         #   发一条 HUD 通知如实说明（中英双语，脚本侧判定「地点链无行星」）。
         all_ok &= check("PEX · 不在星图上的早退 Trace", blob, "目标地点不在星图上".encode())
         all_ok &= check("PEX · 不在星图上的通知", blob, b"not on the star map")
+        # ★★ 第 45 轮补丁 2（玩家反馈「提示消失太快」）：引擎的 HUD 通知单条只停 ~2 秒，
+        #   Papyrus 改不了 ⇒ 同一条文案再发 2 次、间隔 ~2 秒（轮询节拍驱动），总覆盖约 6 秒。
+        all_ok &= check("PEX · 提示重复函数", blob, b"ProcessStarMapNotice")
+        all_ok &= check("PEX · 提示重复间隔", blob, b"StarMapNoticeInterval")
+        all_ok &= check("PEX · 提示重复 Trace", blob, "不在星图上的提示已重复".encode())
         # 反向检查：第 40 轮把「地点自己没有行星，改用父地点」并入候选链诊断，旧串不应再出现
         gone = "地点自己没有行星，改用父地点".encode() not in blob
         print(("OK  " if gone else "MISS") + " PEX · 旧父地点兜底文案已替换(反向检查)")

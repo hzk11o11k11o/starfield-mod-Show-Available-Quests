@@ -106,6 +106,13 @@ int StarMapPendingFormID = 0
 ;   接受 ShowGalaxyStarMapMenuAndPlotToLocation 的时机，也不会被暂停吃掉。
 int StarMapPendingTicks = 0
 
+; ★★ 第 45 轮补丁 2（玩家反馈「右上角提示消失太快」）：星图无法定位时的 HUD 提示要**重复发**——
+;   `Debug.Notification` 单条的停留时长由引擎控制（约 2 秒，Papyrus 没有延长参数）⇒ 同一条
+;   文案再发 2 次、每次间隔 4 个轮询节拍（≈2 秒），总覆盖约 6 秒。
+;   首次在 OpenStarMapFor 的「不在星图上」分支里发；后续由 ProcessStarMapNotice 发。
+int StarMapNoticeLeft = 0
+int StarMapNoticeTicks = 0
+
 ; 本任务里引导目标用的别名 id 与目标索引（与 patch_saq_esm.py 保持一致）
 ; ★ Starfield 的 Papyrus 4.7 里没有 AutoConst 这个 flag（实测报 "Unknown user flag autoconst"），
 ;   常量属性要用 AutoReadOnly。
@@ -118,6 +125,9 @@ float Property NotifyMagic = 7777.0 AutoReadOnly
 ; 轮询间隔与定时器 id
 float Property PollInterval = 0.5 AutoReadOnly
 int Property PollTimerID = 1 AutoReadOnly
+
+; ★ 第 45 轮补丁 2：「不在星图上」的 HUD 提示，重复发送的间隔（轮询节拍数；4 拍 ≈ 2 秒）
+int Property StarMapNoticeInterval = 4 AutoReadOnly
 
 ; ★ 第 37 轮：星图请求的延时与定时器 id。
 ;   ★★ 第 44 轮起**不再使用**（历史遗留，保留声明只为读旧存档时不缺属性）：
@@ -165,6 +175,9 @@ Event OnTimer(int aiTimerID)
 	;   放在 ApplyGuide 之后：这一拍刚装上的待办（DLL 在游戏运行中重发的 5/6/7）
 	;   也从这里开始倒数，不会漏。
 	ProcessStarMapPending()
+	; ★ 第 45 轮补丁 2：「不在星图上」的 HUD 提示重复发送
+	;   （首次在 OpenStarMapFor 里已发；这里按间隔补发剩下 2 次）。
+	ProcessStarMapNotice()
 EndEvent
 
 Event OnMenuOpenCloseEvent(String asMenuName, Bool abOpening)
@@ -331,6 +344,31 @@ Function ProcessStarMapPending()
 EndFunction
 
 ; ============================================================================
+;  ★★ 第 45 轮补丁 2：把「不在星图上」的 HUD 提示重复发完（由轮询节拍驱动）。
+;
+;  为什么：玩家反馈「右上角提示消失太快」——引擎的 HUD 通知默认只停约 2 秒，
+;  Papyrus 没有「延长单条停留时间」的参数 ⇒ 同一条文案再发 2 次、间隔 4 拍（≈2 秒），
+;  总覆盖约 6 秒（首次在 OpenStarMapFor 的「不在星图上」分支里已经发过一条）。
+; ============================================================================
+String Function StarMapNoticeText()
+	Return "该目标不在星图上（飞船内/太空），请跟随任务标记 / Target not on the star map"
+EndFunction
+
+Function ProcessStarMapNotice()
+	If StarMapNoticeLeft <= 0
+		Return
+	EndIf
+	If StarMapNoticeTicks > 0
+		StarMapNoticeTicks -= 1
+		Return
+	EndIf
+	Debug.Notification(StarMapNoticeText())
+	StarMapNoticeLeft -= 1
+	StarMapNoticeTicks = StarMapNoticeInterval
+	Debug.Trace("[SAQ] 不在星图上的提示已重复（剩余 " + StarMapNoticeLeft + " 次）")
+EndFunction
+
+; ============================================================================
 ;  ★ 第 37 轮：SET COURSE（键盘 R / 手柄 X）的「星图」这一半
 ;
 ;  玩家按 R 时：① 界面侧（第 38 轮新协议）收到 C++ 成功回写后走原版「退回游戏」
@@ -449,8 +487,12 @@ Function OpenStarMapFor(ObjectReference akTarget, int aiMode)
 	;   HUD 通知如实说明（世界里的任务标记/扫描仪路径线不受影响，跟随它即可）。
 	;   （DLL 侧同款判定：`星图诊断` 全层节点=0 时不重试、超时文案改「按预期未打开」。）
 	If body == None
-		Debug.Trace("[SAQ] 星图请求：目标地点不在星图上（行星=None、父地点链无行星；位置可能在飞船内部/动态创建的内部地点）—— 不打开星图，改发 HUD 提示")
-		Debug.Notification("该目标不在星图上（飞船内/太空），请跟随任务标记 / Target not on the star map")
+		Debug.Trace("[SAQ] 星图请求：目标地点不在星图上（行星=None、父地点链无行星；位置可能在飞船内部/动态创建的内部地点）—— 不打开星图，改发 HUD 提示（共 3 次、间隔约 2 秒）")
+		Debug.Notification(StarMapNoticeText())
+		; ★ 第 45 轮补丁 2：再补发 2 次（引擎单条只停 ~2 秒，玩家反馈「消失太快」）；
+		;   后续由 ProcessStarMapNotice 在轮询节拍里推进（每 4 拍 ≈ 2 秒一条）。
+		StarMapNoticeLeft = 2
+		StarMapNoticeTicks = StarMapNoticeInterval
 		Return
 	EndIf
 
