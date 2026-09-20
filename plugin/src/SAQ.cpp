@@ -29,6 +29,7 @@
 #include "SAQ.h"
 #include "SAQ_Guide.h"       // 引导通道（DLL ↔ ESM 的 GLOB ↔ SAQ_Main.psc）
 #include "SAQ_Masters.h"     // 「插件名 + 记录号」→ 运行期 FormID（DLC / 多 master）
+#include "SAQ_QuestCond.h"   // ★ 第 35 轮：进度门槛（「进度没到不显示」）
 #include "SAQ_QuestState.h"  // TESQuest 运行时状态（已开始/已完成/追踪中）
 #include "SAQ_UI.h"          // UI 通道（菜单表 → IMenu → Movie → ASMovieRoot）
 #include "SAQ_QuestTable.h"  // 生成物：master + 记录号 -> 中/英文名 + 类型 + 引导目标（tools/esm/gen_quest_table.py）
@@ -124,6 +125,13 @@ namespace SAQ
 			std::size_t entryByBoard{};
 			std::size_t entryByFallback{};
 			std::size_t skippedMaster{};      // 所属 master 没加载（DLC 没装/没启用）而跳过的
+			// ★ 第 35 轮：进度门槛（「游戏进度还不能让玩家接到 ⇒ 不显示」）
+			std::size_t progressGated{};      // 带门槛的任务数（静态表 condCount>0 的）
+			std::size_t progressPassed{};     // 门槛全真 → 显示
+			std::size_t progressHidden{};     // 门槛有假（进度没到）→ 隐藏
+			std::size_t progressUnknown{};    // 求值不了 → 放行（保守）
+			bool        progressFilterOff{};  // ini 把过滤关了（只统计不隐藏）
+			std::string progressSamples;      // 「进度没到」的名单（名字 + 没通过的检查）
 			bool        filterApplied{};      // 这次到底有没有按运行时状态过滤
 			std::string samples;              // 被剔掉的前几条（名字 + 状态）
 			std::string vtableSamples;        // 未识别虚表的样本（诊断）
@@ -408,7 +416,15 @@ namespace SAQ
 				";   5 = 只显示「无限任务入口」（任务板，12 条）—— 验证任务板条目的显示与引导\r\n"
 				"; 控制台（如果你的游戏认 `set SAQ_TestMode to N`）非 0 时优先于本文件。\r\n"
 				"[Test]\r\n"
-				"Mode=0\r\n";
+				"Mode=0\r\n"
+				";\r\n"
+				"; ---- 进度门槛过滤（第 35 轮，「游戏进度还不能让玩家接到就不显示」） ----\r\n"
+				"; 判据来自任务记录级条件里「引用别的任务」的 GetQuestRunning / GetQuestCompleted\r\n"
+				"; / GetStageDone（等于比较）—— 目前覆盖 7 条任务（如「迟到者」要「枝节横生」完成）。\r\n"
+				";   1 = 过滤（默认）：进度没到的任务不显示\r\n"
+				";   0 = 不过滤：只把判据结果写进日志（便于对照界面）\r\n"
+				"[Filter]\r\n"
+				"ProgressCond=1\r\n";
 			std::ofstream f{ path.c_str(), std::ios::binary };
 			if (!f) {
 				REX::WARN("测试开关 ini 写不进去（忽略；不影响其它功能）");
@@ -439,6 +455,19 @@ namespace SAQ
 				}
 			}
 			return { 0, "默认" };
+		}
+
+		// ★ 第 35 轮：进度门槛过滤开关（ini `[Filter] ProgressCond`）。
+		//   1 = 过滤（默认）：任务的记录级条件「引用别的任务」的进度检查没过 ⇒ 不显示；
+		//   0 = 只把判据结果写进日志、**不隐藏**（实机对照用：能直接对照「进度没到」名单
+		//       和界面里实际出现的条目）。
+		bool ResolveProgressCondFilter()
+		{
+			const auto path = TestModeIniPath();
+			if (!path.empty()) {
+				return ::GetPrivateProfileIntW(L"Filter", L"ProgressCond", 1, path.c_str()) != 0;
+			}
+			return true;
 		}
 
 		// ==================================================================
@@ -659,6 +688,11 @@ namespace SAQ
 			constexpr std::size_t kMaxSamples = 40;
 			std::size_t sampleCount = 0;
 
+			// ★ 第 35 轮：进度门槛过滤开关（ini `[Filter] ProgressCond`，默认开）。
+			const bool progressFilter = ResolveProgressCondFilter();
+			a_stats.progressFilterOff = !progressFilter;
+			std::size_t progressSampleCount = 0;
+
 			// ★ 第 27 轮：模式 5（只显示入口条目）跳过整段任务循环（入口在下面单独追加）。
 			const bool entryOnly = (a_testMode == kEntryOnlyTestMode);
 			if (!entryOnly) for (const auto& row : g_runtimeRows) {
@@ -707,6 +741,40 @@ namespace SAQ
 						a_stats.samples += std::format("{}[0x{:08X} {}] ", info.nameZh, row.formID, Describe(state));
 					}
 					continue;
+				}
+
+				// ★ 第 35 轮：进度门槛（需求「游戏进度还不能让玩家接到 ⇒ 不显示」）。
+				//
+				// 判据 = 任务记录级条件（CTDA）里「引用别的任务」的进度检查（只收
+				// GetQuestRunning/GetQuestCompleted/GetStageDone 的等于比较；数据由
+				// tools/esm/analyze_ctda.py 提取，见 SAQ_QuestTable.h 的 kQuestConds）。
+				// 求值见 SAQ_QuestCond.cpp：任何一步求不了 ⇒ kUnknown ⇒ **放行**
+				// （宁可在进度没到的时候多显示一条，也不能因为求值器的问题把真任务藏掉）。
+				if (info.condCount) {
+					++a_stats.progressGated;
+					const auto gate = EvaluateProgressGates(info.condBegin, info.condCount);
+					switch (gate.verdict) {
+					case CondVerdict::kPass:
+						++a_stats.progressPassed;
+						break;
+					case CondVerdict::kFail:
+						// 名单无条件记录（即使 ini 把过滤关了 —— 那是实机对照的对照物）。
+						if (progressSampleCount < kMaxSamples) {
+							++progressSampleCount;
+							a_stats.progressSamples += std::format("{}[0x{:08X} {}] ",
+								info.nameZh, row.formID, gate.detail);
+						}
+						if (progressFilter) {
+							++a_stats.progressHidden;
+							continue;
+						}
+						break;
+					case CondVerdict::kUnknown:
+						++a_stats.progressUnknown;
+						break;
+					default:
+						break;
+					}
 				}
 
 				// ★ 第 20 轮：控制台测试过滤（`set SAQ_TestMode to N`，见 PassesTestFilter）。
@@ -809,6 +877,19 @@ namespace SAQ
 				a_stats.entryByMarker, a_stats.entryByBoard, a_stats.entryByFallback,
 				a_stats.entries - a_stats.entryNavigable,
 				a_stats.filterApplied ? "生效" : "跳过(识别率<80%)");
+			// ★ 第 35 轮：进度门槛统计（只在有门槛任务时打 —— 正常恒为 7 条）。
+			//   `过` = 门槛全真显示；`藏` = 进度没到隐藏；`未知` = 求不了放行。
+			if (a_stats.progressGated) {
+				out += std::format(" 进度门槛={}(过{}/藏{}/未知{}",
+					a_stats.progressGated, a_stats.progressPassed,
+					a_stats.progressHidden, a_stats.progressUnknown);
+				out += a_stats.progressFilterOff ? "｜过滤=ini关闭)" : ")";
+			}
+			if (!a_stats.progressSamples.empty()) {
+				// 「进度没到」名单：玩家报「某条任务没显示」时，先在这里搜 FormID；
+				// 每条后面括号里是**没通过的检查**（哪个任务是什么状态、期望什么）。
+				out += " 进度没到: " + a_stats.progressSamples;
+			}
 			if (!a_stats.samples.empty()) {
 				// 完整名单（第 11 轮起不再只记前几条）：玩家反馈「某条任务没显示」时，
 				// 先在 `隐藏:` 这一段里搜 FormID —— 在 = 被运行时状态挡住（看它后面括号里的状态）；

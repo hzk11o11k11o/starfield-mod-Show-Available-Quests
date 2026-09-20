@@ -1,0 +1,275 @@
+#!/usr/bin/env python3
+"""analyze_ctda.py - 第 35 轮：「进度没到不显示」——解析 QUST 记录级条件（CTDA）。
+
+数据来源：
+  ref/quests.json         quest_dump.py 产物（原始 CTDA 字节 hex，按文件顺序）
+  ref/quests_parsed.json  parse_xedit_dump.py 产物（xEdit 解码后的字段名/函数名）
+  ref/quest_table_debug.json  候选表（261 条）
+
+做法：
+  1. 原始 32 字节 CTDA 按实测布局解析（Skyrim 风格，已用 FFConstantZ06 对照验证）：
+       0   u8   operator/flag（0x00=等于 …；0x01 位用途见 docs/08）
+       4   f32  comparison value
+       8   u16  function index
+       10  u16  （xEdit "Unused"，f9 44 常见）
+       12  u32  parameter #1
+       16  u32  parameter #2
+       20  u32  run on（0=Subject）
+       24  u32  reference
+       28  i32  parameter #3（多为 -1，GetStageDone 里是 stage 名索引？）
+  2. 与 xEdit 解码的「记录级条件」按顺序配对 ⇒（函数索引 ↔ 函数名）对照表。
+  3. 统计候选任务的条件「可求值性」（保守子集见下）。
+
+保守求值子集（DLL 侧准备实现）：
+    GetQuestCompleted / GetQuestRunning / GetStageDone / GetStage /
+    GetGlobalValue / GetInFaction
+  其余函数（LocationHasKeyword / BiomeSupportsCreature / IsTrueForConditionForm /
+  GetIsID / GetIsVoiceType / GetBodySurveyPercent / GetRandomPercent …）依赖
+  运行时上下文（event data / body / 当前地点），本阶段**不求值 ⇒ 放行**。
+
+★ 第 35 轮定案：真正拿来做「进度没到不显示」的判据叫 **gate（进度门槛）**，
+  比「可有条件」更窄、更安全（--gates 输出 ref/ctda_gates.json）：
+    * op == 0x00（等于；0x01/0xA0/0xA4 的语义未反汇编确认 ⇒ 放行）
+    * Run On == Subject
+    * 函数是 GetQuestRunning / GetQuestCompleted / GetStageDone 之一
+    * 比较值 ∈ {0.0, 1.0}
+    * **引用的是「别的任务」**（p1 != 自己）——
+      对 self 的条件（GetQuestRunning(自己)==0 之类）是引擎启动流程的防重入守卫，
+      **不是**进度门槛（第 11 轮的教训：RAD05「全数到期」引擎提前 started、
+      条件为假，但玩家仍能接到 ⇒ 用 self 条件过滤会误伤）
+  任务的全部 gate 都为真 ⇒ 显示；任一为假 ⇒ 隐藏（进度没到）；
+  没有 gate ⇒ 不做条件过滤。
+
+用法：
+    python tools/esm/analyze_ctda.py                 # 统计 + 写 ref/ctda_parsed.json
+    python tools/esm/analyze_ctda.py --task FFConstantZ06
+    python tools/esm/analyze_ctda.py --funcs         # 只打函数索引↔名字对照
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import struct
+import sys
+from collections import Counter, defaultdict
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+REF = ROOT / "ref"
+
+# Windows 控制台默认 GBK：输出里有 \u2194 之类的字符会 UnicodeEncodeError
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+# 保守求值子集（DLL 侧可安全求值）
+SUPPORTED = {
+    "GetQuestCompleted",
+    "GetQuestRunning",
+    "GetStageDone",
+    "GetStage",
+    "GetGlobalValue",
+    "GetInFaction",
+}
+
+# gate（进度门槛）支持的函数 → DLL 侧枚举值
+GATE_FUNCS = {
+    "GetQuestRunning": 0,
+    "GetQuestCompleted": 1,
+    "GetStageDone": 2,
+}
+
+FORMID_RE = re.compile(r"\[(?:QUST|NPC_|KYWD|GLOB|FACT|CNDF|LCRT|FLST)?:?([0-9A-F]{8})\]")
+
+
+def build_gate(c: dict, self_formid: int) -> dict | None:
+    """一条 CTDA 能否作为「进度门槛」（见文件头注释）。不能则返回 None。"""
+    if c.get("op") != 0x00:                 # 0x01/0xA0/0xA4 语义未定 ⇒ 放行
+        return None
+    if c.get("runOn") != 0:                 # Run On 必须是 Subject
+        return None
+    name = c.get("name")
+    if name not in GATE_FUNCS:
+        return None
+    cmpv = c.get("cmp")
+    if cmpv not in (0.0, 1.0):
+        return None
+    p1 = c.get("p1", 0)
+    if p1 == self_formid:                   # 自引用 = 启动守卫，不是进度门槛
+        return None
+    if (p1 >> 24) != 0:                     # 只支持 base 游戏空间（Starfield.esm）的引用
+        return None
+    return {
+        "func": GATE_FUNCS[name],
+        "name": name,
+        "want": 1 if cmpv == 1.0 else 0,    # 1 = 「应为真」，0 = 「应为假」
+        "quest_master": 0,                  # 目前全部是 Starfield.esm（kQuestMasters[0]）
+        "quest_local": p1 & 0xFFFFFF,
+        "stage": (c.get("p2", 0) & 0xFFFF) if name == "GetStageDone" else 0,
+    }
+
+
+def parse_ctda(raw_hex: str) -> dict:
+    b = bytes.fromhex(raw_hex)
+    if len(b) < 32:
+        return {"raw": raw_hex, "len": len(b)}
+    op = b[0]
+    cmp_val = struct.unpack_from("<f", b, 4)[0]
+    func = struct.unpack_from("<H", b, 8)[0]
+    p1 = struct.unpack_from("<I", b, 12)[0]
+    p2 = struct.unpack_from("<I", b, 16)[0]
+    runon = struct.unpack_from("<I", b, 20)[0]
+    ref = struct.unpack_from("<I", b, 24)[0]
+    p3 = struct.unpack_from("<i", b, 28)[0]
+    return {
+        "op": op,
+        "cmp": round(cmp_val, 6),
+        "func": func,
+        "p1": p1,
+        "p2": p2,
+        "runOn": runon,
+        "ref": ref,
+        "p3": p3,
+        "len": len(b),
+    }
+
+
+def formid_of(xedit_param: str) -> int | None:
+    m = FORMID_RE.search(xedit_param)
+    if m:
+        return int(m.group(1), 16)
+    return None
+
+
+def load():
+    quests = json.loads((REF / "quests.json").read_text(encoding="utf-8"))
+    parsed = json.loads((REF / "quests_parsed.json").read_text(encoding="utf-8"))
+    return quests, parsed
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--task", default=None, help="只看某任务的解析结果（EDID 子串）")
+    ap.add_argument("--funcs", action="store_true", help="只打函数索引↔名字对照")
+    ap.add_argument("--json", default=str(REF / "ctda_parsed.json"))
+    a = ap.parse_args()
+
+    # ★ 独立于表生成物：以 quests_parsed.json（xEdit 解码）为准、quests.json（原始字节）配对。
+    #   （早期版本用 quest_table_debug.json 限定候选 —— 那会造成「生成器 ↔ 分析器」循环依赖。）
+    quests, parsed = load()
+    raw_by_fid = {q["formid"]: q for q in quests}
+
+    func_names: dict[int, Counter] = defaultdict(Counter)   # index -> {name: n}
+    op_counter = Counter()
+    runon_counter = Counter()
+    out = []
+
+    for p in parsed:
+        fid = int(p["formid"], 16)
+        r = raw_by_fid.get(fid)
+        if not r:
+            continue
+        rc = p.get("record_conditions") or []
+        raws = r.get("ctda") or []
+        conds = []
+        for i, xc in enumerate(rc):
+            if i >= len(raws):
+                break
+            pr = parse_ctda(raws[i])
+            name = xc.get("Function", "?")
+            pr["name"] = name
+            pr["x_type"] = xc.get("Type")
+            pr["x_runon"] = xc.get("Run On")
+            func_names[pr.get("func", -1)][name] += 1
+            op_counter[pr.get("op")] += 1
+            runon_counter[xc.get("Run On")] += 1
+            # 与 xEdit 的 Parameter #1 FormID 对照（校验解析正确性）
+            xp1 = formid_of(xc.get("Parameter #1", ""))
+            if xp1 is not None and xp1 != pr.get("p1"):
+                pr["p1_mismatch"] = f"xedit=0x{xp1:08X}"
+            conds.append(pr)
+        if conds:
+            supported = all(cc["name"] in SUPPORTED for cc in conds)
+            gates = [g for g in (build_gate(cc, fid) for cc in conds) if g]
+            out.append({
+                "edid": p.get("edid"),
+                "formid": fid,
+                "master": r.get("master", "Starfield.esm"),
+                "qtype": (p.get("qtyp") or "").split('"')[1] if '"' in (p.get("qtyp") or "") else p.get("qtyp"),
+                "supported": supported,
+                "gates": gates,
+                "conditions": conds,
+            })
+
+    if a.funcs:
+        for idx in sorted(func_names):
+            names = ", ".join(f"{n}×{k}" for n, k in func_names[idx].most_common())
+            print(f"  0x{idx:04X} ({idx:5d})  {names}")
+        return 0
+
+    if a.task:
+        needle = a.task.lower()
+        for t in out:
+            if needle in t["edid"].lower():
+                print(json.dumps(t, ensure_ascii=False, indent=1))
+        return 0
+
+    (REF / "ctda_parsed.json").write_text(
+        json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")
+
+    # ★ 进度门槛（gate）：真正用来「进度没到不显示」的数据（gen_quest_table.py 读它）
+    gates_out = [{"edid": t["edid"], "formid": t["formid"], "master": t["master"],
+                  "gates": t["gates"]} for t in out if t["gates"]]
+    (REF / "ctda_gates.json").write_text(
+        json.dumps(gates_out, ensure_ascii=False, indent=1), encoding="utf-8")
+
+    print(f"候选 261 条：带记录级条件 {len(out)} 条")
+    sup = [t for t in out if t["supported"]]
+    unsup = [t for t in out if not t["supported"]]
+    print(f"  ├─ 条件全部在保守子集内（可求值）：{len(sup)} 条")
+    print(f"  └─ 含不支持函数（放行）：{len(unsup)} 条")
+    print("\n--- 可求值的任务（进度没到即隐藏的候选） ---")
+    for t in sup:
+        fns = [f"{c['name']}" for c in t["conditions"]]
+        print(f"  {t['edid']:<34} {t['qtype']:<10} {' ; '.join(fns)}")
+    print("\n--- 不支持 → 放行 ---")
+    for t in unsup:
+        fns = sorted({c["name"] for c in t["conditions"]})
+        print(f"  {t['edid']:<34} {' ; '.join(fns)}")
+
+    print(f"\n=== 进度门槛（gate）：{len(gates_out)} 条任务 ===")
+    for t in gates_out:
+        gs = []
+        for g in t["gates"]:
+            q = f"{g['name']}(0x{g['quest_local']:06X}"
+            if g["name"] == "GetStageDone":
+                q += f", stage {g['stage']}"
+            q += f") == {g['want']}"
+            gs.append(q)
+        print(f"  {t['edid']:<34} {' AND '.join(gs)}")
+
+    print("\n--- operator 字节分布 ---")
+    for k, v in op_counter.most_common():
+        print(f"  0x{k:02X}: {v}")
+    print("\n--- Run On 分布 ---")
+    for k, v in runon_counter.most_common():
+        print(f"  {k}: {v}")
+    print("\n--- 函数索引 ↔ 名字（出现过的） ---")
+    for idx in sorted(func_names):
+        names = ", ".join(f"{n}×{k}" for n, k in func_names[idx].most_common())
+        print(f"  0x{idx:04X} ({idx:5d})  {names}")
+
+    mism = [(t["edid"], cc.get("p1_mismatch"))
+            for t in out for cc in t["conditions"] if cc.get("p1_mismatch")]
+    if mism:
+        print(f"\n⚠ p1 对照不一致 {len(mism)} 处（检查解析布局）：")
+        for e, m in mism[:20]:
+            print(f"  {e}: {m}")
+    else:
+        print("\np1 与 xEdit 对照：全部一致（布局解析正确）")
+    print(f"\nwrote {a.json}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

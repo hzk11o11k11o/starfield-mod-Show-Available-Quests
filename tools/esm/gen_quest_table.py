@@ -226,6 +226,20 @@ def load_guide_targets(path: Path) -> dict[int, dict]:
     return {int(k): v for k, v in raw.items()}
 
 
+def load_gates(path: Path) -> dict[int, list[dict]]:
+    """进度门槛表（tools/esm/analyze_ctda.py 生成；没有 ⇒ 不做条件过滤）。
+
+    ★ 第 35 轮：「游戏进度还不能让玩家接到 ⇒ 不显示」的离线判据。
+    只有「引用别的任务」的 GetQuestRunning/GetQuestCompleted/GetStageDone（等于比较）
+    才算门槛（自引用是引擎启动守卫，不算 —— 见 analyze_ctda.py 头注释）。
+    """
+    if not path.exists():
+        print(f"（没有 {path} —— 进度门槛为空，先跑 tools/esm/analyze_ctda.py）")
+        return {}
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    return {int(t["formid"]): t.get("gates", []) for t in raw}
+
+
 def master_strings_key(master: str) -> str:
     """master 名 -> 字符串表前缀：ShatteredSpace.esm -> shatteredspace（与游戏内文件名一致）。"""
     return Path(master).stem.lower()
@@ -237,6 +251,8 @@ def main() -> int:
                     help="quest_dump.py 的多 master 导出（老的单文件导出也能用）")
     ap.add_argument("--strings-dir", default="ref/strings/strings")
     ap.add_argument("--guide-targets", default="ref/guide_targets.json")
+    ap.add_argument("--gates", default="ref/ctda_gates.json",
+                    help="进度门槛（analyze_ctda.py 产物；决定「进度没到不显示」）")
     ap.add_argument("--out-header", default="plugin/src/SAQ_QuestTable.h")
     ap.add_argument("--out-json", default="ref/quest_table_debug.json")
     ap.add_argument("--out-as3", default="ui/missionmenu/saqdata/SaqEmbeddedPayload.inc")
@@ -363,6 +379,35 @@ def main() -> int:
 
     print(f"table rows: {len(rows)}（无类型 {skipped_no_type}，主线 {skipped_main}）；"
           f"其中带引导目标 {n_guide} 条（{n_guide * 100 // max(len(rows), 1)}%）")
+
+    # ★ 第 35 轮：进度门槛（「游戏进度还不能让玩家接到 ⇒ 不显示」）
+    #   数据链：xEdit 条件 dump → analyze_ctda.py（提取外部引用门槛）→ 这里平铺进表。
+    gates_by_fid = load_gates(Path(a.gates))
+    cond_flat: list[tuple[int, int, int, int, int]] = []
+    n_gate_tasks = 0
+    for r in rows:
+        gs = gates_by_fid.get(r["formid"], [])
+        gs = [g for g in gs if 0 <= int(g.get("quest_master", 0)) < len(masters)]
+        r["cond_begin"] = len(cond_flat)
+        r["cond_count"] = len(gs)
+        r["cond_gates"] = gs
+        if gs:
+            n_gate_tasks += 1
+        for g in gs:
+            cond_flat.append((int(g["quest_local"]) & 0xFFFFFF, int(g["quest_master"]),
+                              int(g["func"]), int(g["want"]), int(g.get("stage", 0)) & 0xFFFF))
+    print(f"进度门槛：{n_gate_tasks} 条任务 / {len(cond_flat)} 条条件")
+    for r in rows:
+        if r["cond_count"]:
+            desc = []
+            for g in r["cond_gates"]:
+                name = ("Running", "Completed", "StageDone")[int(g["func"])]
+                if int(g["func"]) == 2:
+                    desc.append(f"{name}(0x{int(g['quest_local']):06X},{g['stage']})=={g['want']}")
+                else:
+                    desc.append(f"{name}(0x{int(g['quest_local']):06X})=={g['want']}")
+            print(f"  {r['edid']:<34} {' AND '.join(desc)}")
+
     per_master = Counter(r["master"] for r in rows)
     print("按 master：" + " ".join(f"{m}={per_master[m]}" for m in masters))
     kind_count: dict[str, int] = {}
@@ -418,11 +463,45 @@ def main() -> int:
     lines.append("\t\t// ★ 引用也可能属于别的 master（DLC 任务引用基础游戏的 NPC），所以带下标。")
     lines.append("\t\tstd::uint32_t guideRefLocal;")
     lines.append("\t\tstd::uint8_t  guideRefMaster;")
+    lines.append("\t\t// ★ 第 35 轮：进度门槛切片（见下方 kQuestConds 与 docs/08）——")
+    lines.append("\t\t//   condCount > 0 时：全部门槛为真 ⇒ 显示；任一为假 = 「进度没到」⇒ 隐藏。")
+    lines.append("\t\t//   condCount == 0 ⇒ 这条任务不做条件过滤（无门槛 / 门槛不可求值）。")
+    lines.append("\t\tstd::uint32_t condBegin;")
+    lines.append("\t\tstd::uint8_t  condCount;")
     lines.append("\t\tconst char*   whereEn;  // 目标所在地（城市/飞船），日志与 UI 提示用")
     lines.append("\t\tconst char*   whereZh;")
     lines.append("\t\tconst char*   nameEn;")
     lines.append("\t\tconst char*   nameZh;")
     lines.append("\t};")
+    lines.append("")
+    lines.append("\t// 进度门槛（第 35 轮，「游戏进度还不能让玩家接到 ⇒ 不显示」）：")
+    lines.append("\t//   任务记录级条件（CTDA）里「引用别的任务」的进度检查，")
+    lines.append("\t//   只收 GetQuestRunning / GetQuestCompleted / GetStageDone（等于比较、Run On=Subject）。")
+    lines.append("\t//   自引用条件（GetQuestRunning(自己)==0 之类）是引擎启动流程的防重入守卫，")
+    lines.append("\t//   **不算门槛**（第 11 轮教训：RAD05 引擎提前 started、条件为假但玩家仍能接到）。")
+    lines.append("\t//   数据链：xEdit dump → tools/esm/analyze_ctda.py（ctda_gates.json）→ 本表。")
+    lines.append("\tenum CondCheck : std::uint8_t")
+    lines.append("\t{")
+    lines.append("\t\tkCondRunning   = 0,  // 目标任务的 IsRunning")
+    lines.append("\t\tkCondCompleted = 1,  // 目标任务的 IsCompleted")
+    lines.append("\t\tkCondStageDone = 2,  // 目标任务的 stage 已完成（引擎 IsStageDone）")
+    lines.append("\t};")
+    lines.append("\tstruct StaticCondGate")
+    lines.append("\t{")
+    lines.append("\t\tstd::uint32_t questLocal;   // 被检查的任务（记录号）")
+    lines.append("\t\tstd::uint8_t  questMaster;  // kQuestMasters[] 下标")
+    lines.append("\t\tstd::uint8_t  check;        // CondCheck")
+    lines.append("\t\tstd::uint8_t  want;         // 期望值：函数结果 == want ⇒ 本条通过")
+    lines.append("\t\tstd::uint16_t stage;        // 仅 kCondStageDone 用")
+    lines.append("\t};")
+    lines.append("\tinline constexpr StaticCondGate kQuestConds[] = {")
+    if cond_flat:
+        for (ql, qm, chk, want, stage) in cond_flat:
+            lines.append(f"\t\t{{ 0x{ql:08X}u, {qm}u, {chk}u, {want}u, {stage}u }},")
+    else:
+        lines.append("\t\t{ 0u, 0u, 0u, 0u, 0u },  // 占位（表为空时 MSVC 不允许零长数组）")
+    lines.append("\t};")
+    lines.append(f"\tinline constexpr std::size_t kQuestCondCount = {len(cond_flat)};")
     lines.append("")
     lines.append(f"\tinline constexpr StaticQuestInfo kQuestTable[] = {{")
     for r in rows:
@@ -430,6 +509,7 @@ def main() -> int:
         lines.append(
             f'\t\t{{ 0x{int(r["local"]):08X}u, {master_idx[r["master"]]}u, {r["itype"]}u,'
             f' 0x{flags:08X}u, 0x{int(r["guide_ref"]):08X}u, {int(r["guide_master"])}u,'
+            f' {int(r.get("cond_begin", 0))}u, {int(r.get("cond_count", 0))}u,'
             f' "{c_escape(r["guide_where_en"])}", "{c_escape(r["guide_where_zh"])}",'
             f' "{c_escape(r["name_en"])}", "{c_escape(r["name_zh"])}" }},'
         )

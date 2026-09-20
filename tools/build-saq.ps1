@@ -54,6 +54,13 @@ if (-not $SkipTable) {
     Step '1/6' '生成引导目标表（gen_guide_targets.py，扫全部 master，约 3-6 分钟）'
     & python (Join-Path $root 'tools\esm\gen_guide_targets.py') | Write-Host
     if ($LASTEXITCODE -ne 0) { throw "gen_guide_targets.py 失败（exit $LASTEXITCODE）" }
+    # ★ 第 35 轮：进度门槛（「游戏进度还不能让玩家接到 ⇒ 不显示」）——
+    #   analyze_ctda.py 从 xEdit 条件 dump（ref\xedit\quests_typed.txt → quests_parsed.json）
+    #   与原始字节（ref\quests.json）里提取「引用别的任务」的进度检查 → ref\ctda_gates.json。
+    #   依赖的 dump 是离线历史产物；要刷新先跑 tools\run-xedit-quests.ps1 + parse_xedit_dump.py。
+    Step '1/6' '提取进度门槛（analyze_ctda.py → ref\ctda_gates.json）'
+    & python (Join-Path $root 'tools\esm\analyze_ctda.py') | Write-Host
+    if ($LASTEXITCODE -ne 0) { throw "analyze_ctda.py 失败（exit $LASTEXITCODE）" }
     Step '1/6' '生成静态任务表（gen_quest_table.py）'
     & python (Join-Path $root 'tools\esm\gen_quest_table.py') | Write-Host
     if ($LASTEXITCODE -ne 0) { throw "gen_quest_table.py 失败（exit $LASTEXITCODE）" }

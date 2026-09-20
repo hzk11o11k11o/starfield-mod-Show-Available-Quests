@@ -29,6 +29,9 @@
            就是这么写的；实机 `marker 0` 说明缺它时引擎不并入我们的 CellChildren 组。
            DLL 侧修「静态表只在开菜单时建」（菜单关着时的认领此前三条反查全落空 ⇒
            第 32 轮的自愈形同虚设）
+  第 35 轮：★ 进度门槛（「游戏进度还不能让玩家接到 ⇒ 不显示」）——
+           DLL 求值/统计/名单文案 + 开关（ini [Filter] ProgressCond）+
+           静态表数据侧（StaticCondGate / kQuestCondCount / 被检查任务记录号）
 
 用法：python tools/ui/verify_saq_build.py
 """
@@ -331,6 +334,12 @@ def main() -> int:
             #   第 32 轮的自愈形同虚设 —— 13:43 会话实证）
             "静态表预建日志": "静态表已就绪（菜单关着时预建".encode(),
             "静态表未就绪日志": "静态表尚未就绪".encode(),
+            # ★ 第 35 轮：进度门槛（「游戏进度还不能让玩家接到 ⇒ 不显示」）
+            "进度门槛统计": "进度门槛=".encode(),
+            "进度没到名单": "进度没到: ".encode(),
+            "进度门槛开关(ini)": "ProgressCond".encode(),
+            "进度门槛切片越界保护": "门槛切片越界".encode(),
+            "IsStageDone 不可用提示": "IsStageDone 不可用".encode(),
         }.items():
             all_ok &= check(f"DLL · {name}", blob, needle)
         # 反向检查：第 31 轮把候选链顺序换掉，第 30 轮的「marker 优先」诊断文案不应再出现
@@ -382,6 +391,41 @@ def main() -> int:
         all_ok &= check("PEX · 引导目标高位属性", blob, b"GuidePrefix")
     else:
         print(f"MISS 缺少 PEX {pex}")
+        all_ok = False
+
+    # ★ 第 35 轮：进度门槛的**数据侧**校验（生成物 plugin/src/SAQ_QuestTable.h）——
+    #   7 条 gated 任务 / 9 条条件（tools/esm/analyze_ctda.py → ctda_gates.json →
+    #   gen_quest_table.py）。被检查任务的记录号必须是真正被引用的那几条。
+    table_h = ROOT / "plugin/src/SAQ_QuestTable.h"
+    if table_h.exists():
+        blob = table_h.read_text(encoding="utf-8")
+        for name, needle in {
+            "门槛结构 StaticCondGate": "struct StaticCondGate",
+            "门槛枚举 kCondStageDone": "kCondStageDone = 2",
+            "被检查任务 UC04(0x2AAE8D)": "0x002AAE8D",
+            "被检查任务 UC01(0x2C5401)": "0x002C5401",
+            "被检查任务 Botany02(0x27071B)": "0x0027071B",
+            "被检查任务 City_Neon_Gang03(0x2250C4)": "0x002250C4",
+        }.items():
+            ok = needle in blob
+            print(("OK  " if ok else "MISS") + f" 静态表 · {name}")
+            all_ok &= ok
+        key = "kQuestCondCount = "
+        idx = blob.find(key)
+        n = 0
+        if idx >= 0:
+            digits = ""
+            for ch in blob[idx + len(key):]:
+                if ch.isdigit():
+                    digits += ch
+                else:
+                    break
+            n = int(digits) if digits else 0
+        ok = n > 0
+        print(("OK  " if ok else "MISS") + f" 静态表 · 门槛计数非空（kQuestCondCount = {n}）")
+        all_ok &= ok
+    else:
+        print(f"MISS 缺少 {table_h}")
         all_ok = False
 
     # ★ 第 20 轮：ESM 里的测试开关 GLOB（控制台 `set SAQ_TestMode to N` 的落点）
