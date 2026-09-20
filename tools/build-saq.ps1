@@ -58,6 +58,11 @@ if (-not $SkipTable) {
     & python (Join-Path $root 'tools\esm\gen_quest_table.py') | Write-Host
     if ($LASTEXITCODE -ne 0) { throw "gen_quest_table.py 失败（exit $LASTEXITCODE）" }
     Ok 'plugin\src\SAQ_QuestTable.h'
+    # ★ 第 27 轮：无限任务入口（任务板）条目表（扫 Starfield.esm 的世界引用，约 1~2 分钟）
+    Step '1/6' '生成入口条目表（gen_entry_table.py：任务板引用）'
+    & python (Join-Path $root 'tools\esm\gen_entry_table.py') | Write-Host
+    if ($LASTEXITCODE -ne 0) { throw "gen_entry_table.py 失败（exit $LASTEXITCODE）" }
+    Ok 'plugin\src\SAQ_EntryTable.h'
 } else { Step '1/6' '跳过静态表生成' }
 
 # --- 2. ESM ------------------------------------------------------------------

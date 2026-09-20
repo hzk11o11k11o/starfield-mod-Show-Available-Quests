@@ -10,6 +10,7 @@
   活动 / 事件任务（非主线）集中列出来。选中条目后，可以用游戏原生的引导
   系统（任务目标蓝点 + 扫描仪路径线）导航到接取地点。
   · 已经完成的、以及已在任务日志里的任务会自动隐藏
+  · 汇总「无限任务」的接取入口（12 处任务板），点一下就能导航过去
   · 没有导航目标的任务会明确提示（按钮置灰），不会误导
   · 中文 / 英文游戏都支持；自动适配官方 DLC（未安装的 DLC 不会显示其任务）
 
@@ -36,16 +37,18 @@
   打开任务菜单（TAB）→ 切换到「可接任务」标签页 → 选中一条任务 →
   按引导键（如 SET COURSE）即可导航。再按一次取消引导。
   被引导的任务一旦接取，引导会自动取消。
+  列表末尾还有「任务板 · XX」入口条目（无限任务 / 悬赏的接取点），用法相同。
+  提示：引导在关闭任务菜单后生效（与原版一致，HUD 蓝点要关菜单才可见）。
 
 五、可选设置（一般无需改动）
   文件：SFSE\Plugins\SAQ_ShowAvailableQuests.ini
-  内含测试过滤开关（只显示有目标 / 无目标 / DLC ……），默认关闭。
+  内含测试过滤开关（只显示有目标 / 无目标 / DLC / 任务板入口 ……），默认关闭。
 
 六、已知限制
   · 少量任务（261 条中的 52 条）暂时没有可用的导航目标：界面会如实提示，
     不会假装能引导。
-  · 无限生成任务本身不显示；其接取入口（任务板 / 提供任务的 NPC）作为
-    独立条目的功能尚在规划中。
+  · 无限生成任务本身不显示，但其接取入口（12 处任务板）会作为独立条目列出；
+    个别入口在你离得很远时可能暂时无法导航（界面会如实提示，靠近后重试即可）。
   · 「游戏进度还没到时应当不显示」目前只按「已完成」判断，尚未按任务
     前置条件过滤。
   · 本 mod 会覆盖 Interface\missionmenu.swf 与 missionmenu_lrg.swf：
@@ -69,6 +72,8 @@
   guidance (quest marker + scanner route line) to navigate to the quest
   giver.
   · Already-completed quests and quests already in your log are hidden
+  · Pickup points of radiant quests are included: 12 mission boards, one
+    click to navigate
   · Quests without a navigation target are clearly flagged (button greyed
     out) instead of silently failing
   · Works with Chinese and English games; official DLC aware (quests from
@@ -100,17 +105,23 @@
   select a quest -> press the guidance button (e.g. SET COURSE) to
   navigate. Press again to cancel. Guidance is cancelled automatically
   once you accept the quest.
+  The list also ends with "Mission Board - XX" entries (pickup points of
+  radiant quests) - same usage.
+  Note: guidance applies after you close the mission menu (same as
+  vanilla; the HUD marker only appears outside menus).
 
 5. Optional settings
   File: SFSE\Plugins\SAQ_ShowAvailableQuests.ini
-  Contains a test filter (only with target / without target / DLC only…),
-  off by default.
+  Contains a test filter (only with target / without target / DLC only /
+  mission boards only…), off by default.
 
 6. Known limitations
   · 52 of 261 quests currently have no usable navigation target; the UI
     says so honestly instead of pretending.
-  · Radiant (infinite) quests are not listed; showing their givers
-    (mission boards / NPCs) as entries is planned.
+  · Radiant (infinite) quests themselves are not listed, but their pickup
+    points (12 mission boards) are listed as entries; an entry may be
+    temporarily un-navigable while you are far away (the UI says so - try
+    again once you are closer).
   · "Not shown when your progress is not far enough" is currently based
     only on the completed state, not on quest preconditions.
   · This mod overrides Interface\missionmenu.swf and

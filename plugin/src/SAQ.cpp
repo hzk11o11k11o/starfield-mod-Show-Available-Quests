@@ -32,6 +32,7 @@
 #include "SAQ_QuestState.h"  // TESQuest 运行时状态（已开始/已完成/追踪中）
 #include "SAQ_UI.h"          // UI 通道（菜单表 → IMenu → Movie → ASMovieRoot）
 #include "SAQ_QuestTable.h"  // 生成物：master + 记录号 -> 中/英文名 + 类型 + 引导目标（tools/esm/gen_quest_table.py）
+#include "SAQ_EntryTable.h"  // 生成物：无限任务入口（任务板）条目（tools/esm/gen_entry_table.py）
 
 #include "RE/B/BSFixedString.h"
 #include "RE/B/BSTEvent.h"
@@ -65,6 +66,12 @@ namespace SAQ
 	{
 		constexpr const char* kMenuName = "BSMissionMenu";  // 原版任务菜单
 		constexpr std::int32_t kAvailableQuestType = 6;     // AS3：QuestUtils.AVAILABLE_QUEST_TYPE
+
+		// ★ 第 27 轮：无限任务入口（任务板）—— payload 的 type 列用这个值，AS3 侧据此
+		//   换文案（子项「前往任务板」+ 专用描述），普通任务不会用到 100。
+		constexpr std::int32_t kEntryQuestType = 100;
+		// 测试模式 5 = 只显示入口条目（在列表里单独验证任务板入口，不受 260 条任务干扰）。
+		constexpr int kEntryOnlyTestMode = 5;
 
 		// ==================================================================
 		// 编译期 ID 审计（别删！）
@@ -107,6 +114,7 @@ namespace SAQ
 			std::size_t tracked{};            // 正被玩家追踪
 			std::size_t hidden{};             // 因运行时状态被剔掉的
 			std::size_t testFiltered{};       // ★ 第 20 轮：被控制台测试模式（SAQ_TestMode）过滤掉的
+			std::size_t entries{};            // ★ 第 27 轮：这次加入的「无限任务入口」（任务板）条数
 			std::size_t skippedMaster{};      // 所属 master 没加载（DLC 没装/没启用）而跳过的
 			bool        filterApplied{};      // 这次到底有没有按运行时状态过滤
 			std::string samples;              // 被剔掉的前几条（名字 + 状态）
@@ -278,6 +286,9 @@ namespace SAQ
 		//
 		// 只影响「显示哪些」—— 与既有过滤（已完成 / master 未加载 / 玩家日志）是
 		// 「与」的关系，不改变任何既有判定。GLOB 不存在（旧 ESM）⇒ 模式 0。
+		//
+		// ★ 第 27 轮：N=5 = 只显示「无限任务入口」（任务板）条目 —— 验证任务板入口时
+		//   不受 260 条任务干扰（见 CollectAvailableQuests 里的 kEntryOnlyTestMode 分支）。
 		// ------------------------------------------------------------------
 		bool PassesTestFilter(const StaticQuestInfo& a_info, int a_mode)
 		{
@@ -293,6 +304,8 @@ namespace SAQ
 			default:
 				return true;  // 0 / 未知值 = 不过滤
 			}
+			// 模式 5 不在这里处理：它在 CollectAvailableQuests 里让整段任务循环都不跑
+			// （只加入口条目），不依赖逐条判定。
 		}
 
 		std::string_view TestModeNote(int a_mode)
@@ -302,6 +315,7 @@ namespace SAQ
 			case 2: return "只显示「没有引导目标」的条目（测界面回滚）";
 			case 3: return "只显示 DLC 条目";
 			case 4: return "只显示「有引导目标 + 有具名地点」的条目";
+			case 5: return "只显示「无限任务入口」（任务板）条目";
 			default: return "关闭（显示全部）";
 			}
 		}
@@ -342,6 +356,7 @@ namespace SAQ
 				";   2 = 只显示「没有引导目标」的任务（52 条，测界面回滚）\r\n"
 				";   3 = 只显示 DLC 任务（59 条）\r\n"
 				";   4 = 只显示「有引导目标 + 有具名地点」的任务（85 条，最少最好找）\r\n"
+				";   5 = 只显示「无限任务入口」（任务板，12 条）—— 验证任务板条目的显示与引导\r\n"
 				"; 控制台（如果你的游戏认 `set SAQ_TestMode to N`）非 0 时优先于本文件。\r\n"
 				"[Test]\r\n"
 				"Mode=0\r\n";
@@ -371,10 +386,34 @@ namespace SAQ
 			if (!path.empty()) {
 				const int v = static_cast<int>(::GetPrivateProfileIntW(L"Test", L"Mode", 0, path.c_str()));
 				if (v > 0) {
-					return { v > 4 ? 0 : v, "ini" };  // 未知值按 0（不过滤）处理
+					return { v > 5 ? 0 : v, "ini" };  // 未知值按 0（不过滤）处理（第 27 轮上限 4→5）
 				}
 			}
 			return { 0, "默认" };
+		}
+
+		// ★ 第 27 轮：「无限任务入口」（任务板）条目 —— uID = 引导目标 = 世界引用的运行期 FormID。
+		//
+		// 需求（AGENTS.md）：无限生成任务本身不显示，但「接取入口」（任务板）作为一条
+		// 数据出现在列表里，点了就引导到那块任务板。入口不是 quest，所以不走
+		// 「已完成 / 已接取」那套运行时过滤 —— 任务板常驻在世界里，永远可去。
+		void AppendEntryRows(std::vector<QuestEntry>& a_out, RuntimeFilterStats& a_stats)
+		{
+			for (std::size_t i = 0; i < kEntryTableSize; ++i) {
+				const auto& e = kEntryTable[i];
+				const auto id = Masters::MakeFormID(e.master, e.refLocal);
+				if (id == 0) {
+					continue;  // 所属 master 没加载（入口目前全在基础游戏，理论上不会发生）
+				}
+				QuestEntry entry;
+				entry.formID = id;
+				entry.type = kEntryQuestType;  // AS3：入口条目（子项/描述换文案）
+				entry.hasGuideTarget = true;   // 目标 = 它自己
+				entry.nameZh = e.nameZh;
+				entry.nameEn = e.nameEn;
+				a_out.push_back(std::move(entry));
+				++a_stats.entries;
+			}
 		}
 
 		// 收集"可接任务"候选 + 按运行时状态过滤。
@@ -387,6 +426,7 @@ namespace SAQ
 		//     结果"quest 总数=0"、列表当然是空的，见 docs/02）
 		//   * 引擎**已完成**的 → 剔掉（统计照原样写进日志）
 		//   * 名称中英都带上，AS3 侧按游戏语言挑
+		//   * ★ 第 27 轮：最后追加「无限任务入口」（任务板）条目（见 AppendEntryRows）
 		void CollectAvailableQuests(std::vector<QuestEntry>& a_out, std::size_t& a_totalQuests,
 			RuntimeFilterStats& a_stats, int a_testMode)
 		{
@@ -398,7 +438,7 @@ namespace SAQ
 			a_stats = {};
 			a_stats.skippedMaster = skippedByMaster;
 			a_totalQuests = kQuestTableSize;
-			a_out.reserve(g_runtimeRows.size());
+			a_out.reserve(g_runtimeRows.size() + kEntryTableSize);
 
 			std::size_t hiddenByRuntime = 0;
 			// 第 11 轮：从 5 提到 40 —— 「某条任务为什么不在列表里」要能直接从日志里
@@ -406,7 +446,9 @@ namespace SAQ
 			constexpr std::size_t kMaxSamples = 40;
 			std::size_t sampleCount = 0;
 
-			for (const auto& row : g_runtimeRows) {
+			// ★ 第 27 轮：模式 5（只显示入口条目）跳过整段任务循环（入口在下面单独追加）。
+			const bool entryOnly = (a_testMode == kEntryOnlyTestMode);
+			if (!entryOnly) for (const auto& row : g_runtimeRows) {
 				const auto* form = row.form;
 				const auto& info = *row.info;
 				++a_stats.live;
@@ -476,6 +518,13 @@ namespace SAQ
 			const auto recognizedPct = a_stats.live == 0 ? 100u : static_cast<unsigned>(a_stats.recognized * 100 / a_stats.live);
 			a_stats.filterApplied = recognizedPct >= 80;
 			a_stats.hidden = a_stats.filterApplied ? hiddenByRuntime : 0;
+
+			// ★ 第 27 轮：追加「无限任务入口」（任务板）条目（见 AppendEntryRows）。
+			//   默认模式（0）与「只显示入口」模式（5）显示；其它测试模式 1~4 不加
+			//   （那几种是任务筛选的测试，混进入口条目会干扰验证）。
+			if (a_testMode == 0 || entryOnly) {
+				AppendEntryRows(a_out, a_stats);
+			}
 		}
 
 		// ------------------------------------------------------------------
@@ -535,11 +584,12 @@ namespace SAQ
 		std::string FormatRuntimeStats(const RuntimeFilterStats& a_stats)
 		{
 			std::string out = std::format(
-				"运行时状态：引擎存在={} 虚表识别={} 未识别={} 已开始={} 已完成={} 追踪中={} 隐藏={} 测试过滤={} 跳过(master未加载)={} 过滤={}",
+				"运行时状态：引擎存在={} 虚表识别={} 未识别={} 已开始={} 已完成={} 追踪中={} 隐藏={} 测试过滤={} 跳过(master未加载)={} 入口={} 过滤={}",
 				a_stats.live, a_stats.recognized, a_stats.unrecognized,
 				a_stats.started, a_stats.completed, a_stats.tracked, a_stats.hidden,
 				a_stats.testFiltered,
 				a_stats.skippedMaster,
+				a_stats.entries,  // ★ 第 27 轮：任务板入口条目数
 				a_stats.filterApplied ? "生效" : "跳过(识别率<80%)");
 			if (!a_stats.samples.empty()) {
 				// 完整名单（第 11 轮起不再只记前几条）：玩家反馈「某条任务没显示」时，
@@ -607,7 +657,7 @@ namespace SAQ
 
 			bool menuNotReady = false;
 			if (PushToUI(g_pending.quests, g_pending.attempts == 0 && g_pending.menuWaitTries == 0, menuNotReady)) {
-				const auto n = ++g_pushCount;
+				++g_pushCount;  // 计数（第 27 轮顺手消掉 C4189：原来赋给未使用的局部变量）
 				REX::INFO("菜单打开：静态表={} 引擎里存在={} 推送条数={} (第 {} 次推送成功，另有 {} 次菜单未就绪等待)",
 					g_pending.total, g_pending.stats.live, g_pending.quests.size(),
 					g_pending.attempts + 1, g_pending.menuWaitTries);
@@ -711,7 +761,11 @@ namespace SAQ
 			std::uint32_t verifyTries{};   // 菜单**关着**时的确认次数（菜单开着不计数，第 26 轮）
 			std::uint32_t verifySeq{};     // 这次确认对应的请求序号（防止和自我重试打架）
 			std::uint32_t verifyResends{}; // 状态 2/3 的重发次数（≤2；第 26 轮改为独立计数）
-			bool          verifyWaitLogged{};  // 「菜单还开着，先继续等」说明是否已打过（每请求一次）
+			// ★ 第 27 轮：「菜单还开着，脚本不会响应」的说明是否已打过 —— **每菜单一次**。
+			//   第 26 轮是「每请求一次」，实测 27 秒内切换 12 条条目会打 9 行（纯噪声）：
+			//   既然已实锤「菜单开着时脚本不可能响应」（第 27 轮结论，见 PollGuideVerify），
+			//   每菜单留一行说明就够。在 OnMissionMenuOpened 里重置。
+			bool          verifyWaitNoted{};
 		};
 		GuideRuntime g_guide;
 		constexpr std::uint64_t kGuidePollIntervalMs = 100;
@@ -747,6 +801,30 @@ namespace SAQ
 			return nullptr;
 		}
 
+		// ★ 第 27 轮：入口条目（任务板）反查 —— 条目的 uID 就是世界引用的运行期 FormID。
+		const StaticEntryInfo* FindEntryByFormID(std::uint32_t a_formID)
+		{
+			for (std::size_t i = 0; i < kEntryTableSize; ++i) {
+				const auto& e = kEntryTable[i];
+				if (Masters::MakeFormID(e.master, e.refLocal) == a_formID) {
+					return &e;
+				}
+			}
+			return nullptr;
+		}
+
+		// 引导相关日志的显示名（任务 / 入口条目 / 未知）—— 日志里永远给人看得懂的名字。
+		std::string_view DisplayNameOf(std::uint32_t a_formID)
+		{
+			if (const auto* q = FindStaticQuest(a_formID)) {
+				return q->nameZh;
+			}
+			if (const auto* e = FindEntryByFormID(a_formID)) {
+				return e->nameZh;
+			}
+			return "?";
+		}
+
 		// ESM 通道摘要：只在变化时记一行。成功认领与失败原因都会留证。
 		void LogEsmChannel()
 		{
@@ -771,11 +849,12 @@ namespace SAQ
 				REX::INFO("引导状态：无（还没选过引导目标）｜脚本状态={:.0f}", scriptState);
 				return;
 			}
-			const auto* entry = FindStaticQuest(g_guide.questFormID);
+			// 目标所在地：只有任务表里有这个字段（入口条目没有 —— 显示空串）。
+			const auto* quest = FindStaticQuest(g_guide.questFormID);
 			REX::INFO("引导状态：{}（0x{:08X}）目标引用=0x{:08X} {}｜脚本状态={:.0f}"
 					  "（0 待处理 / 1 已应用 / 2 取不到 / 3 已清除 / 4 别名不存在）",
-				entry ? entry->nameZh : "?", g_guide.questFormID, g_guide.guideRef,
-				entry ? entry->whereZh : "", scriptState);
+				DisplayNameOf(g_guide.questFormID), g_guide.questFormID, g_guide.guideRef,
+				quest ? quest->whereZh : "", scriptState);
 		}
 
 		// ★ 第 16 轮：把引导结果回写给界面（`_root.SAQ_GuideReply`，协议见 MissionMenu.as）。
@@ -813,13 +892,14 @@ namespace SAQ
 		}
 
 		// 安排一次「下发结果确认」（第 17 轮）：900ms 后查脚本状态，见 PollGuideVerify。
+		// ★ 第 27 轮：不再重置 verifyWaitNoted（「菜单还开着」说明是**每菜单一次**，
+		//   由 OnMissionMenuOpened 重置 —— 否则每次切条目都会重新打一行）。
 		void ScheduleGuideVerify(int a_seq)
 		{
 			g_guide.verifyAtMs = NowMs() + kGuideVerifyFirstMs;
 			g_guide.verifyTries = 0;
 			g_guide.verifySeq = static_cast<std::uint32_t>(a_seq);
 			g_guide.verifyResends = 0;
-			g_guide.verifyWaitLogged = false;
 		}
 
 		// ★ 第 19 轮：**脚本活性探测**。
@@ -888,7 +968,6 @@ namespace SAQ
 			if (a_formID == 0) {
 				g_guide.verifyAtMs = 0;  // 取消：没有「结果」要确认
 				g_guide.verifySeq = 0;
-				g_guide.verifyWaitLogged = false;
 				std::string detail;
 				if (Guide::SetGuideTarget(0, detail)) {
 					REX::INFO("引导请求：取消｜{}", detail);
@@ -904,36 +983,49 @@ namespace SAQ
 				return;
 			}
 			const auto* entry = FindStaticQuest(a_formID);
-			if (!entry) {
+			// ★ 第 27 轮：也可能是「无限任务入口」（任务板）条目 —— 它的 uID 在世界引用
+			//   空间，引导目标就是它自己（见 AppendEntryRows / tools/esm/gen_entry_table.py）。
+			const auto* gap = entry ? nullptr : FindEntryByFormID(a_formID);
+			if (!entry && !gap) {
 				REX::WARN("引导请求：静态表里没有 0x{:08X}（是内嵌回退表里的条目？）", a_formID);
 				NotifyGuideReply(a_seq, g_guide.questFormID, 3);
 				return;
 			}
-			if (entry->guideRefLocal == 0) {
-				REX::WARN("引导请求：{}（0x{:08X}）没有引导目标（离线没算出「去哪里接」的引用，见 docs/05）",
-					entry->nameZh, a_formID);
-				NotifyGuideReply(a_seq, g_guide.questFormID, 1);
-				return;
-			}
-			// ★ 第 17 轮：引导目标也是「master + 记录号」，运行期拼成 FormID
-			//（DLC 任务的目标可能在基础游戏里，反之亦然）。
-			const auto guideRefID = Masters::MakeFormID(entry->guideRefMaster, entry->guideRefLocal);
-			if (guideRefID == 0) {
-				REX::WARN("引导请求：{}（0x{:08X}）的引导目标属于未加载的 master（{}）",
-					entry->nameZh, a_formID, Masters::Get(entry->guideRefMaster).name);
-				NotifyGuideReply(a_seq, g_guide.questFormID, 1);
-				return;
+			std::uint32_t guideRefID = 0;
+			std::string_view displayName;
+			const char* whereZh = "";
+			if (entry) {
+				if (entry->guideRefLocal == 0) {
+					REX::WARN("引导请求：{}（0x{:08X}）没有引导目标（离线没算出「去哪里接」的引用，见 docs/05）",
+						entry->nameZh, a_formID);
+					NotifyGuideReply(a_seq, g_guide.questFormID, 1);
+					return;
+				}
+				// ★ 第 17 轮：引导目标也是「master + 记录号」，运行期拼成 FormID
+				//（DLC 任务的目标可能在基础游戏里，反之亦然）。
+				guideRefID = Masters::MakeFormID(entry->guideRefMaster, entry->guideRefLocal);
+				if (guideRefID == 0) {
+					REX::WARN("引导请求：{}（0x{:08X}）的引导目标属于未加载的 master（{}）",
+						entry->nameZh, a_formID, Masters::Get(entry->guideRefMaster).name);
+					NotifyGuideReply(a_seq, g_guide.questFormID, 1);
+					return;
+				}
+				displayName = entry->nameZh;
+				whereZh = entry->whereZh;
+			} else {
+				guideRefID = a_formID;  // 入口条目：任务板引用自身
+				displayName = gap->nameZh;
 			}
 			std::string detail;
 			if (!Guide::SetGuideTarget(guideRefID, detail)) {
-				REX::WARN("引导请求：{}（0x{:08X}）写 ESM 通道失败｜{}", entry->nameZh, a_formID, detail);
+				REX::WARN("引导请求：{}（0x{:08X}）写 ESM 通道失败｜{}", displayName, a_formID, detail);
 				NotifyGuideReply(a_seq, g_guide.questFormID, 2);
 				return;
 			}
 			g_guide.questFormID = a_formID;
 			g_guide.guideRef = guideRefID;
 			REX::INFO("引导请求：{}（0x{:08X}）→ 引用 0x{:08X}（{}）｜{}",
-				entry->nameZh, a_formID, guideRefID, entry->whereZh, detail);
+				displayName, a_formID, guideRefID, whereZh, detail);
 			NotifyGuideReply(a_seq, a_formID, 0);
 			ScheduleGuideVerify(a_seq);
 		}
@@ -950,7 +1042,6 @@ namespace SAQ
 		{
 			const auto questID = g_guide.questFormID;
 			const auto seq = static_cast<int>(g_guide.verifySeq);
-			const auto* entry = FindStaticQuest(questID);
 
 			std::string detail;
 			const bool cleared = Guide::SetGuideTarget(0, detail);
@@ -960,7 +1051,7 @@ namespace SAQ
 			g_guide.verifySeq = 0;
 
 			REX::WARN("引导未生效：{}（0x{:08X}）—— {}；已放弃本次引导（清通道{}）",
-				entry ? entry->nameZh : "?", questID, a_why,
+				DisplayNameOf(questID), questID, a_why,
 				cleared ? "成功" : ("失败: " + detail));
 			if (aMenuOpen) {
 				NotifyGuideReply(seq, 0, 4);  // 4 = 未生效：界面回滚竖条 + OFF 音
@@ -982,6 +1073,22 @@ namespace SAQ
 		//   4 = 别名不存在（ESM 补丁没生效）→ 收尾（重发无用）
 		void PollGuideVerify(bool aMenuOpen)
 		{
+			// ★ 第 27 轮：菜单开着时**完全不做确认轮询**（连 GLOB 都不读）。
+			//
+			//   第 27 轮的日志复查（DLL × Papyrus 交叉）实锤：游戏在任务菜单打开时暂停 ⇒
+			//   Papyrus 的 StartTimer 不走 ⇒ 脚本在菜单开着时**不可能**处理引导请求
+			//   （`引导已应用` 只出现在「菜单关闭」那一刻，三次会话一一对应）。
+			//   于是这里不再每 2 秒读一次状态（第 26 轮的写法会打一串
+			//   「脚本状态还是 0，但菜单还开着」—— 实测 27 秒 9 行，纯噪声）；
+			//   等待中的请求也不会被误判：菜单关闭时 OnMissionMenuClosed 会把确认窗口
+			//   重置为「900ms 首验 + 6×2s」，真正的超时判定只发生在菜单关着时。
+			if (aMenuOpen) {
+				if (g_guide.verifyAtMs != 0 && !g_guide.verifyWaitNoted) {
+					g_guide.verifyWaitNoted = true;
+					REX::INFO("引导确认：菜单还开着 —— 脚本只在菜单关闭时应用引导，关菜单后自动确认（不会判失败）");
+				}
+				return;
+			}
 			if (g_guide.verifyAtMs == 0 || NowMs() < g_guide.verifyAtMs) {
 				return;
 			}
@@ -991,11 +1098,10 @@ namespace SAQ
 				REX::WARN("引导结果确认失败：ESM 通道未认领（ESM 没启用？）");
 				return;
 			}
-			const auto* entry = FindStaticQuest(g_guide.questFormID);
 			const auto again = [&]() { g_guide.verifyAtMs = NowMs() + kGuideVerifyRetryMs; };
 			if (ch.guideState == 1.0f) {
 				REX::INFO("引导已生效：{}（0x{:08X}）脚本状态=1（世界里应该能看到标记/扫描仪路径线）",
-					entry ? entry->nameZh : "?", g_guide.questFormID);
+					DisplayNameOf(g_guide.questFormID), g_guide.questFormID);
 				g_guide.verifySeq = 0;
 				return;
 			}
@@ -1010,33 +1116,13 @@ namespace SAQ
 				if (Guide::SetGuideTarget(g_guide.guideRef, detail)) {
 					REX::INFO("引导重发：{}（0x{:08X}）脚本状态={:.0f}"
 							  "（2=引用当时没加载 / 3=脚本重挂丢了别名），已清 0 让脚本再试｜{}",
-						entry ? entry->nameZh : "?", g_guide.questFormID, ch.guideState, detail);
+						DisplayNameOf(g_guide.questFormID), g_guide.questFormID, ch.guideState, detail);
 				}
 			}
-			// ★ 第 26 轮：**菜单还开着时不判失败**。
-			//
-			// 实测（2026-09-20 10:38~10:58 三个会话 + Papyrus 日志交叉）：
-			//   脚本实例从存档恢复时 OnInit 不跑 ⇒ SAQ_Main 的 StartTimer 从来没注册过
-			//   ⇒ 菜单开着时脚本没有任何轮询机会，引导只在**菜单关闭事件**里被应用一次。
-			//   证据：Papyrus `10:41:56 引导已应用` ↔ DLL `10:41:56.097 菜单关闭`（一一对应），
-			//   而三个会话的 Papyrus 日志里都没有 OnInit、也没有一条「菜单开着时」的引导应用。
-			//
-			// 旧逻辑在菜单开着时也按 ≈11 秒超时收尾 ⇒ 玩家在菜单里挑条目超过 11 秒再关菜单，
-			// 就会被判「引导未生效:脚本未响应」并清掉通道 —— 假失败 + 真失效（实测三次：
-			// 星海派对 / 回收行动 / 失踪的地球人；唯一一次「引导已生效」是因为玩家 1.6 秒内
-			// 就关了菜单）。
-			// 现在：菜单开着 ⇒ 只是继续等（不计数、不 Abort，每个请求说明一次）；
-			//      菜单一关 ⇒ OnMissionMenuClosed 把确认窗口重置，脚本会在关闭事件里应用，
-			//      之后才是真正的超时判定（≈11 秒）。
-			if (aMenuOpen) {
-				if (!g_guide.verifyWaitLogged) {
-					g_guide.verifyWaitLogged = true;
-					REX::INFO("引导确认：脚本状态还是 0，但菜单还开着 —— 脚本只在菜单关闭时应用引导，"
-							  "先继续等待（关菜单后会自动确认，不会判失败）");
-				}
-				again();
-				return;
-			}
+			// ★ 第 26/27 轮：超时判定只发生在**菜单关着**时（菜单开着时的短路在函数开头）。
+			//   历史：第 26 轮修掉「菜单开着 11 秒就判失败」（玩家挑条目久一点 = 假失败 +
+			//   真失效：星海派对 / 回收行动 / 失踪的地球人三次实测）；第 27 轮更进一步 ——
+			//   菜单开着时连状态都不读（脚本不可能响应，读了只是噪声）。
 			if (++g_guide.verifyTries >= kGuideVerifyMaxTries) {
 				AbortUnverifiedGuide(std::format("脚本状态一直是 {:.0f}"
 					"（0 待处理 / 2 取不到 / 3 已清除 —— 看 Papyrus 日志里 SAQ_Main 有没有在跑）",
@@ -1068,6 +1154,15 @@ namespace SAQ
 			}
 			const auto* entry = FindQuestByGuideRef(targetID);
 			if (!entry) {
+				// ★ 第 27 轮：也可能是「无限任务入口」（任务板）—— 目标 = 条目 uID = 引用自身。
+				if (const auto* gap = FindEntryByFormID(targetID)) {
+					g_guide.questFormID = targetID;
+					g_guide.guideRef = targetID;
+					REX::INFO("认领已有引导（任务板入口）：{}（0x{:08X}）｜脚本状态={:.0f}"
+							  "（上一次会话/读档留下的，界面会同步成「正在引导」）",
+						gap->nameZh, targetID, ch.guideState);
+					return;
+				}
 				REX::WARN("ESM 通道里有引导目标 0x{:08X}，但静态表里没有哪条任务的引导目标是它"
 						  "（另一个存档留下的？）—— 已按「没有引导」处理，下次点引导会覆盖它",
 					targetID);
@@ -1149,10 +1244,9 @@ namespace SAQ
 				return;
 			}
 			std::string detail;
-			const auto* entry = FindStaticQuest(g_guide.questFormID);
 			if (Guide::SetGuideTarget(0, detail)) {
 				REX::INFO("引导自动取消：{}（0x{:08X}）已完成（{}）｜{}",
-					entry ? entry->nameZh : "?", g_guide.questFormID, Describe(state), detail);
+					DisplayNameOf(g_guide.questFormID), g_guide.questFormID, Describe(state), detail);
 			}
 			g_guide.questFormID = 0;
 			g_guide.guideRef = 0;
@@ -1181,15 +1275,14 @@ namespace SAQ
 				return;  // 0=待处理（脚本会自己应用）/ 1=已应用（正常）
 			}
 			std::string detail;
-			const auto* entry = FindStaticQuest(g_guide.questFormID);
 			if (!Guide::SetGuideTarget(g_guide.guideRef, detail)) {
 				REX::WARN("引导重新下发失败：{}（0x{:08X}）｜{}",
-					entry ? entry->nameZh : "?", g_guide.questFormID, detail);
+					DisplayNameOf(g_guide.questFormID), g_guide.questFormID, detail);
 				return;
 			}
 			REX::INFO("引导重新下发：{}（0x{:08X}）脚本状态={:.0f}"
 					  "（2=引用当时没加载 / 3=脚本重挂丢了别名），已清 0 让脚本再试｜{}",
-				entry ? entry->nameZh : "?", g_guide.questFormID, ch.guideState, detail);
+				DisplayNameOf(g_guide.questFormID), g_guide.questFormID, ch.guideState, detail);
 		}
 
 		void OnMissionMenuClosed()
@@ -1214,7 +1307,6 @@ namespace SAQ
 			if (g_guide.verifyAtMs != 0) {
 				g_guide.verifyTries = 0;
 				g_guide.verifyResends = 0;
-				g_guide.verifyWaitLogged = false;
 				g_guide.verifyAtMs = NowMs() + kGuideVerifyFirstMs;
 				REX::INFO("引导确认：菜单已关 —— 脚本会在关闭事件里应用引导，{} ms 后开始确认（窗口约 {} 秒）",
 					kGuideVerifyFirstMs,
@@ -1238,6 +1330,9 @@ namespace SAQ
 			g_pending.total = 0;
 			g_pending.backoffMs = kPushRetryIntervalMs;  // 新一轮重试：退避复位
 
+			// ★ 第 27 轮：「菜单还开着，脚本不会响应」说明是**每菜单一次**（见 PollGuideVerify）。
+			g_guide.verifyWaitNoted = false;
+
 			// ★ 第 17 轮：先按**当前加载顺序**把「master + 记录号」解析成运行期 FormID，
 			//   再建运行期行表（没装/没启用的 DLC 在这一步被丢掉）。
 			//   ★ 第 18 轮：解析方式改为「前缀探测」（不再读 TESDataHandler —— 它的结构体
@@ -1248,7 +1343,8 @@ namespace SAQ
 			const auto masters = BuildRuntimeRows(g_pending.stats);
 			CollectAvailableQuests(g_pending.quests, g_pending.total, g_pending.stats, testMode.mode);
 			const auto collectCost = NowMs() - t0;
-			REX::INFO("数据源：{}", masters);
+			// ★ 第 27 轮：入口条目表（任务板）一并报出来 —— 排查「任务板没显示」先看这里。
+			REX::INFO("数据源：{}；入口条目表={} 条（任务板）", masters, kEntryTableSize);
 			if (testMode.mode > 0) {
 				// 测试模式醒目提示（只在开启时打 —— 免得玩家忘了关、以为列表坏了）
 				REX::INFO("测试模式：{}（{}）[来源={}] —— 控制台 set SAQ_TestMode to 0 或改 ini，均可关闭",
@@ -1271,9 +1367,15 @@ namespace SAQ
 			ArmScriptLiveness();  // ★ 第 19 轮：菜单打开 1.5 秒后复读通知值，验证脚本活性
 			}
 
-		// Tick 停顿检测（第 11 轮）：只在菜单开着时统计（读档/加载时的长停顿不记，免得刷屏）。
-		// 正常帧间隔 ~16ms；若日志里出现「主线程停顿：距上次 Tick 15000 ms」，
-		// 说明阻塞发生在**我们之外**（引擎/Scaleform/其它插件），我们的重试只是被拖慢的受害者。
+		// Tick 停顿检测（第 11 轮；★ 第 27 轮加「有事在等」条件）。
+		//
+		// 目的：当**我们确实有事情在等**（推送重试中 / 引导确认窗口开着）而 Tick 被卡住时，
+		// 日志要能证明「不是我们的重试慢，是主线程被别的东西占了」。
+		//
+		// ★ 第 27 轮修正：原来只要菜单开着、Tick 间隔 >1 秒就记 —— 实测全是噪声：
+		//   7.7s / 8.6s / 14.8s 是玩家在菜单里浏览（我们根本没有任何待办），432s 是挂机/切出
+		//   游戏，而同一会话里推送耗时全是 0~15ms —— 没有一行指向真正的卡顿。
+		//   现在只在 pending/verify 未完成时统计（有那两类日志可交叉验证才值得记）。
 		std::uint64_t s_tickWatermark = 0;
 		constexpr std::uint64_t kTickStallMs = 1000;
 
@@ -1290,11 +1392,13 @@ namespace SAQ
 			const bool open = ui->IsMenuOpen(MenuName());
 			const bool wasOpen = g_menuWasOpen.exchange(open);
 
-			// 停顿检测：菜单开着时，两次 Tick 的间隔超过 1 秒就记一行（含被卡了多久）。
-			if (open) {
+			// 停顿检测：菜单开着、且我们有事在等（推送重试 / 引导确认）时，
+			// 两次 Tick 的间隔超过 1 秒就记一行（含被卡了多久）。见上面的第 27 轮说明。
+			const bool watchStall = open && (!g_pending.done || g_guide.verifyAtMs != 0);
+			if (watchStall) {
 				const auto now = NowMs();
 				if (s_tickWatermark != 0 && now - s_tickWatermark >= kTickStallMs) {
-					REX::WARN("主线程停顿：距上次 Tick {} ms（菜单开着；本行由 SAQ 记录，但停顿多半来自引擎/其它插件）",
+					REX::WARN("主线程停顿：距上次 Tick {} ms（菜单开着且有待办；停顿多半来自引擎/其它插件或切出游戏）",
 						now - s_tickWatermark);
 				}
 				s_tickWatermark = now;

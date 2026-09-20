@@ -28,6 +28,7 @@ Starfield 从不告诉你去哪接任务，全靠自己撞见。这个 mod 在�
 [b]功能[/b]
 [list]
 [*] 集中显示所有可接的非主线任务
+[*] 汇总「无限任务」的接取入口（12 处任务板：新亚特兰蒂斯 / 阿基拉城 / 霓虹城 / 塞多尼亚 / 霍普镇 / 新家园 / 星船厂 / 星钥站……），点一下就能导航过去
 [*] 选中即可调用游戏原生引导，导航到接取地点（蓝点 / 路径线）
 [*] 已完成的、已在任务日志里的任务自动隐藏
 [*] 没有导航目标的任务会明确提示（按钮置灰），不会让你白点
@@ -52,7 +53,8 @@ Starfield 从不告诉你去哪接任务，全靠自己撞见。这个 mod 在�
 [b]已知限制[/b]
 [list]
 [*] 261 条任务中有 52 条暂无导航目标：界面会如实提示，不会假装能引导
-[*] 无限生成任务不显示；其接取入口（任务板 / 提供任务的 NPC）作为独立条目的功能规划中
+[*] 无限生成任务本身不显示，但其接取入口（12 处任务板）作为独立条目列出；个别入口在你离得很远时可能暂时无法导航（界面会如实提示，靠近后重试即可）
+[*] 引导在关闭任务菜单后生效（与原版一致：HUD 蓝点本来就要关菜单才可见）
 [*] 「进度没到就不显示」目前只按「已完成」判断，尚未按任务前置条件过滤
 [*] 会覆盖任务菜单的 UI 文件（missionmenu.swf / missionmenu_lrg.swf），与其它改任务菜单的 mod 需要打补丁
 [/list]
@@ -74,6 +76,7 @@ Starfield never tells you where to pick up quests — you just have to stumble i
 [b]Features[/b]
 [list]
 [*] Lists all available non-main quests in one place
+[*] Includes the pickup points of radiant quests: 12 mission boards (New Atlantis / Akila City / Neon / Cydonia / Hopetown / New Homestead / staryards / The Key...), one click to navigate
 [*] Native guidance: quest marker + scanner route line to the quest giver
 [*] Already-completed quests and quests already in your log are hidden
 [*] Quests with no navigation target are clearly flagged (button greyed out) — no dead ends
@@ -98,7 +101,8 @@ Mission menu (TAB) -> "Available Quests" -> select an entry -> press the guidanc
 [b]Known limitations[/b]
 [list]
 [*] 52 of 261 quests currently have no navigation target; the UI says so honestly
-[*] Radiant quests are not listed; showing their givers (mission boards / NPCs) as entries is planned
+[*] Radiant quests themselves are not listed, but their pickup points (12 mission boards) are listed as entries; an entry may be temporarily un-navigable while you are far away (the UI says so - try again once you are closer)
+[*] Guidance applies after you close the mission menu (same as vanilla: the HUD marker only appears outside menus)
 [*] "Hidden when your progress isn't far enough" is currently based only on the completed state, not on quest preconditions
 [*] Overrides the mission menu UI (missionmenu.swf / missionmenu_lrg.swf): patching needed with other mission-menu mods
 [/list]

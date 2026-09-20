@@ -99,6 +99,11 @@ package
       
       private static const SAQ_TITLE_EN:String = "Available";
       
+      // ★ 第 27 轮：载荷里 type == 这个值 = 「无限任务入口」（任务板）条目。
+      //   这类条目的 uID 是世界引用的 FormID（不是任务），子项与描述用专门文案
+      //   （见 SaqBuildObjective / SaqDescriptionText）。
+      private static const SAQ_ENTRY_TYPE:int = 100;
+      
       private static const SAQ_EMBEDDED_CHUNKS:Array = [/*__SAQ_EMBEDDED__*/];
       
       public var UniversalBackButton_mc:BSButton;
@@ -586,7 +591,10 @@ package
             "uInstanceID":0,
             "iType":SaqSafeType(param1.iType),
             "iFaction":FactionUtils.FACTION_NONE,
-            "sName":this.SaqUseChinese() ? "前往接取地点" : "Reach the pickup location",
+            // ★ 第 27 轮：入口条目（任务板）的子项名不同 —— 它不是「任务」而是「入口」。
+            "sName":param1.iType == SAQ_ENTRY_TYPE
+               ? (this.SaqUseChinese() ? "前往任务板" : "Go to the mission board")
+               : (this.SaqUseChinese() ? "前往接取地点" : "Reach the pickup location"),
             "sDescription":"",
             "bComplete":false,
             "bFailed":false,
@@ -602,20 +610,11 @@ package
          };
       }
       
-      // 右侧详情面板里的描述文案（固定内容，告诉玩家这条记录怎么用）。
-      // 键名从当前控制映射动态取（与底部按钮栏同一来源：键盘 = R「设定航线」，手柄 = 手柄 X 键）。
+      // 「设定航线」在当前控制映射下的键名（键盘 = R，手柄 = 手柄 X 键）；取不到返回 ""。
       // ★ 第 15 轮修正：不要写死键名 —— 事件名 "XButton" 是**手柄 X 按钮**，键盘下它映射到 R，
       //   写死「X 键」会让提示指向一个游戏里不存在的交互。
-      private function SaqDescriptionText(param1:Boolean) : String
+      private function SaqCourseKeyName() : String
       {
-         // ★ 第 23 轮：没有引导目标的任务（261 条里 52 条）——列表照常显示，但**无法导航**。
-         //   把原因直接写进描述，玩家不用点一下才知道（此前「点了瞬间回滚」看不出原因）。
-         if(param1 != true)
-         {
-            return this.SaqUseChinese()
-               ? "这条任务当前可以接取，但还没有导航目标 —— 暂时无法引导到接取地点（任务本身照常显示）。"
-               : "This quest is available, but it has no navigation target yet - it cannot guide you to the pickup location.";
-         }
          var _loc1_:String = "";
          try
          {
@@ -628,6 +627,36 @@ package
          {
             _loc1_ = "";
          }
+         return _loc1_;
+      }
+      
+      // 右侧详情面板里的描述文案（固定内容，告诉玩家这条记录怎么用）。
+      // ★ 第 27 轮：第 2 个参数 = 入口条目（任务板）—— 它没有「接取地点」的概念，
+      //   描述改成「这是什么、怎么去」。
+      private function SaqDescriptionText(param1:Boolean, param2:Boolean = false) : String
+      {
+         // ★ 第 27 轮：无限任务入口（任务板）。
+         if(param2 == true)
+         {
+            if(this.SaqCourseKeyName().length == 0)
+            {
+               return this.SaqUseChinese()
+                  ? "这是一块任务板 —— 与它交互就能接到赏金、运输、勘探等不断刷新的任务。使用底部的「设定航线」即可引导到它的位置。"
+                  : "This is a mission board - interact with it to pick up endlessly refreshing jobs (bounties, transport, survey...). Use SET COURSE to be guided to its location.";
+            }
+            return this.SaqUseChinese()
+               ? "这是一块任务板 —— 与它交互就能接到赏金、运输、勘探等不断刷新的任务。按 " + this.SaqCourseKeyName() + "（设定航线）即可引导到它的位置。"
+               : "This is a mission board - interact with it to pick up endlessly refreshing jobs (bounties, transport, survey...). Press " + this.SaqCourseKeyName() + " (SET COURSE) to be guided to its location.";
+         }
+         // ★ 第 23 轮：没有引导目标的任务（261 条里 52 条）——列表照常显示，但**无法导航**。
+         //   把原因直接写进描述，玩家不用点一下才知道（此前「点了瞬间回滚」看不出原因）。
+         if(param1 != true)
+         {
+            return this.SaqUseChinese()
+               ? "这条任务当前可以接取，但还没有导航目标 —— 暂时无法引导到接取地点（任务本身照常显示）。"
+               : "This quest is available, but it has no navigation target yet - it cannot guide you to the pickup location.";
+         }
+         var _loc1_:String = this.SaqCourseKeyName();
          if(_loc1_.length == 0)
          {
             return this.SaqUseChinese()
@@ -647,7 +676,8 @@ package
             "iType":SaqSafeType(param1.iType),
             "iFaction":FactionUtils.FACTION_NONE,
             "sName":this.SaqUseChinese() ? param1.sNameZh : param1.sNameEn,
-            "sDescription":this.SaqDescriptionText(param1.bSaqHasTarget != false),
+            // ★ 第 27 轮：入口条目（任务板）的描述用专门文案（第 2 个参数）。
+            "sDescription":this.SaqDescriptionText(param1.bSaqHasTarget != false, param1.iType == SAQ_ENTRY_TYPE),
             // 引导中的那条保持「追踪中」的视觉（左侧竖条）—— 列表重建（SaqRefresh）后不丢状态。
             "bActive":this.SaqGuideQuest != 0 && param1.uID == this.SaqGuideQuest,
             "bComplete":false,
