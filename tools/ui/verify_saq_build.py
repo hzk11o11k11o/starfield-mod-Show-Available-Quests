@@ -101,6 +101,9 @@ def main() -> int:
             # 第 21 轮：引导目标 FormID 拆「低 24 位 + 高 8 位」（float 精度 + 上限 bug 修复）
             "引导目标高位拆分": "SAQ_GuidePrefix".encode(),
             "通道垃圾值文案": "通道读数是垃圾".encode(),
+            # 第 22 轮：日志与配置写进插件目录（mod 目录），不落 C 盘用户目录
+            "日志写在插件目录": "插件目录（mod 目录）内".encode(),
+            "ini 写在插件目录": "插件目录内的 SAQ_ShowAvailableQuests.ini".encode(),
         }.items():
             all_ok &= check(f"DLL · {name}", blob, needle)
         # 反向检查：第 18 轮换掉的旧「未加载」文案不应再出现（新文案不含完整旧串）

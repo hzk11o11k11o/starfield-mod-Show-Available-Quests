@@ -48,6 +48,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <format>
 #include <fstream>
 #include <memory>
@@ -311,18 +312,18 @@ namespace SAQ
 		//   于是补一条**不依赖控制台**的通路：读 ini 文件（每次开菜单读一次，
 		//   改完文件关开菜单即可生效，不用重启游戏；文件不存在时首次运行自动写一份模板）。
 		//
-		//   路径：%USERPROFILE%\Documents\My Games\Starfield\SAQ_ShowAvailableQuests.ini
+		//   路径（★ 第 22 轮改）：**插件目录内的 SAQ_ShowAvailableQuests.ini**
+		//   （MO2 下就是 mod 目录里的 SFSE\Plugins\）——玩家要求配置文件不落 C 盘
+		//   用户目录，删 mod 时一起删掉。
 		//   内容：[Test] / Mode=N（N 与 GLOB 同一套取值，见 PassesTestFilter）
 		//
 		//   优先级：**GLOB（控制台）非 0 时优先**；否则用 ini；都是 0 = 不过滤。
 		std::wstring TestModeIniPath()
 		{
-			wchar_t profile[MAX_PATH]{};
-			if (::GetEnvironmentVariableW(L"USERPROFILE", profile, MAX_PATH) == 0) {
-				return {};
+			if (const auto dir = PluginDir(); !dir.empty()) {
+				return (dir / L"SAQ_ShowAvailableQuests.ini").wstring();
 			}
-			return std::wstring{ profile } +
-				L"\\Documents\\My Games\\Starfield\\SAQ_ShowAvailableQuests.ini";
+			return {};
 		}
 
 		// 首次运行写一份带说明的模板（已存在就不动 —— 玩家的设置不能被覆盖）。
@@ -351,7 +352,7 @@ namespace SAQ
 			}
 			f.write("\xEF\xBB\xBF", 3);  // BOM：记事本识别中文注释
 			f.write(tmpl, static_cast<std::streamsize>(std::strlen(tmpl)));
-			REX::INFO("已生成测试开关模板：Documents\\My Games\\Starfield\\SAQ_ShowAvailableQuests.ini");
+			REX::INFO("已生成测试开关 ini 模板（插件目录内的 SAQ_ShowAvailableQuests.ini）");
 		}
 
 		// 最终模式 = 控制台（GLOB，非 0 优先）否则 ini。a_globMode < 0 = ESM 旧版没有 GLOB。
@@ -1275,6 +1276,26 @@ namespace SAQ
 				CheckScriptLiveness();
 			}
 		}
+	}
+
+	std::filesystem::path PluginDir()
+	{
+		// ★ 第 22 轮：通过「本模块里一个函数的地址」反查模块句柄 —— 不依赖 SFSE 接口，
+		//   也不怕同时加载了多个插件（FROM_ADDRESS 精确到本 DLL）。
+		//   MO2 下插件从 mod 目录加载，日志/配置文件就落在那里（或它映射出的虚拟
+		//   Data\SFSE\Plugins\），删 mod 时一起消失。
+		HMODULE self{};
+		if (!::GetModuleHandleExW(
+				GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+				reinterpret_cast<LPCWSTR>(&PluginDir), &self) ||
+			self == nullptr) {
+			return {};
+		}
+		wchar_t buf[MAX_PATH]{};
+		if (::GetModuleFileNameW(self, buf, MAX_PATH) == 0) {
+			return {};
+		}
+		return std::filesystem::path{ buf }.parent_path();
 	}
 
 	bool Install()
