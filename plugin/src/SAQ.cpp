@@ -708,8 +708,10 @@ namespace SAQ
 			// 起因：第 16 轮的日志能证明「请求写进去了」，但「脚本应用成功没有」只在
 			// 下次打开菜单时才会被读到 —— 玩家当下看到的蓝点有没有出现，日志里是空白。
 			std::uint64_t verifyAtMs{};    // 0 = 没有待确认的请求
-			std::uint32_t verifyTries{};
+			std::uint32_t verifyTries{};   // 菜单**关着**时的确认次数（菜单开着不计数，第 26 轮）
 			std::uint32_t verifySeq{};     // 这次确认对应的请求序号（防止和自我重试打架）
+			std::uint32_t verifyResends{}; // 状态 2/3 的重发次数（≤2；第 26 轮改为独立计数）
+			bool          verifyWaitLogged{};  // 「菜单还开着，先继续等」说明是否已打过（每请求一次）
 		};
 		GuideRuntime g_guide;
 		constexpr std::uint64_t kGuidePollIntervalMs = 100;
@@ -816,6 +818,8 @@ namespace SAQ
 			g_guide.verifyAtMs = NowMs() + kGuideVerifyFirstMs;
 			g_guide.verifyTries = 0;
 			g_guide.verifySeq = static_cast<std::uint32_t>(a_seq);
+			g_guide.verifyResends = 0;
+			g_guide.verifyWaitLogged = false;
 		}
 
 		// ★ 第 19 轮：**脚本活性探测**。
@@ -883,6 +887,8 @@ namespace SAQ
 		{
 			if (a_formID == 0) {
 				g_guide.verifyAtMs = 0;  // 取消：没有「结果」要确认
+				g_guide.verifySeq = 0;
+				g_guide.verifyWaitLogged = false;
 				std::string detail;
 				if (Guide::SetGuideTarget(0, detail)) {
 					REX::INFO("引导请求：取消｜{}", detail);
@@ -951,6 +957,7 @@ namespace SAQ
 			g_guide.questFormID = 0;
 			g_guide.guideRef = 0;
 			g_guide.verifyAtMs = 0;
+			g_guide.verifySeq = 0;
 
 			REX::WARN("引导未生效：{}（0x{:08X}）—— {}；已放弃本次引导（清通道{}）",
 				entry ? entry->nameZh : "?", questID, a_why,
@@ -985,16 +992,11 @@ namespace SAQ
 				return;
 			}
 			const auto* entry = FindStaticQuest(g_guide.questFormID);
-			if (++g_guide.verifyTries >= kGuideVerifyMaxTries) {
-				AbortUnverifiedGuide(std::format("脚本状态一直是 {:.0f}"
-					"（0 待处理 / 2 取不到 / 3 已清除 —— 看 Papyrus 日志里 SAQ_Main 有没有在跑）",
-					ch.guideState), aMenuOpen);
-				return;
-			}
 			const auto again = [&]() { g_guide.verifyAtMs = NowMs() + kGuideVerifyRetryMs; };
 			if (ch.guideState == 1.0f) {
 				REX::INFO("引导已生效：{}（0x{:08X}）脚本状态=1（世界里应该能看到标记/扫描仪路径线）",
 					entry ? entry->nameZh : "?", g_guide.questFormID);
+				g_guide.verifySeq = 0;
 				return;
 			}
 			if (ch.guideState == 4.0f) {
@@ -1002,13 +1004,44 @@ namespace SAQ
 					aMenuOpen);
 				return;
 			}
-			if ((ch.guideState == 2.0f || ch.guideState == 3.0f) && g_guide.verifyTries <= 2) {
+			if ((ch.guideState == 2.0f || ch.guideState == 3.0f) && g_guide.verifyResends < 2) {
+				++g_guide.verifyResends;
 				std::string detail;
 				if (Guide::SetGuideTarget(g_guide.guideRef, detail)) {
 					REX::INFO("引导重发：{}（0x{:08X}）脚本状态={:.0f}"
 							  "（2=引用当时没加载 / 3=脚本重挂丢了别名），已清 0 让脚本再试｜{}",
 						entry ? entry->nameZh : "?", g_guide.questFormID, ch.guideState, detail);
 				}
+			}
+			// ★ 第 26 轮：**菜单还开着时不判失败**。
+			//
+			// 实测（2026-09-20 10:38~10:58 三个会话 + Papyrus 日志交叉）：
+			//   脚本实例从存档恢复时 OnInit 不跑 ⇒ SAQ_Main 的 StartTimer 从来没注册过
+			//   ⇒ 菜单开着时脚本没有任何轮询机会，引导只在**菜单关闭事件**里被应用一次。
+			//   证据：Papyrus `10:41:56 引导已应用` ↔ DLL `10:41:56.097 菜单关闭`（一一对应），
+			//   而三个会话的 Papyrus 日志里都没有 OnInit、也没有一条「菜单开着时」的引导应用。
+			//
+			// 旧逻辑在菜单开着时也按 ≈11 秒超时收尾 ⇒ 玩家在菜单里挑条目超过 11 秒再关菜单，
+			// 就会被判「引导未生效:脚本未响应」并清掉通道 —— 假失败 + 真失效（实测三次：
+			// 星海派对 / 回收行动 / 失踪的地球人；唯一一次「引导已生效」是因为玩家 1.6 秒内
+			// 就关了菜单）。
+			// 现在：菜单开着 ⇒ 只是继续等（不计数、不 Abort，每个请求说明一次）；
+			//      菜单一关 ⇒ OnMissionMenuClosed 把确认窗口重置，脚本会在关闭事件里应用，
+			//      之后才是真正的超时判定（≈11 秒）。
+			if (aMenuOpen) {
+				if (!g_guide.verifyWaitLogged) {
+					g_guide.verifyWaitLogged = true;
+					REX::INFO("引导确认：脚本状态还是 0，但菜单还开着 —— 脚本只在菜单关闭时应用引导，"
+							  "先继续等待（关菜单后会自动确认，不会判失败）");
+				}
+				again();
+				return;
+			}
+			if (++g_guide.verifyTries >= kGuideVerifyMaxTries) {
+				AbortUnverifiedGuide(std::format("脚本状态一直是 {:.0f}"
+					"（0 待处理 / 2 取不到 / 3 已清除 —— 看 Papyrus 日志里 SAQ_Main 有没有在跑）",
+					ch.guideState), aMenuOpen);
+				return;
 			}
 			again();
 		}
@@ -1173,6 +1206,20 @@ namespace SAQ
 			g_guide.lastPeek.clear();
 			g_guide.lastSeq = -1;
 			g_guide.lastPollMs = 0;
+
+			// ★ 第 26 轮：菜单关闭 = 脚本真正「拿到」引导请求的时刻（见 PollGuideVerify 的说明：
+			//   脚本靠 OnMenuOpenCloseEvent(关闭) 里的 ApplyGuide 应用引导）。
+			//   到这里才把确认窗口重置一次 —— 玩家在菜单里挑条目挑多久都不会被判失败，
+			//   关菜单后给脚本 ≈11 秒的完整窗口。
+			if (g_guide.verifyAtMs != 0) {
+				g_guide.verifyTries = 0;
+				g_guide.verifyResends = 0;
+				g_guide.verifyWaitLogged = false;
+				g_guide.verifyAtMs = NowMs() + kGuideVerifyFirstMs;
+				REX::INFO("引导确认：菜单已关 —— 脚本会在关闭事件里应用引导，{} ms 后开始确认（窗口约 {} 秒）",
+					kGuideVerifyFirstMs,
+					(kGuideVerifyFirstMs + kGuideVerifyRetryMs * (kGuideVerifyMaxTries - 1)) / 1000);
+			}
 		}
 
 		void OnMissionMenuOpened()

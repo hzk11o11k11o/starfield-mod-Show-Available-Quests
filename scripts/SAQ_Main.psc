@@ -111,6 +111,17 @@ Event OnMenuOpenCloseEvent(String asMenuName, Bool abOpening)
 		Return
 	EndIf
 	If abOpening
+		; ★ 第 26 轮：每次开菜单都重挂一次定时器。
+		;   实测（2026-09-20 三个会话的 Papyrus 日志）：脚本实例**从存档恢复时 OnInit 不跑**
+		;   ⇒ OnInit 里的 StartTimer 从来没执行过 ⇒ 菜单开着时没有任何轮询机会，
+		;   引导只在「菜单关闭」分支的 ApplyGuide() 里被应用（Papyrus `引导已应用` 的时间
+		;   与 DLL 的「菜单关闭」一一对应）。DLL 侧旧逻辑会在菜单开着 11 秒后判「引导未生效」
+		;   并清通道 —— 玩家挑条目久一点就真失效。这里把定时器补上（重复调用同一 id 只是重置，
+		;   无副作用）：若引擎允许，菜单开着时 0.5 秒内就能应用引导。
+		StartTimer(PollInterval, PollTimerID)
+		; 顺手补一次（零开销：GuideState != 0 立即返回）—— 处理「菜单关着时 DLL 重发的请求」
+		; （那种重发没人触发 OnTimer/关闭事件，只能等这次开菜单）。
+		ApplyGuide()
 		; 证据：菜单开过 ⇒ 这条脚本在跑、且看得到菜单事件（DLL 会读这一位写日志）
 		If NotifyFlag != None
 			NotifyFlag.SetValue(NotifyFlag.GetValue() + 1.0)
