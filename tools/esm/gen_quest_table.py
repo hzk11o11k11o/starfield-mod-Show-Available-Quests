@@ -169,7 +169,7 @@ def build_payload(rows: list[dict], title_zh: str = "可接任务", title_en: st
     lines = ["SAQ1", f"T\t{title_zh}\t{title_en}"]
     for r in rows:
         fid = r["formid"] if isinstance(r["formid"], int) else int(r["formid"], 16)
-        has_target = "1" if int(r.get("guide_ref", 0)) else "0"
+        has_target = "1" if int(r.get("cand_count", 0)) else "0"
         lines.append(
             f'Q\t{fid}\t{r["itype"]}\t{sanitize_name(r["name_zh"])}\t{sanitize_name(r["name_en"])}\t{has_target}'
         )
@@ -349,33 +349,44 @@ def main() -> int:
     # 排序：master 下标升序（基础游戏在前 —— 列表里同名的以基础游戏为准），再按记录号
     rows.sort(key=lambda r: (master_idx[r["master"]], r["local"]))
 
-    # 引导目标（第 10 轮；第 17 轮加 master）：每条任务在世界里的一个「去哪里接」引用。
+    # 引导目标（第 10 轮；★ 第 45 轮升级为「候选池」）：每条任务在世界里的
+    # 「去哪里接」引用序列（gen_guide_targets.py 按质量排序 —— 有名字的 NPC >
+    # 可读名落脚点 > 通用名 NPC > 内部名落脚点；同级内常驻优先）。
+    # 运行时 DLL 取「此刻引擎里取得到」的第一个候选；脚本报取不到时还会换下一个。
     # 没有引导目标的任务照样进表（列表照常显示，只是不能引导）。
     guides = load_guide_targets(Path(a.guide_targets))
     master_by_lower = {m.lower(): i for i, m in enumerate(masters)}
     n_guide = 0
     unknown_guide_master: set[str] = set()
+    cand_flat: list[tuple[int, int, int, str]] = []   # (refrLocal, refrMaster, persistent, 展示名)
     for r in rows:
         g = guides.get(r["formid"])
-        gm = (g or {}).get("refrMaster") or r["master"]
-        if g and g.get("refr") and gm.lower() not in master_by_lower:
-            unknown_guide_master.add(gm)
-            g = None
-        if g and g.get("refr"):
-            r["guide_ref"] = int(g["refr"]) & (0xFFF if g.get("refrSmall") else 0xFFFFFF)
-            r["guide_master"] = master_by_lower[gm.lower()]
-            r["guide_kind"] = g.get("kind", "")
-            r["guide_where_en"] = (g.get("whereEn") or "").strip()
-            r["guide_where_zh"] = (g.get("whereZh") or "").strip()
+        cands = (g or {}).get("cands") or ([g] if g and g.get("refr") else [])
+        ok_cands: list[dict] = []
+        for c in cands:
+            cm = c.get("refrMaster") or r["master"]
+            if not c.get("refr"):
+                continue
+            if cm.lower() not in master_by_lower:
+                unknown_guide_master.add(cm)
+                continue
+            ok_cands.append(c)
+        r["cand_begin"] = len(cand_flat)
+        r["cand_count"] = len(ok_cands)
+        r["guide_kind"] = ok_cands[0].get("kind", "") if ok_cands else ""
+        r["guide_where_en"] = (ok_cands[0].get("whereEn") or "").strip() if ok_cands else ""
+        r["guide_where_zh"] = (ok_cands[0].get("whereZh") or "").strip() if ok_cands else ""
+        if ok_cands:
             n_guide += 1
-        else:
-            r["guide_ref"] = 0
-            r["guide_master"] = 0
-            r["guide_kind"] = ""
-            r["guide_where_en"] = ""
-            r["guide_where_zh"] = ""
+        for c in ok_cands:
+            cm = c.get("refrMaster") or r["master"]
+            local = int(c["refr"]) & (0xFFF if c.get("refrSmall") else 0xFFFFFF)
+            cand_name = (c.get("nameZh") or c.get("nameEn") or "").strip()
+            cand_flat.append((local, master_by_lower[cm.lower()], 1 if c.get("persistent") else 0, cand_name))
     if unknown_guide_master:
         print(f"  !! 引导目标引用了表里没有的 master（先加进任务表）：{sorted(unknown_guide_master)}")
+    print(f"引导候选池：{len(cand_flat)} 条候选 / {n_guide} 条任务"
+          f"（平均 {len(cand_flat) / max(n_guide, 1):.1f} 个/任务）")
 
     print(f"table rows: {len(rows)}（无类型 {skipped_no_type}，主线 {skipped_main}）；"
           f"其中带引导目标 {n_guide} 条（{n_guide * 100 // max(len(rows), 1)}%）")
@@ -456,13 +467,13 @@ def main() -> int:
     lines.append("\t\t// ★ 第 10 轮已从 xEdit 导出里读到 flag 名：位0 = Start Game Enabled。")
     lines.append("\t\t// 布局证据见 tools/esm/gen_quest_table.py::dnam_flags。")
     lines.append("\t\tstd::uint32_t staticFlags;")
-    lines.append("\t\t// 引导目标（第 10 轮）：这条任务「去哪里接」——世界里的一个引用")
-    lines.append("\t\t// （任务发布者 NPC 的放置引用 / 任务自己的落脚点 / 地点地图标记）。")
-    lines.append("\t\t// 0 = 这条任务没有可用的引导目标（列表照常显示，只是引导不可用）。")
-    lines.append("\t\t// 生成器：tools/esm/gen_guide_targets.py（来源与排序规则见该文件头注释）。")
-    lines.append("\t\t// ★ 引用也可能属于别的 master（DLC 任务引用基础游戏的 NPC），所以带下标。")
-    lines.append("\t\tstd::uint32_t guideRefLocal;")
-    lines.append("\t\tstd::uint8_t  guideRefMaster;")
+    lines.append("\t\t// 引导目标（第 10 轮；★ 第 45 轮升级为**候选池**）：这条任务「去哪里接」——")
+    lines.append("\t\t// 一个按质量排序的引用候选列表（见下方 kGuideCandidates）。运行时 DLL 取")
+    lines.append("\t\t// 「此刻引擎里取得到」的第一个候选（= 质量最优的可用目标）；脚本报取不到时")
+    lines.append("\t\t// 还会换下一个。candCount == 0 = 没有可用引导目标（照常显示，只是引导不可用）。")
+    lines.append("\t\t// 生成器：tools/esm/gen_guide_targets.py（候选排序规则见该文件头注释）。")
+    lines.append("\t\tstd::uint32_t candBegin;  // 候选切片起点（kGuideCandidates 下标）")
+    lines.append("\t\tstd::uint8_t  candCount;  // 候选数（0 = 没有可用引导目标）")
     lines.append("\t\t// ★ 第 35 轮：进度门槛切片（见下方 kQuestConds 与 docs/08）——")
     lines.append("\t\t//   condCount > 0 时：全部门槛为真 ⇒ 显示；任一为假 = 「进度没到」⇒ 隐藏。")
     lines.append("\t\t//   condCount == 0 ⇒ 这条任务不做条件过滤（无门槛 / 门槛不可求值）。")
@@ -503,12 +514,32 @@ def main() -> int:
     lines.append("\t};")
     lines.append(f"\tinline constexpr std::size_t kQuestCondCount = {len(cond_flat)};")
     lines.append("")
+    lines.append("\t// ★ 第 45 轮：引导目标候选池（按质量排序；每条任务用 candBegin/candCount 切片）。")
+    lines.append("\t//   flags bit0 = persistent（常驻引用 —— 脚本任何时候都取得到，是「玩家在远处」的备胎）。")
+    lines.append("\t//   生成：gen_guide_targets.py 的 cands 数组（排序规则见那个文件头注释）。")
+    lines.append("\tstruct StaticGuideCandidate")
+    lines.append("\t{")
+    lines.append("\t\tstd::uint32_t refrLocal;   // 记录号（已按 refrSmall 去掉文件内前缀）")
+    lines.append("\t\tstd::uint8_t  refrMaster;  // kQuestMasters[] 下标（引用可能属于别的 master）")
+    lines.append("\t\tstd::uint8_t  flags;       // bit0 = persistent")
+    lines.append("\t\tstd::uint16_t _reserved;   // 对齐占位")
+    lines.append("\t\tconst char*   nameZh;      // 候选展示名（NPC 名 / 地点名 / 内部名）—— 只用于日志")
+    lines.append("\t};")
+    lines.append("\tinline constexpr StaticGuideCandidate kGuideCandidates[] = {")
+    if cand_flat:
+        for (local, cm, cp, cname) in cand_flat:
+            lines.append(f'\t\t{{ 0x{local:06X}u, {cm}u, 0x{cp:02X}u, 0u, "{c_escape(cname)}" }},')
+    else:
+        lines.append('\t\t{ 0u, 0u, 0u, 0u, "" },  // 占位（表为空时 MSVC 不允许零长数组）')
+    lines.append("\t};")
+    lines.append(f"\tinline constexpr std::size_t kGuideCandidateCount = {len(cand_flat)};")
+    lines.append("")
     lines.append(f"\tinline constexpr StaticQuestInfo kQuestTable[] = {{")
     for r in rows:
         flags = int(r.get("dnam_flags", 0))
         lines.append(
             f'\t\t{{ 0x{int(r["local"]):08X}u, {master_idx[r["master"]]}u, {r["itype"]}u,'
-            f' 0x{flags:08X}u, 0x{int(r["guide_ref"]):08X}u, {int(r["guide_master"])}u,'
+            f' 0x{flags:08X}u, {int(r["cand_begin"])}u, {int(r["cand_count"])}u,'
             f' {int(r.get("cond_begin", 0))}u, {int(r.get("cond_count", 0))}u,'
             f' "{c_escape(r["guide_where_en"])}", "{c_escape(r["guide_where_zh"])}",'
             f' "{c_escape(r["name_en"])}", "{c_escape(r["name_zh"])}" }},'

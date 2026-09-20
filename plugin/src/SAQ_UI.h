@@ -26,7 +26,7 @@ namespace SAQ
 	{
 		std::uint32_t formID{};   // FormID（运行期值：master 前缀 | 记录号）
 		std::int32_t  type{};     // AS3：QuestUtils.AVAILABLE_QUEST_TYPE = 6
-		// ★ 第 23 轮：这条任务有没有「引导目标」（静态表的 guideRefLocal）。
+		// ★ 第 23 轮：这条任务有没有「引导目标」（静态表的 candCount > 0，第 45 轮起为候选池）。
 		//   界面据此把「能不能导航」变成看得见的信息：无目标的条目点击时不发请求
 		//   （避免「亮起→瞬间回滚」的闪烁）、描述里写明原因、SET COURSE 按钮置灰。
 		bool          hasGuideTarget{};

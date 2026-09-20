@@ -30,9 +30,21 @@ Reference Alias + 一个目标指向该别名的 Objective）把玩家导向下�
 * 输出里的 `refr` 是**记录号（local）**，配 `refrMaster` 一起用；
   DLL 运行期再按加载顺序拼出真正的 FormID（见 plugin/src/SAQ.cpp）。
 
+## ★ 第 45 轮：候选池（多候选链）
+
+每条任务输出**整个候选池**（顶层字段 = 第一候选，`cands` = 完整候选列表，含第一候选）：
+运行时 DLL 先去写第一候选；脚本报「状态 2 = 引用取不到」（非常驻引用在 cell 没加载时
+取不到）就**自动换下一个候选**（见 SAQ.cpp），一轮轮试到某个候选可用为止 —— 于是
+「一次取不到」不再等于「这条任务不能导航」。
+
+候选排序见 `cand_grade()` / `quality_key()`（「目标质量」第一：有名字的 NPC >
+可读名落脚点 > 通用名 NPC > 内部名落脚点；同级内常驻优先）；同一条任务内
+按 (refrMaster, refr) 去重、截断到 `MAX_CANDS`。
+
 输出：
   ref/guide_targets.json   {任务的原始 FormID: {kind, refr, refrMaster, refrSmall,
-                                               persistent, nameEn, nameZh, whereEn, whereZh, src}}
+                                              persistent, nameEn, nameZh, whereEn, whereZh, src,
+                                              cands: [ {...}, ... ]}}
   （SAQ_QuestTable.h 的 guide* 字段由 gen_quest_table.py 读这个 JSON 生成）
 
 用法：
@@ -63,6 +75,69 @@ BAD_CELL_RE = re.compile(r"(aliascell|alias cell|do\s*not\s*delete|holdingcell|h
 # 通用/杂兵名（做发布者时优先级降低）
 GENERIC_NAME_RE = re.compile(r"(guard|soldier|settler|citizen|worker|technician|scientist|merchant|vendor|"
                              r"security|pirate|spacer|crew|colonist|miner|civilian)", re.I)
+
+# ★ 第 45 轮：引擎内部命名（EDID 泄漏到展示名里）——「质量分级」的判据之一。
+#   实测反例：`FFNeonZ08_HeadlockEnableMarker001`（把玩家引到一个内部开关标记上）、
+#   `RI_MasakoOfficeQSRef` / `Xmarker_HeadTrackRef` 之类 —— 玩家在日志/提示里看到这种名字
+#   没有意义；如果同一条任务还有别的候选（真正的入口 / 有名字的 NPC），应当优先。
+NAME_INTERNAL_RE = re.compile(
+    r"(?:xmarker|mapmarker|enablemarker|enableref|sandboxmarker|startmarker|startqsref|qsref"
+    r"|markerref|headtrack|puzzlemarker|holding|_ref\b|refref\b|ref$)",
+    re.I)
+
+# ★ 第 45 轮：候选池（多候选链）。
+#   排序以「目标质量」优先（见 cand_grade / quality_key），运行时 DLL 还会在
+#   「脚本报状态 2（取不到）」时自动换下一个候选（见 SAQ.cpp）——两者配合。
+MAX_CANDS = 6  # 每条任务最多保留几个候选（候选链的边际价值衰减很快）
+
+
+def name_quality(name: str) -> int:
+    """0 = 有意义的展示名；1 = 引擎内部命名（EDID 泄漏）；2 = 空名。"""
+    n = (name or "").strip()
+    if not n:
+        return 2
+    return 1 if NAME_INTERNAL_RE.search(n) else 0
+
+
+def cand_grade(c: dict) -> int:
+    """候选的「质量等级」（越小越优）——★ 第 45 轮质量分级的核心。
+
+    依据（按玩家实测反馈定）：
+      1 = **有名字的 NPC**（actor、非通用名）—— 「去哪里接」语义最强的答案。
+          实测反例：把「平衡账目」引到 `FFNeonZ09_EnableRef`（内部启用标记），
+          而真正的发布者「黄（Huong Le）」就在霓虹城里 —— 旧的「常驻第一」排序
+          把有名字的 NPC 压住了（31 条任务都是这个形态）。
+      2 = 有可读名字的 ref 落脚点（如 `Trade Tower: Astral Lounge`）—— 位置明确。
+      3 = 通用名 NPC（Guard / Worker…）—— 名字弱，但位置通常也对。
+      4 = 内部命名 / 空名的 ref（`*EnableRef` / `*QSRef` / XMarker / 空）——
+          玩家实测抱怨的那一类（`FFNeonZ08_HeadlockEnableMarker001`）。
+      5 = 其它（地点地图标记等，目前没有）。
+    """
+    named = c.get("nameq", 0) == 0
+    kind = c.get("kind")
+    if kind == "actor":
+        return 1 if c.get("generic", 0) == 0 else 3
+    if kind == "ref":
+        return 2 if named else 4
+    return 5
+
+
+def quality_key(c: dict):
+    """候选排序键（越小越优）——★ 第 45 轮的「质量分级」。
+
+    ① 质量等级（见 cand_grade）——「引到正确的接取点」是首要目标；
+    ② persistent —— 同等级内常驻优先（脚本**任何时候都取得到**，更稳）；
+    ③ order —— 别名里的出现顺序（稳定排序用）。
+
+    ★ 为什么 persistent 不再是第一键：实测反馈里最糟的形态是「有名字的 NPC 发布者
+      被内部标记压住」；而「取不到」不再是死路 —— 运行时 DLL 会在脚本报状态 2
+      时自动换下一个候选（见 SAQ.cpp），代价只是同一个引导晚约 1 秒生效。
+    """
+    return (
+        cand_grade(c),
+        0 if c.get("persistent") else 1,
+        c.get("order", 0),
+    )
 
 
 def u32(b: bytes) -> int:
@@ -275,6 +350,9 @@ def collect_candidates(fid: int, info: dict, acc: dict, quest_lctn: dict, meta: 
                 "nameEn": n_en, "nameZh": n_zh, "whereEn": n_en, "whereZh": n_zh,
                 "src": lsrc, "tier": 2, "generic": 0, "order": 0,
             })
+    # ★ 第 45 轮：统一补「名字质量」（质量分级的输入；见 quality_key）。
+    for c in cands:
+        c["nameq"] = name_quality(c.get("nameEn", ""))
     return cands
 
 
@@ -365,6 +443,8 @@ def main() -> int:
     out: dict[str, dict] = {}
     stats = Counter()
     samples: list[str] = []
+    cand_hist = Counter()      # 候选数分布（键 = 候选数，6 = ≥6）
+    changed: list[str] = []    # 质量分级相对旧排序改变了第一候选的任务（统计用）
     for m, wanted in wanted_by_master.items():
         meta = meta_by_lower[m.lower()]
         named = make_named(meta)
@@ -375,26 +455,66 @@ def main() -> int:
             except Exception as exc:  # noqa: BLE001
                 print(f"  候选生成失败 {m} 0x{fid:08X}: {exc}")
                 cands = []
-            if a.show and fid == int(a.show, 16):
-                print(f"\n--- 0x{fid:08X}（{m}）候选 {len(cands)} 条：")
-                for c in cands:
-                    print(f"    {c}")
             if not cands:
                 stats[f"无目标({m})"] += 1
                 continue
-            cands.sort(key=lambda c: (0 if c["persistent"] else 1, c["tier"], c["generic"], c["order"]))
-            got = cands[0]
-            got.pop("tier", None)
-            got.pop("generic", None)
-            got.pop("order", None)
-            out[str(fid)] = got
+            # ★ 第 45 轮：候选池 = 质量排序 + 去重（同一个引用可能从多个别名/来源重复出现）
+            #   + 截断（MAX_CANDS —— 候选链的边际价值衰减很快）。
+            cands.sort(key=quality_key)
+            dedup: list[dict] = []
+            seen_refs: set[tuple[str, int]] = set()
+            for c in cands:
+                key = (c.get("refrMaster", ""), int(c.get("refr") or 0))
+                if key in seen_refs:
+                    continue
+                seen_refs.add(key)
+                dedup.append(c)
+            cands = dedup
+            cand_hist[min(len(cands), 6)] += 1
+            # 旧排序（第 10 轮起：常驻 + tier）—— 只为统计「质量分级改了多少条的第一候选」。
+            old_first = min(cands, key=lambda c: (0 if c["persistent"] else 1, c["tier"], c["generic"], c["order"]))
+            new_first = cands[0]
+            if (old_first.get("refr"), old_first.get("refrMaster")) != (new_first.get("refr"), new_first.get("refrMaster")):
+                changed.append(
+                    f"0x{fid:08X} 新={new_first['refrMaster']}:0x{int(new_first['refr']):06X}"
+                    f"({new_first['kind']},nameq={new_first['nameq']},{'常驻' if new_first['persistent'] else '非常驻'},"
+                    f"{new_first['nameZh'] or new_first['nameEn']}) 旧=0x{int(old_first['refr']):06X}"
+                    f"({old_first['kind']},nameq={old_first['nameq']},{'常驻' if old_first['persistent'] else '非常驻'},"
+                    f"{old_first['nameZh'] or old_first['nameEn']})")
+            if a.show and fid == int(a.show, 16):
+                print(f"\n--- 0x{fid:08X}（{m}）候选 {len(cands)} 条（质量排序）：")
+                for i, c in enumerate(cands):
+                    print(f"    [{i}] {c}")
+            # ★ 第 45 轮：截断时**保证常驻候选不被截掉**（至少保留 2 个）——
+            #   常驻引用 = 脚本任何时候都取得到，是「玩家在远处点击」的备胎；
+            #   直接取前 MAX_CANDS 个会把排名靠后的常驻候选砍掉（实测：24 条任务
+            #   的常驻备胎被截，远处点击就再也回不到可用目标）。
+            keep = cands[:MAX_CANDS]
+            kept = {(c["refrMaster"], int(c["refr"])) for c in keep}
+            n_persist_kept = sum(1 for c in keep if c["persistent"])
+            for c in cands[MAX_CANDS:]:
+                if n_persist_kept >= 2:
+                    break
+                if c["persistent"]:
+                    key = (c["refrMaster"], int(c["refr"]))
+                    if key not in kept:
+                        keep.append(c)
+                        kept.add(key)
+                        n_persist_kept += 1
+            cands = keep
+            got = {k: v for k, v in cands[0].items() if k not in ("tier", "generic", "order", "nameq")}
+            entry = dict(got)
+            # ★ 第 45 轮：完整候选池（含第一候选）—— gen_quest_table.py 用它生成
+            #   kGuideCandidates[]（运行时 DLL 在「脚本报取不到」时按顺序换下一个）。
+            entry["cands"] = [{k: v for k, v in c.items() if k != "tier"} for c in cands]
+            out[str(fid)] = entry
             stats[got["kind"]] += 1
             stats["常驻" if got["persistent"] else "非常驻"] += 1
             if len(samples) < 12:
                 samples.append(
                     f"{m} 0x{fid:08X} [{got['kind']:5s}{'持久' if got['persistent'] else '临时'}] "
                     f"{got['refrMaster']}:0x{got['refr']:06X} 目标={got['nameZh'] or got['nameEn']} "
-                    f"位置={got['whereZh'] or got['whereEn']} ({got['src']})")
+                    f"位置={got['whereZh'] or got['whereEn']} ({got['src']}) 候选数={len(cands)}")
 
     Path(a.out).write_text(json.dumps(out, ensure_ascii=False, indent=1, sort_keys=True), encoding="utf-8")
     total = len(rows)
@@ -402,6 +522,11 @@ def main() -> int:
     print(f"\n有引导目标 {have}/{total}（{have * 100 // max(total, 1)}%）")
     for k, v in stats.most_common():
         print(f"  {k}: {v}")
+    print(f"候选池分布（候选数 → 任务数）：{dict(sorted(cand_hist.items()))}")
+    if changed:
+        print(f"质量分级改变了 {len(changed)} 条任务的第一候选（前 15）：")
+        for s in changed[:15]:
+            print("  " + s)
     print("样本：")
     for s in samples:
         print("  " + s)

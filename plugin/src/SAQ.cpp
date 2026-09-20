@@ -359,13 +359,13 @@ namespace SAQ
 		{
 			switch (a_mode) {
 			case 1:
-				return a_info.guideRefLocal != 0;
+				return a_info.candCount != 0;   // ★ 第 45 轮：候选池代替旧的单目标字段
 			case 2:
-				return a_info.guideRefLocal == 0;
+				return a_info.candCount == 0;
 			case 3:
 				return a_info.master != 0;
 			case 4:
-				return a_info.guideRefLocal != 0 && a_info.whereZh != nullptr && a_info.whereZh[0] != '\0';
+				return a_info.candCount != 0 && a_info.whereZh != nullptr && a_info.whereZh[0] != '\0';
 			default:
 				return true;  // 0 / 未知值 = 不过滤
 			}
@@ -796,7 +796,8 @@ namespace SAQ
 				entry.formID = row.formID;
 				entry.type = kAvailableQuestType;  // 统一放到我们的 tab
 				// ★ 第 23 轮：把「有没有引导目标」也推给界面（能不能导航要看得见）
-				entry.hasGuideTarget = info.guideRefLocal != 0;
+				// ★ 第 45 轮：判据换成候选池（candCount > 0 等价于旧 guideRefLocal != 0）。
+				entry.hasGuideTarget = info.candCount != 0;
 				entry.nameZh = info.nameZh;        // 中英都带上，AS3 侧按游戏语言挑
 				entry.nameEn = info.nameEn;
 				a_out.push_back(std::move(entry));
@@ -1121,6 +1122,11 @@ namespace SAQ
 			//   通道里遗留的引导认领回来，动态更新才有机会把蓝点挪到板上。
 			std::uint32_t adoptWarnRef{};      // 「认不出的通道目标」已 WARN 过的值（同一目标只刷一次）
 			std::uint64_t upkeepMs{};          // 例行认领/对账的节流时间戳（第 32 轮）
+			// ★ 第 45 轮：候选池 —— 当前引导用的是第几个候选（0-based，列表按质量排序）。
+			//   「脚本报状态 2（取不到）」时换下一个（循环）；菜单关着时还会定期复算
+			//   「有没有更优的候选变得可用了」（见 UpdateQuestGuideTarget）。
+			std::uint8_t  candIndex{};         // 入口条目不用（它的候选链在 EvaluateEntryGuide 里）
+			std::uint32_t candSwitches{};      // 本次引导换过多少次候选（日志/诊断用）
 		};
 		GuideRuntime g_guide;
 		constexpr std::uint64_t kGuidePollIntervalMs = 100;
@@ -1142,17 +1148,79 @@ namespace SAQ
 			return nullptr;
 		}
 
+		// ==================================================================
+		// ★★ 第 45 轮：候选池（每条任务一个按质量排序的引导目标列表）
+		//
+		//   静态表 kGuideCandidates[] + StaticQuestInfo.candBegin/candCount（生成器见
+		//   tools/esm/gen_quest_table.py）。四个用法：
+		//     ① 点引导时 `PickGuideCandidate` 挑「此刻可得的、质量最优的」（一次到位，
+		//        玩家在远处时不会先去撞一个取不到的非常驻 NPC）；
+		//     ② 脚本报「状态 2 = 取不到」时 `SwitchGuideCandidate` 换下一个（循环）；
+		//     ③ 菜单关着时 `UpdateQuestGuideTarget` 定期复算（飞近了自动升级回 NPC）；
+		//     ④ 认领已有引导时遍历候选池（通道里的目标可能是第 2/3 个候选）。
+		//
+		//   「可得」判据 = `TESForm::LookupByID` 查得到 —— 与脚本的 Game.GetForm 是
+		//   同一个引擎查询；入口条目的候选链（第 31 轮）已实测：非持久引用在所在
+		//   cell 未加载时这里也查不到（「原板」只在走进那个 cell 后才命中）。
+		// ==================================================================
+		const StaticGuideCandidate* CandidateAt(const StaticQuestInfo& a_info, std::uint8_t a_index)
+		{
+			const auto slot = static_cast<std::size_t>(a_info.candBegin) + a_index;
+			return (a_index < a_info.candCount && slot < kGuideCandidateCount)
+				? &kGuideCandidates[slot]
+				: nullptr;
+		}
+
+		std::uint32_t CandidateFormID(const StaticQuestInfo& a_info, std::uint8_t a_index)
+		{
+			const auto* c = CandidateAt(a_info, a_index);
+			return c ? Masters::MakeFormID(c->refrMaster, c->refrLocal) : 0;
+		}
+
+		const char* CandidateName(const StaticQuestInfo& a_info, std::uint8_t a_index)
+		{
+			const auto* c = CandidateAt(a_info, a_index);
+			return c ? c->nameZh : "";
+		}
+
+		bool CandidateAlive(const StaticQuestInfo& a_info, std::uint8_t a_index)
+		{
+			const auto id = CandidateFormID(a_info, a_index);
+			return id != 0 && RE::TESForm::LookupByID(static_cast<RE::TESFormID>(id)) != nullptr;
+		}
+
+		// 挑「此刻可得的、质量最优的」候选（列表已按质量排序 ⇒ 第一个可得的即最优）。
+		// a_anyAlive = 是否有任何一个候选此刻可得；全不可得时返回 0 —— 调用方照常写
+		// 第一候选：脚本会报状态 2，随后由换候选 / 等玩家靠近后的重发兜底。
+		std::uint8_t PickGuideCandidate(const StaticQuestInfo& a_info, bool& a_anyAlive)
+		{
+			a_anyAlive = false;
+			for (std::uint8_t i = 0; i < a_info.candCount; ++i) {
+				if (CandidateAlive(a_info, i)) {
+					a_anyAlive = true;
+					return i;
+				}
+			}
+			return 0;
+		}
+
+		// ★ 第 45 轮：换候选（定义在下方 ReissueGuideIfScriptLost 之前）——
+		//   这里先声明：PollGuideVerify（早于定义）用它做「状态 2 ⇒ 换下一个候选」。
+		bool SwitchGuideCandidate(const StaticQuestInfo& a_info, std::string_view a_reason);
+
 		// ★ 第 17 轮：反向查（运行期 FormID -> 静态行）。用于「DLL 刚启动/刚读档，而
 		//   ESM 通道里还留着上一次会话设的引导」——把那条任务认领回来（见 AdoptExistingGuide）。
-		const StaticQuestInfo* FindQuestByGuideRef(std::uint32_t a_guideRefID)
+		//   ★ 第 45 轮：遍历**候选池**（通道里的目标可能是第 2/3 个候选），出参带上下标。
+		const StaticQuestInfo* FindQuestByGuideRef(std::uint32_t a_guideRefID, std::uint8_t& a_outIndex)
 		{
+			a_outIndex = 0;
 			for (const auto& row : g_runtimeRows) {
 				const auto& info = *row.info;
-				if (info.guideRefLocal == 0) {
-					continue;
-				}
-				if (Masters::MakeFormID(info.guideRefMaster, info.guideRefLocal) == a_guideRefID) {
-					return &info;
+				for (std::uint8_t i = 0; i < info.candCount; ++i) {
+					if (CandidateFormID(info, i) == a_guideRefID) {
+						a_outIndex = i;
+						return &info;
+					}
 				}
 			}
 			return nullptr;
@@ -1238,11 +1306,16 @@ namespace SAQ
 				return;
 			}
 			// 目标所在地：只有任务表里有这个字段（入口条目没有 —— 显示空串）。
+			// ★ 第 45 轮：带候选下标/名字（「现在用的是第几个候选」一眼可见）。
 			const auto* quest = FindStaticQuest(g_guide.questFormID);
-			REX::INFO("引导状态：{}（0x{:08X}）目标引用=0x{:08X} {}｜脚本状态={:.0f}"
+			const std::string candNote = (quest && quest->candCount)
+				? std::format("（候选 [{}]「{}」/ 共 {}）", g_guide.candIndex + 1u,
+					  CandidateName(*quest, g_guide.candIndex), quest->candCount)
+				: std::string{};
+			REX::INFO("引导状态：{}（0x{:08X}）目标引用=0x{:08X}{} {}｜脚本状态={:.0f}"
 					  "（0 待处理 / 1 已应用 / 2 取不到 / 3 已清除 / 4 别名不存在）",
 				DisplayNameOf(g_guide.questFormID), g_guide.questFormID, g_guide.guideRef,
-				quest ? quest->whereZh : "", scriptState);
+				candNote, quest ? quest->whereZh : "", scriptState);
 		}
 
 		// ★ 第 16 轮：把引导结果回写给界面（`_root.SAQ_GuideReply`，协议见 MissionMenu.as）。
@@ -1859,23 +1932,38 @@ namespace SAQ
 			std::string_view displayName;
 			const char* whereZh = "";
 			if (entry) {
-				if (entry->guideRefLocal == 0) {
+				if (entry->candCount == 0) {
 					REX::WARN("引导请求：{}（0x{:08X}）没有引导目标（离线没算出「去哪里接」的引用，见 docs/05）",
 						entry->nameZh, a_formID);
 					NotifyGuideReply(a_seq, g_guide.questFormID, 1);
 					return;
 				}
+				// ★★ 第 45 轮：从候选池里挑「此刻可得的、质量最优的」候选。列表按质量
+				//   排序（有名字的 NPC > 常驻备胎……），第一个 LookupByID 命中的即最优。
+				//   玩家在远处时非常驻 NPC 取不到 ⇒ 直接落到常驻备胎上（一次到位，不必
+				//   先撞一次失败再换）；全不可得时仍写第一候选，等靠近后由重试/换候选自愈。
+				bool anyAlive = false;
+				const auto candIdx = PickGuideCandidate(*entry, anyAlive);
 				// ★ 第 17 轮：引导目标也是「master + 记录号」，运行期拼成 FormID
 				//（DLC 任务的目标可能在基础游戏里，反之亦然）。
-				guideRefID = Masters::MakeFormID(entry->guideRefMaster, entry->guideRefLocal);
-				if (guideRefID == 0) {
+				guideRefID = CandidateFormID(*entry, candIdx);
+				const auto* candSlot = CandidateAt(*entry, candIdx);
+				if (guideRefID == 0 || !candSlot) {
 					REX::WARN("引导请求：{}（0x{:08X}）的引导目标属于未加载的 master（{}）",
-						entry->nameZh, a_formID, Masters::Get(entry->guideRefMaster).name);
+						entry->nameZh, a_formID,
+						candSlot ? Masters::Get(candSlot->refrMaster).name : "?");
 					NotifyGuideReply(a_seq, g_guide.questFormID, 1);
 					return;
 				}
+				g_guide.candIndex = candIdx;
+				g_guide.candSwitches = 0;
 				displayName = entry->nameZh;
 				whereZh = entry->whereZh;
+				if (!anyAlive) {
+					REX::INFO("引导请求：{}（0x{:08X}）的 {} 个候选此刻都取不到（玩家离得远？）"
+							  "—— 先写第 1 个候选，靠近后由重试/换候选自愈",
+						entry->nameZh, a_formID, entry->candCount);
+				}
 			} else {
 				// ★ 第 30 轮：用候选链选出来的目标；★ 第 31 轮：**点击时重算一次**（候选链
 				//   顺序改成「精确优先」后，这里重算就等于「按此刻的加载状态挑最精确的目标」——
@@ -1906,8 +1994,13 @@ namespace SAQ
 			g_guide.guideRef = guideRefID;
 			// ★ 第 42 轮：尾上带 `界面按键行` —— 与这里的任务名并排即可回答
 			//   「导航的目标不是我悬停的那条」到底是界面选错了行，还是后面某一段错了（见 As3PressNote）。
-			REX::INFO("引导请求：{}（0x{:08X}）→ 引用 0x{:08X}（{}）｜{}｜星图={}｜{}",
-				displayName, a_formID, guideRefID, whereZh, detail,
+			// ★ 第 45 轮：带上候选注记（用的是第几个候选、叫什么）。
+			const std::string candNote = entry
+				? std::format("候选 [{}/{}]「{}」", g_guide.candIndex + 1u, entry->candCount,
+					  CandidateName(*entry, g_guide.candIndex))
+				: std::string{ "任务板入口" };
+			REX::INFO("引导请求：{}（0x{:08X}）→ 引用 0x{:08X}（{}）｜{}｜{}｜星图={}｜{}",
+				displayName, a_formID, guideRefID, whereZh, candNote, detail,
 				a_wantMap ? "是（设定航线）" : "否", As3PressNote());
 			NotifyGuideReply(a_seq, a_formID, 0);
 			ScheduleGuideVerify(a_seq);
@@ -2013,11 +2106,21 @@ namespace SAQ
 			}
 			if ((ch.guideState == 2.0f || ch.guideState == 3.0f) && g_guide.verifyResends < 2) {
 				++g_guide.verifyResends;
-				std::string detail;
-				if (Guide::SetGuideTarget(g_guide.guideRef, detail)) {
-					REX::INFO("引导重发：{}（0x{:08X}）脚本状态={:.0f}"
-							  "（2=引用当时没加载 / 3=脚本重挂丢了别名），已清 0 让脚本再试｜{}",
-						DisplayNameOf(g_guide.questFormID), g_guide.questFormID, ch.guideState, detail);
+				// ★ 第 45 轮：状态 2（引用取不到）优先**换下一个候选**（质量次优、此刻
+				//   可能可得）；换不成（只有一个候选 / 写失败）才重发当前目标（第 16 轮语义：
+				//   等玩家靠近 —— 非常驻引用加载后自然可用）。状态 3 与候选无关，照旧重发。
+				bool switched = false;
+				if (ch.guideState == 2.0f) {
+					const auto* info = FindStaticQuest(g_guide.questFormID);
+					switched = info && SwitchGuideCandidate(*info, "脚本报取不到");
+				}
+				if (!switched) {
+					std::string detail;
+					if (Guide::SetGuideTarget(g_guide.guideRef, detail)) {
+						REX::INFO("引导重发：{}（0x{:08X}）脚本状态={:.0f}"
+								  "（2=引用当时没加载 / 3=脚本重挂丢了别名），已清 0 让脚本再试｜{}",
+							DisplayNameOf(g_guide.questFormID), g_guide.questFormID, ch.guideState, detail);
+					}
 				}
 			}
 			// ★ 第 26/27 轮：超时判定只发生在**菜单关着**时（菜单开着时的短路在函数开头）。
@@ -2066,7 +2169,10 @@ namespace SAQ
 			if (!ch.resolved || targetID == 0) {
 				return;
 			}
-			const auto* entry = FindQuestByGuideRef(targetID);
+			// ★ 第 45 轮：通道里的目标可能是候选池里的第 2/3 个 —— 反查顺带取回下标，
+			//   后续换候选 / 动态升级都从它继续（不然会从第 1 个重新数）。
+			std::uint8_t adoptCandIdx = 0;
+			const auto* entry = FindQuestByGuideRef(targetID, adoptCandIdx);
 			if (!entry) {
 				// ★ 第 27 轮：也可能是「无限任务入口」（任务板）—— 旧会话的目标 = 条目 uID（板自身）。
 				// ★ 第 30 轮：新会话的目标是候选链选中的那一个（新建常驻 marker / 同 cell 兜底），
@@ -2116,11 +2222,14 @@ namespace SAQ
 			}
 			g_guide.questFormID = questID;
 			g_guide.guideRef = targetID;
-			g_guide.lastTargetCheckMs = 0;   // 第 32 轮：允许同帧的动态更新立即复算（入口条目用）
+			g_guide.candIndex = adoptCandIdx;   // ★ 第 45 轮：从通道里的那个候选继续
+			g_guide.candSwitches = 0;
+			g_guide.lastTargetCheckMs = 0;   // 第 32 轮：允许同帧的动态更新立即复算
 			g_guide.adoptWarnRef = 0;
-			REX::INFO("认领已有引导：{}（0x{:08X}）目标引用=0x{:08X}｜脚本状态={:.0f}"
-					  "（上一次会话/读档留下的，界面会同步成「正在引导」）",
-				entry->nameZh, questID, targetID, ch.guideState);
+			REX::INFO("认领已有引导：{}（0x{:08X}）目标引用=0x{:08X}（候选 [{}]「{}」/ 共 {}）"
+					  "｜脚本状态={:.0f}（上一次会话/读档留下的，界面会同步成「正在引导」）",
+				entry->nameZh, questID, targetID, adoptCandIdx + 1u,
+				CandidateName(*entry, adoptCandIdx), entry->candCount, ch.guideState);
 		}
 
 		// 菜单开着时轮询 AS3 的引导请求（`_root.SAQ_PeekGuide` → "<序号>|<任务FormID>"）。
@@ -2208,6 +2317,50 @@ namespace SAQ
 			g_guide.guideRef = 0;
 		}
 
+		// ★★ 第 45 轮：把引导换到候选池里的**下一个**候选（循环回绕）。
+		//
+		//   触发场景（都来自实测反馈的形状）：
+		//     * 点引导时第一候选（有名字的 NPC）非常驻、人在远处 ⇒ 脚本报状态 2；
+		//     * 认领的候选后来随 cell 卸载而不可用。
+		//   换成「质量次优但此刻可能可得」的候选，比干等一个取不到的目标强。
+		//   候选转一圈都没可得时，调用方会回到「重发当前目标」等玩家靠近（第 16 轮语义）。
+		//
+		//   返回 true = 已换并写好通道；false = 没得换（候选 ≤1 / 写失败）。
+		bool SwitchGuideCandidate(const StaticQuestInfo& a_info, std::string_view a_reason)
+		{
+			if (a_info.candCount <= 1) {
+				return false;
+			}
+			const auto next = static_cast<std::uint8_t>((g_guide.candIndex + 1) % a_info.candCount);
+			const auto nextID = CandidateFormID(a_info, next);
+			if (nextID == 0) {
+				return false;  // 下一个候选的 master 没加载 —— 不换（保持现状）
+			}
+			std::string detail;
+			if (!Guide::SetGuideTarget(nextID, detail)) {
+				REX::WARN("引导换候选失败：{}（0x{:08X}）候选 [{}] → [{}]｜{}",
+					DisplayNameOf(g_guide.questFormID), g_guide.questFormID,
+					g_guide.candIndex + 1u, next + 1u, detail);
+				return false;
+			}
+			const auto old = g_guide.guideRef;
+			const auto oldIdx = g_guide.candIndex;
+			g_guide.guideRef = nextID;
+			g_guide.candIndex = next;
+			++g_guide.candSwitches;
+			// 重新开始确认窗口（900ms 后复查）。**不重置 verifyTries/verifyResends**：
+			// 那是「总重试预算」，由调用方（PollGuideVerify）统一管理 —— 否则换候选
+			// 会无限给自己续命。
+			g_guide.verifyAtMs = NowMs() + kGuideVerifyFirstMs;
+			g_guide.verifySeq = 0;
+			REX::INFO("引导换候选：{}（0x{:08X}）0x{:08X} → 0x{:08X}"
+					  "（[{}]「{}」→ [{}]「{}」；{}）｜{}",
+				DisplayNameOf(g_guide.questFormID), g_guide.questFormID, old, nextID,
+				oldIdx + 1u, CandidateName(a_info, oldIdx), next + 1u, CandidateName(a_info, next),
+				a_reason, detail);
+			return true;
+		}
+
 		// ★ 第 16 轮：引导「静默失效」的自愈。
 		//
 		// 两种场景（都实测/推断过）：
@@ -2218,6 +2371,8 @@ namespace SAQ
 		//      之后玩家飞近了、引用加载了，但脚本不会自己重试。
 		// 两种情况都靠「把通道重写一遍（GuideState 清 0）」让脚本重新应用一次。
 		// 状态 4（别名不存在）不重发 —— ESM 补丁没生效，重写也没用。
+		// ★ 第 45 轮：状态 2（取不到）时优先**换下一个候选**（见 SwitchGuideCandidate）；
+		//   候选只有一个 / 换不成才重发当前目标（第 16 轮语义：等玩家靠近后自愈）。
 		void ReissueGuideIfScriptLost()
 		{
 			if (g_guide.questFormID == 0) {
@@ -2230,6 +2385,14 @@ namespace SAQ
 			if (ch.guideState != 2.0f && ch.guideState != 3.0f) {
 				return;  // 0=待处理（脚本会自己应用）/ 1=已应用（正常）
 			}
+			// ★ 第 45 轮：状态 2（取不到）优先换下一个候选；状态 3（脚本重挂丢别名）
+			//   与候选无关，照旧重发。
+			if (ch.guideState == 2.0f) {
+				const auto* info = FindStaticQuest(g_guide.questFormID);
+				if (info && SwitchGuideCandidate(*info, "脚本报取不到")) {
+					return;
+				}
+			}
 			std::string detail;
 			if (!Guide::SetGuideTarget(g_guide.guideRef, detail)) {
 				REX::WARN("引导重新下发失败：{}（0x{:08X}）｜{}",
@@ -2239,6 +2402,55 @@ namespace SAQ
 			REX::INFO("引导重新下发：{}（0x{:08X}）脚本状态={:.0f}"
 					  "（2=引用当时没加载 / 3=脚本重挂丢了别名），已清 0 让脚本再试｜{}",
 				DisplayNameOf(g_guide.questFormID), g_guide.questFormID, ch.guideState, detail);
+		}
+
+		// ★★ 第 45 轮：普通任务的候选池「动态复算」（菜单关着时定期跑，与入口同一套思路）。
+		//
+		// 场景：
+		//   ① 玩家从远处点引导（第一候选 = 有名字的 NPC 非常驻取不到 ⇒ 已落到常驻备胎）；
+		//      随后飞近、NPC 的 cell 加载了 ⇒ 这里把引导**升级**回 NPC（更贴「去哪里接」）；
+		//   ② 玩家飞远 / 目标随 cell 卸载 ⇒ 换回此刻可得的候选（蓝点至少还在）。
+		// 只写通道、不碰界面：换的是**同一条任务**的引导目标，界面上的「正在引导」不变
+		// （静默确认：失败不清通道、不回滚界面，见 AbortUnverifiedGuide）。
+		void UpdateQuestGuideTarget(const StaticQuestInfo& a_info)
+		{
+			if (a_info.candCount <= 1) {
+				return;  // 只有一个候选：没什么可复算的
+			}
+			const auto now = NowMs();
+			if (g_guide.lastTargetCheckMs != 0 &&
+				now - g_guide.lastTargetCheckMs < kEntryTargetCheckMs) {
+				return;  // 节流：1.5 秒最多复算一次（与入口共用同一个节流戳）
+			}
+			g_guide.lastTargetCheckMs = now;
+
+			bool anyAlive = false;
+			const auto best = PickGuideCandidate(a_info, anyAlive);
+			if (!anyAlive || best == g_guide.candIndex) {
+				return;  // 全不可得（保持现状等靠近）/ 已经是最优可得的
+			}
+			const auto bestID = CandidateFormID(a_info, best);
+			if (bestID == 0) {
+				return;
+			}
+			std::string detail;
+			if (!Guide::SetGuideTarget(bestID, detail)) {
+				REX::WARN("引导目标更新失败（候选复算）：{}（0x{:08X}）候选 [{}] → [{}]｜{}",
+					DisplayNameOf(g_guide.questFormID), g_guide.questFormID,
+					g_guide.candIndex + 1u, best + 1u, detail);
+				return;
+			}
+			const auto old = g_guide.guideRef;
+			const auto oldIdx = g_guide.candIndex;
+			g_guide.guideRef = bestID;
+			g_guide.candIndex = best;
+			ScheduleGuideVerify(0);
+			g_guide.verifySilent = true;  // 静默：失败不清通道、不回滚界面
+			REX::INFO("引导目标已更新（候选复算）：{}（0x{:08X}）0x{:08X} → 0x{:08X}"
+					  "（[{}]「{}」→ [{}]「{}」）｜{}",
+				DisplayNameOf(g_guide.questFormID), g_guide.questFormID, old, bestID,
+				oldIdx + 1u, CandidateName(a_info, oldIdx), best + 1u, CandidateName(a_info, best),
+				detail);
 		}
 
 		// ★★ 第 31 轮：入口条目的引导目标**动态更新**（只写通道 + 记日志，不碰界面）。
@@ -2265,7 +2477,13 @@ namespace SAQ
 			}
 			const auto idx = FindEntryIndexByFormID(g_guide.questFormID);
 			if (idx >= kEntryTableSize) {
-				return;  // 不是入口条目（普通任务不在这里换目标）
+				// ★ 第 45 轮：不是入口条目 —— 普通任务走**候选池**的动态复算
+				//   （同一个节流戳；函数内部 candCount ≤ 1 时直接返回）。
+				const auto* info = FindStaticQuest(g_guide.questFormID);
+				if (info) {
+					UpdateQuestGuideTarget(*info);
+				}
+				return;
 			}
 			const auto now = NowMs();
 			if (g_guide.lastTargetCheckMs != 0 &&

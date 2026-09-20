@@ -76,6 +76,16 @@
            DLL 的重试等待从 3 s 收到 1.5 s 与脚本新窗口对齐。
            本脚本检查：SWF 新 note（+ 反向检查：旧 note 不应再出现）+ PEX 节拍待办三件套
            + DLL 两条新文案
+  第 45 轮：★★ 引导质量收口（大项 A）—— 引导目标升级为**候选池**（多候选链）：
+           ① 数据：gen_guide_targets.py 每条任务输出按质量排序的候选列表（有名字的
+              NPC > 可读名落脚点 > 通用名 NPC > 内部名落脚点；同级常驻优先；最多 6+2）；
+           ② 表：SAQ_QuestTable.h 生成 kGuideCandidates[] + 每条任务 candBegin/candCount
+              （旧的单目标字段 guideRefLocal/guideRefMaster 已移除）；
+           ③ DLL：点引导时用 LookupByID 挑「此刻可得的、质量最优的」候选；脚本报状态 2
+              （取不到）时自动换下一个候选（循环）；菜单关着时复算（飞近后自动升级回
+              有名字的 NPC / 目标失效时回退到可得候选）；认领遍历候选池并记住下标。
+           本脚本检查：DLL 5 条新日志 + 静态表候选池完整性（数据侧：切片不越界 /
+           209 条有目标 / 旧字段反向检查）
 
 用法：python tools/ui/verify_saq_build.py
 """
@@ -83,6 +93,7 @@ from __future__ import annotations
 
 import json
 import pathlib
+import re
 import struct
 import sys
 import zlib
@@ -475,6 +486,15 @@ def main() -> int:
             #   ② 关闭前补一次引导请求轮询（否则按 R 后立刻关菜单时，请求会被
             #   紧随其后的 lastSeq 重置丢掉）。
             "菜单关闭补处理请求": "补处理了关闭瞬间的引导请求".encode(),
+            # ★★ 第 45 轮：引导目标**候选池**（多候选链）——
+            #   ① 点引导时挑「此刻可得的、质量最优的」候选（远处不会先撞取不到的 NPC）；
+            #   ② 脚本报状态 2（取不到）时自动换下一个候选；
+            #   ③ 菜单关着时复算（飞近后自动升级回有名字的 NPC / 目标失效时回退）。
+            "引导换候选日志": "引导换候选：".encode(),
+            "候选复算日志": "引导目标已更新（候选复算）".encode(),
+            "候选全不可得日志": "个候选此刻都取不到".encode(),
+            "请求日志带候选注记": "候选 [".encode(),
+            "认领日志带候选下标": "（候选 [".encode(),
         }.items():
             all_ok &= check(f"DLL · {name}", blob, needle)
         # 反向检查：第 31 轮把候选链顺序换掉，第 30 轮的「marker 优先」诊断文案不应再出现
@@ -596,6 +616,50 @@ def main() -> int:
         ok = n > 0
         print(("OK  " if ok else "MISS") + f" 静态表 · 门槛计数非空（kQuestCondCount = {n}）")
         all_ok &= ok
+
+        # ★★ 第 45 轮：引导目标**候选池**（多候选链）—— 数据侧完整性（不只是特征串）：
+        #   ① 结构/数组存在；② 候选计数 > 0；③ 任务表的切片 (candBegin+candCount)
+        #   全部不越界、且有目标任务数与实测对齐（209 条）；④ 旧单目标字段已移除。
+        def _num_after(text: str, k: str) -> int:
+            i = text.find(k)
+            if i < 0:
+                return -1
+            digits = ""
+            for ch in text[i + len(k):]:
+                if ch.isdigit():
+                    digits += ch
+                else:
+                    break
+            return int(digits) if digits else -1
+
+        for name, needle in {
+            "候选池结构 StaticGuideCandidate": "struct StaticGuideCandidate",
+            "候选池数组 kGuideCandidates": "kGuideCandidates[] = {",
+        }.items():
+            ok = needle in blob
+            print(("OK  " if ok else "MISS") + f" 静态表 · {name}")
+            all_ok &= ok
+        cand_total = _num_after(blob, "kGuideCandidateCount = ")
+        n_with = 0
+        n_oob = 0
+        t0 = blob.find("kQuestTable[] = {")
+        t1 = blob.find("kQuestTableSize")
+        region = blob[t0:t1] if 0 <= t0 < t1 else ""
+        for m in re.finditer(
+                r"\{\s*0x([0-9A-F]+)u,\s*(\d+)u,\s*(\d+)u,\s*0x([0-9A-F]+)u,"
+                r"\s*(\d+)u,\s*(\d+)u,\s*(\d+)u,\s*(\d+)u,", region):
+            begin, count = int(m.group(5)), int(m.group(6))
+            if count:
+                n_with += 1
+                if cand_total >= 0 and begin + count > cand_total:
+                    n_oob += 1
+        ok = cand_total > 200 and n_with == 209 and n_oob == 0
+        print(("OK  " if ok else "MISS") +
+              f" 静态表 · 候选池完整（候选 {cand_total} 条 / 有目标任务 {n_with} / 切片越界 {n_oob}）")
+        all_ok &= ok
+        gone = "guideRefLocal" not in blob and "guideRefMaster" not in blob
+        print(("OK  " if gone else "MISS") + " 静态表 · 旧单目标字段已移除(反向检查)")
+        all_ok &= gone
     else:
         print(f"MISS 缺少 {table_h}")
         all_ok = False
