@@ -115,6 +115,7 @@ namespace SAQ
 			std::size_t hidden{};             // 因运行时状态被剔掉的
 			std::size_t testFiltered{};       // ★ 第 20 轮：被控制台测试模式（SAQ_TestMode）过滤掉的
 			std::size_t entries{};            // ★ 第 27 轮：这次加入的「无限任务入口」（任务板）条数
+			std::size_t entryNavigable{};     // ★ 第 28 轮：其中「引用当前可加载、能导航」的条数
 			std::size_t skippedMaster{};      // 所属 master 没加载（DLC 没装/没启用）而跳过的
 			bool        filterApplied{};      // 这次到底有没有按运行时状态过滤
 			std::string samples;              // 被剔掉的前几条（名字 + 状态）
@@ -396,7 +397,15 @@ namespace SAQ
 		//
 		// 需求（AGENTS.md）：无限生成任务本身不显示，但「接取入口」（任务板）作为一条
 		// 数据出现在列表里，点了就引导到那块任务板。入口不是 quest，所以不走
-		// 「已完成 / 已接取」那套运行时过滤 —— 任务板常驻在世界里，永远可去。
+		// 「已完成 / 已接取」那套运行时过滤。
+		//
+		// ★ 第 28 轮（实测后修正）：入口能不能导航 = **任务板引用现在能不能取到**。
+		//   12 条入口里 11 条是**非持久引用**（只有阿基拉城常驻），玩家离得远时所在
+		//   cell 未加载 ⇒ 脚本 `Game.GetForm` 取不到（状态 2）⇒ 引导注定失败，而旧蓝点
+		//   还留在上一条任务上（界面先说「已设为引导」）—— 实测 11:40 会话就是这个现象。
+		//   这里用与脚本**同一个引擎查询**（`LookupByID`，Papyrus 的 Game.GetForm 也是它）
+		//   提前判定：取不到就按「无导航目标」显示（界面置灰 + 文案说明「离得太远」），
+		//   玩家靠近（cell 加载）后再开菜单即可导航。
 		void AppendEntryRows(std::vector<QuestEntry>& a_out, RuntimeFilterStats& a_stats)
 		{
 			for (std::size_t i = 0; i < kEntryTableSize; ++i) {
@@ -408,11 +417,14 @@ namespace SAQ
 				QuestEntry entry;
 				entry.formID = id;
 				entry.type = kEntryQuestType;  // AS3：入口条目（子项/描述换文案）
-				entry.hasGuideTarget = true;   // 目标 = 它自己
+				entry.hasGuideTarget = (RE::TESForm::LookupByID(static_cast<RE::TESFormID>(id)) != nullptr);
 				entry.nameZh = e.nameZh;
 				entry.nameEn = e.nameEn;
 				a_out.push_back(std::move(entry));
 				++a_stats.entries;
+				if (entry.hasGuideTarget) {
+					++a_stats.entryNavigable;
+				}
 			}
 		}
 
@@ -584,12 +596,13 @@ namespace SAQ
 		std::string FormatRuntimeStats(const RuntimeFilterStats& a_stats)
 		{
 			std::string out = std::format(
-				"运行时状态：引擎存在={} 虚表识别={} 未识别={} 已开始={} 已完成={} 追踪中={} 隐藏={} 测试过滤={} 跳过(master未加载)={} 入口={} 过滤={}",
+				"运行时状态：引擎存在={} 虚表识别={} 未识别={} 已开始={} 已完成={} 追踪中={} 隐藏={} 测试过滤={} 跳过(master未加载)={} 入口={}(可导航 {}) 过滤={}",
 				a_stats.live, a_stats.recognized, a_stats.unrecognized,
 				a_stats.started, a_stats.completed, a_stats.tracked, a_stats.hidden,
 				a_stats.testFiltered,
 				a_stats.skippedMaster,
-				a_stats.entries,  // ★ 第 27 轮：任务板入口条目数
+				a_stats.entries,        // ★ 第 27 轮：任务板入口条目数
+				a_stats.entryNavigable, // ★ 第 28 轮：其中引用当前可取（能导航）的条数
 				a_stats.filterApplied ? "生效" : "跳过(识别率<80%)");
 			if (!a_stats.samples.empty()) {
 				// 完整名单（第 11 轮起不再只记前几条）：玩家反馈「某条任务没显示」时，
@@ -1015,6 +1028,16 @@ namespace SAQ
 			} else {
 				guideRefID = a_formID;  // 入口条目：任务板引用自身
 				displayName = gap->nameZh;
+				// ★ 第 28 轮：写通道前复检一次「引用现在能不能取到」（开菜单到点击之间可能已变化）。
+				//   取不到 ⇒ 不写通道，直接按结果码 1 回滚界面（理由见 AppendEntryRows 的说明）——
+				//   避免「通道里塞进一个脚本注定取不到的目标、旧蓝点还留着」的混乱（实测 11:40）。
+				if (RE::TESForm::LookupByID(static_cast<RE::TESFormID>(guideRefID)) == nullptr) {
+					REX::INFO("引导请求：{}（0x{:08X}）的任务板引用当前取不到（离得太远 / cell 未加载）"
+							  "—— 按「暂时无法导航」处理，不写通道",
+						displayName, a_formID);
+					NotifyGuideReply(a_seq, g_guide.questFormID, 1);
+					return;
+				}
 			}
 			std::string detail;
 			if (!Guide::SetGuideTarget(guideRefID, detail)) {

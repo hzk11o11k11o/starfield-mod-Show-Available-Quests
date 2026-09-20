@@ -636,8 +636,16 @@ package
       private function SaqDescriptionText(param1:Boolean, param2:Boolean = false) : String
       {
          // ★ 第 27 轮：无限任务入口（任务板）。
+         // ★ 第 28 轮：入口的「无目标」不是「没有导航目标」，而是「引用当前没加载」
+         //   （任务板大多是非持久引用，你离得太远时取不到）—— 如实说明。
          if(param2 == true)
          {
+            if(param1 != true)
+            {
+               return this.SaqUseChinese()
+                  ? "你现在离这个位置还很远 —— 暂时无法导航。到它所在的城市/据点附近后，再打开一次任务菜单即可。"
+                  : "You are too far from this location - navigation is unavailable for now. Come closer to its city/outpost, then reopen the mission menu.";
+            }
             if(this.SaqCourseKeyName().length == 0)
             {
                return this.SaqUseChinese()
@@ -999,7 +1007,16 @@ package
          if(param1.bSaqHasTarget != true)
          {
             GlobalFunc.PlayMenuSound(MISSION_TRACKING_TOGGLE_OFF_SOUND);
-            this.SaqGuideNote = "该任务暂无导航目标:" + this.SaqQuestName(param1);
+            // ★ 第 28 轮：入口条目（任务板）的「不可导航」是「离得太远（引用未加载）」，
+            //   与任务的「没有导航目标」不是一回事 —— 提示分开写。
+            if(param1.iType == SAQ_ENTRY_TYPE)
+            {
+               this.SaqGuideNote = "暂时无法导航（离得太远）:" + this.SaqQuestName(param1);
+            }
+            else
+            {
+               this.SaqGuideNote = "该任务暂无导航目标:" + this.SaqQuestName(param1);
+            }
             return false;
          }
          var _loc2_:Number = this.SaqGuideQuest == param1.uID ? 0 : param1.uID;

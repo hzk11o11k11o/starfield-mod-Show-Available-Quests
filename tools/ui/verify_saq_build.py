@@ -66,6 +66,10 @@ def main() -> int:
         "入口子项名(英)": b"Go to the mission board",
         "入口描述(中)": "这是一块任务板".encode(),
         "入口描述(英)": b"This is a mission board",
+        # 第 28 轮：入口「离得太远、引用未加载」的如实提示（与任务的「没有导航目标」分开）
+        "入口太远描述(中)": "你现在离这个位置还很远".encode(),
+        "入口太远描述(英)": b"You are too far from this location",
+        "入口太远提示": "暂时无法导航（离得太远）".encode(),
     }
     swf_paths = [
         ROOT / "ui/missionmenu/build/missionmenu.swf",
@@ -125,8 +129,10 @@ def main() -> int:
             "入口测试模式说明": "无限任务入口".encode(),
             "入口认领日志": "认领已有引导（任务板入口）".encode(),
             "入口条目数据": "任务板 · 新亚特兰蒂斯".encode(),
-            "入口统计列": "入口={} 过滤=".encode(),
             "引导确认降噪文案": "关菜单后自动确认".encode(),
+            # 第 28 轮：入口可用性的运行时判定（LookupByID；与脚本 Game.GetForm 同源）
+            "入口统计列": "入口={}(可导航 {})".encode(),
+            "入口太远不写通道": "的任务板引用当前取不到".encode(),
         }.items():
             all_ok &= check(f"DLL · {name}", blob, needle)
         # 反向检查：第 27 轮把「每次切条目打一行」的旧说明换成「每菜单一行」，旧串不应再出现
