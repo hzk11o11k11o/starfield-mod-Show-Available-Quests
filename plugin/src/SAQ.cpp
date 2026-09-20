@@ -1279,6 +1279,12 @@ namespace SAQ
 			//   「候选复算」据此把目标从 NPC 误降级到同 cell 兜底，10 秒后又升回去。
 			//   宽限期内不复算（目标保持通道里的原值，等引擎稳定）。
 			std::uint64_t adoptGraceUntilMs{};
+			// ★ 第 49 轮补丁：候选**降级观察期**（见 kDowngradeHoldMs）——
+			//   宽限期只兜「认领后的头 8 秒」；实测（21:57 会话）读档加载更久，
+			//   宽限期一到就复算、仍取不到 ⇒ 还是误降级到兜底、10 秒后又升回。
+			//   现在：当前候选取不到时先进入观察（通道完全不动），持续
+			//   kDowngradeHoldMs 仍取不到才执行降级；任何一次「取得到」都清掉观察。
+			std::uint64_t downgradeSinceMs{};  // 观察开始时间（0 = 没在观察）
 			// ★ 第 45 轮：候选池 —— 当前引导用的是第几个候选（0-based，列表按质量排序）。
 			//   「脚本报状态 2（取不到）」时换下一个（循环）；菜单关着时还会定期复算
 			//   「有没有更优的候选变得可用了」（见 UpdateQuestGuideTarget）。
@@ -1303,6 +1309,13 @@ namespace SAQ
 		// ★ 第 48 轮：认领已有引导后的复算宽限期 —— 读档/开局瞬间引擎查询不稳定，
 		//   立即复算会把目标误降级（实测例：补给之行 [1]NPC → [3]兜底 → 10 秒后又升回）。
 		constexpr std::uint64_t kAdoptGraceMs = 8000;
+		// ★ 第 49 轮补丁：候选**降级观察期** —— 当前候选取不到时不立刻降级，先保持
+		//   这么久（通道完全不动、界面上「正在引导」不变）。20 秒的依据：21:57 会话实测
+		//   读档后目标持续取不到 ≈19 秒才恢复；而真正的「飞远」场景里目标 cell 卸载后
+		//   候选**多半全不可得**（复算本来就不会降级，见 UpdateQuestGuideTarget）⇒
+		//   拉长观察期几乎不损失功能，换掉读档窗口里「8 秒宽限期之后」仍会发生的
+		//   [1]→[3]→[1] 抖动（日志 WARN + 蓝点闪动）。
+		constexpr std::uint64_t kDowngradeHoldMs = 20000;
 		constexpr std::uint64_t kUpkeepIntervalMs = 2000;    // 菜单关着时例行认领/对账间隔（第 32 轮）
 		// ★ 第 46 轮：引导「待生效」（目标尚未加载）的退避重试参数（见 PollApproachRetry）。
 		constexpr std::uint64_t kApproachRetryFirstMs = 10000;  // 第一次重试：10 秒
@@ -2233,6 +2246,7 @@ namespace SAQ
 				}
 				g_guide.candIndex = candIdx;
 				g_guide.candSwitches = 0;
+				g_guide.downgradeSinceMs = 0;  // ★ 第 49 轮补丁：新引导不带旧任务的降级观察
 				displayName = entry->nameZh;
 				whereZh = entry->whereZh;
 				if (!anyAlive) {
@@ -2506,6 +2520,7 @@ namespace SAQ
 					// ★ 第 48 轮：宽限期内不复算（读档瞬间的引擎查询不可靠，见 kAdoptGraceMs）。
 					g_guide.adoptGraceUntilMs = NowMs() + kAdoptGraceMs;
 					g_guide.adoptWarnRef = 0;
+					g_guide.downgradeSinceMs = 0;  // ★ 第 49 轮补丁：认领不带旧的降级观察
 					REX::INFO("认领已有引导（任务板入口）：{}（0x{:08X}）引导目标=0x{:08X}｜脚本状态={:.0f}"
 							  "（上一次会话/读档留下的，界面会同步成「正在引导」）",
 						gap->nameZh, uid, targetID, ch.guideState);
@@ -2542,6 +2557,7 @@ namespace SAQ
 			// ★ 第 48 轮：宽限期内不复算（读档瞬间的引擎查询不可靠，见 kAdoptGraceMs）。
 			g_guide.adoptGraceUntilMs = NowMs() + kAdoptGraceMs;
 			g_guide.adoptWarnRef = 0;
+			g_guide.downgradeSinceMs = 0;  // ★ 第 49 轮补丁：认领不带旧的降级观察
 			REX::INFO("认领已有引导：{}（0x{:08X}）目标引用=0x{:08X}（候选 [{}]「{}」/ 共 {}）"
 					  "｜脚本状态={:.0f}（上一次会话/读档留下的，界面会同步成「正在引导」）",
 				entry->nameZh, questID, targetID, adoptCandIdx + 1u,
@@ -2748,8 +2764,32 @@ namespace SAQ
 
 			bool anyAlive = false;
 			const auto best = PickGuideCandidate(a_info, anyAlive);
-			if (!anyAlive || best == g_guide.candIndex) {
-				return;  // 全不可得（保持现状等靠近）/ 已经是最优可得的
+			// ★ 第 49 轮补丁：**降级要过观察期，升级立即执行**。
+			//   `best > candIndex` ⇔ 当前候选此刻取不到（best 只从可得的里挑，见 PickGuideCandidate）；
+			//   先保持通道不动，持续 kDowngradeHoldMs 仍取不到才换（依据见 kDowngradeHoldMs 注释）。
+			const bool currentAlive = anyAlive && best <= g_guide.candIndex;
+			if (!currentAlive) {
+				if (g_guide.downgradeSinceMs == 0) {
+					g_guide.downgradeSinceMs = now;
+					REX::INFO("候选复算：{}（0x{:08X}）当前候选 [{}]「{}」此刻取不到 —— 先保持"
+							  "（观察 {:.0f} 秒仍取不到才降级；读档 / 加载中常见）",
+						DisplayNameOf(g_guide.questFormID), g_guide.questFormID,
+						g_guide.candIndex + 1u, CandidateName(a_info, g_guide.candIndex),
+						static_cast<double>(kDowngradeHoldMs) / 1000.0);
+				}
+				if (!anyAlive || now - g_guide.downgradeSinceMs < kDowngradeHoldMs) {
+					return;  // 没有可降级的目标 / 观察期未满 ⇒ 通道保持不动
+				}
+			} else {
+				if (g_guide.downgradeSinceMs != 0) {
+					REX::INFO("候选复算：{}（0x{:08X}）当前候选 [{}]「{}」恢复可得 —— 观察结束（未降级）",
+						DisplayNameOf(g_guide.questFormID), g_guide.questFormID,
+						g_guide.candIndex + 1u, CandidateName(a_info, g_guide.candIndex));
+					g_guide.downgradeSinceMs = 0;
+				}
+				if (best == g_guide.candIndex) {
+					return;  // 已经是最优可得的
+				}
 			}
 			const auto bestID = CandidateFormID(a_info, best);
 			if (bestID == 0) {
@@ -2827,6 +2867,23 @@ namespace SAQ
 										  static_cast<RE::TESFormID>(g_guide.guideRef)) != nullptr;
 			if (!toExact && currentAlive) {
 				return;  // 现在这个目标还活着而且不会更差 —— 不换（避免精确→兜底的无谓抖动）
+			}
+			// ★ 第 49 轮补丁：降级（当前目标取不到 ⇒ 换兜底）先过**观察期** ——
+			//   与普通任务的候选复算同一套语义（读档/加载瞬间 LookupByID 会短暂返回
+			//   null，旧行为会据此把精确目标换成兜底、加载完再升回 ⇒ 蓝点闪动）。
+			if (!toExact) {
+				if (g_guide.downgradeSinceMs == 0) {
+					g_guide.downgradeSinceMs = now;
+					REX::INFO("入口引导目标复算：{}（0x{:08X}）当前目标 0x{:08X} 此刻取不到 —— 先保持"
+							  "（观察 {:.0f} 秒仍取不到才降级；读档 / 加载中常见）",
+						DisplayNameOf(g_guide.questFormID), g_guide.questFormID, g_guide.guideRef,
+						static_cast<double>(kDowngradeHoldMs) / 1000.0);
+				}
+				if (now - g_guide.downgradeSinceMs < kDowngradeHoldMs) {
+					return;  // 观察期未满 ⇒ 通道保持不动
+				}
+			} else {
+				g_guide.downgradeSinceMs = 0;  // 能换更精确的目标（升级）⇒ 立即执行并清观察
 			}
 
 			std::string detail;
@@ -2955,6 +3012,7 @@ namespace SAQ
 			g_guide.verifySilent = false;
 			g_guide.lastTargetCheckMs = 0;
 			g_guide.adoptWarnRef = 0;
+			g_guide.downgradeSinceMs = 0;      // ★ 第 49 轮补丁：重新配对不带旧的降级观察
 			g_guide.approachPending = false;   // ★ 第 46 轮：重新配对时不带「待生效」状态
 			g_guide.approachTries = 0;
 			g_guide.approachRetryAtMs = 0;
