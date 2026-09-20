@@ -345,6 +345,26 @@ package
          }
       }
       
+      // ★★ 第 49 轮（引擎内 harness）：按 uID 在**当前显示列表**里找行下标（找不到给 -1）。
+      //   与 SAQ_RefreshQuestRow 用同一套查找（显示下标 ≠ 数据下标 —— InitializeEntries 会把
+      //   已完成 / misc 条目挪位，展开时子项还会插进来）。
+      //   为什么放在本类：entryList 只有列表内部能访问（protected）；测试驱动要按 uID 选中
+      //   某一行，没有它就是「按数据下标猜显示下标」——那正是第 14 轮踩过的坑。
+      public function SAQ_FindEntryIndexByUID(param1:Number) : int
+      {
+         var _loc2_:int = 0;
+         while(_loc2_ < entryCount)
+         {
+            var _loc3_:Object = entryList[_loc2_];
+            if(_loc3_ != null && _loc3_.uID == param1)
+            {
+               return _loc2_;
+            }
+            _loc2_++;
+         }
+         return -1;
+      }
+      
       // ★ SAQ（第 14 轮）：按任务 uID 把当前**显示列表**里的行就地重渲染。
       // 用途：可接任务的「引导中」状态变化（点子项 / 按 X）时，点亮或熄灭主标题左侧
       // 那条竖条（TrackIndicator）—— 即原版「追踪中」的视觉。

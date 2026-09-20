@@ -1363,4 +1363,53 @@ namespace SAQ::UI
 		const std::string arg = std::to_string(a_formID);
 		return CallAs3WithString(root, "_root.SAQ_SyncGuideState", arg.c_str(), a_reply);
 	}
+
+	// ★★ 第 49 轮（harness）：把「测试驱动」调用发给 AS3 的 SAQ_TestDrive* 入口。
+	//
+	// 用途：引擎内自动测试要代替人做「选中某条 / 按 R / 展开子项」这些操作 ——
+	// 用的是**同一条 Invoke 通道**（本项目已经跑了十几轮的那条），所以不需要键鼠、
+	// 也不会抢玩家的输入（AGENTS.md 的要求）。
+	//
+	// ★ 关键约定：AS3 侧那几个入口**必须调用真实的处理函数**（选中变化 / 按键处理 /
+	//   展开），不许复制一套逻辑 —— 否则测的是测试代码，不是产品代码。
+	//   返回串是 AS3 给的短状态（如 "ok|idx=3" / "err|notfound"），进结果 JSON 当证据。
+	bool InvokeUiTestDrive(const char* a_fn, const std::string& a_arg, std::string& a_reply)
+	{
+		if (!a_fn || !*a_fn) {
+			a_reply = "空函数名";
+			return false;
+		}
+		std::string detail;
+		if (!EnsureResolved(detail)) {
+			a_reply = "桥没通";
+			return false;
+		}
+		auto& bridge = Cached();
+		auto* root = reinterpret_cast<RE::Scaleform::GFx::ASMovieRootBase*>(bridge.asRoot);
+		if (!root) {
+			a_reply = "ASMovieRoot 指针为空";
+			return false;
+		}
+		const std::string path = std::string{ "_root." } + a_fn;
+		// 缓冲区比 CallAs3WithString 的大（那个是 96）：测试入口会回一行诊断，
+		// 可能带任务名（中文）与下标，96 字节会被截断在多字节字符中间。
+		const std::wstring wide = Utf8ToWide(a_arg.c_str());
+		if (wide.empty() && !a_arg.empty()) {
+			a_reply = "参数编码失败";
+			return false;
+		}
+		RE::Scaleform::GFx::Value arg(wide.c_str());
+		RE::Scaleform::GFx::Value ret;
+		if (!SafeInvoke(root, path.c_str(), &ret, &arg, 1)) {
+			a_reply = path + "=fail(路径不存在或调用失败；SWF 是旧版？)";
+			return false;
+		}
+		char buf[512]{};
+		if (SafeReadValueString(ret, buf, sizeof(buf))) {
+			a_reply = buf;
+		} else {
+			a_reply.clear();
+		}
+		return true;
+	}
 }

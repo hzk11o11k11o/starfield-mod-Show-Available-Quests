@@ -438,6 +438,14 @@ def main() -> int:
         "按钮状态探针 btn=[": b" btn=[",
         "事件探针函数": b"SaqNoteUserEvent",
         "按钮状态字段": b"SaqLastBtnNote",
+        # ★★ 第 49 轮（引擎内 harness）：界面的测试驱动入口 —— 只有 DLL 会调，
+        #   内部**调用真实的处理函数**（ProcessUserEvent / onEntryPress / ScrollingEvent），
+        #   于是「造状态 → 开关菜单 → 选中 → 按键 → 断言」可以全自动跑。
+        "测试入口-选中": b"SAQ_TestDriveSelect",
+        "测试入口-按键": b"SAQ_TestDriveKey",
+        "测试入口-切 tab": b"SAQ_TestDriveTab",
+        "测试入口-状态": b"SAQ_TestDriveState",
+        "列表按 uID 找行": b"SAQ_FindEntryIndexByUID",
         # ★★ 第 46 轮（大项 B）：引导可用性 + 提示收口 ——
         #   ① 描述里**提前**告知「目标要靠近才加载」（载荷第 6 列 bSaqNeedsApproach）；
         #   ② 结果码 5 = 已排定但目标尚未加载（保持竖条、不回滚、不关菜单）。
@@ -700,6 +708,21 @@ def main() -> int:
         gone = b"\x4c\x89\x1c\x24\x49\x89\x5b\x20" not in blob
         print(("OK  " if gone else "MISS") + " DLL · 旧星图节点解析器特征字节已修正(反向检查)")
         all_ok &= gone
+        # ★★ 第 49 轮（引擎内 harness）：用例驱动器 + 原语层。
+        #   ① 驱动器（SAQ_Test.cpp）：读用例文件、按步骤状态机跑、写结果 JSON；
+        #   ② 原语层（SAQ_TestOps.cpp）：日志环形缓冲 / 命令通道（GLOB 0x806~0x80D）/
+        #      菜单开关（kShow/kHide，与已实测的关菜单同一机制）/ 界面测试驱动；
+        #   ③ 只有 ini [Test] Harness=1 才启用（其余情况零开销）。
+        all_ok &= check("DLL · harness 用例载入", blob, "harness：用例文件已载入".encode())
+        all_ok &= check("DLL · harness 通道就绪", blob, "harness：通道就绪".encode())
+        all_ok &= check("DLL · harness 结果落盘", blob, "harness：结果已写入".encode())
+        all_ok &= check("DLL · harness 未启用文案", blob, "引擎内自动化测试关闭".encode())
+        all_ok &= check("DLL · harness 状态行", blob, b"harness=")
+        all_ok &= check("DLL · 命令通道自检", blob, "测试命令通道 GLOB".encode())
+        all_ok &= check("DLL · 通道垃圾读数拒写", blob, "拒绝写内存".encode())
+        all_ok &= check("DLL · 脚本未就绪判定", blob, b"SAQ_TestHarness")
+        all_ok &= check("DLL · 界面测试驱动入口", blob, b"SAQ_TestDriveSelect")
+        all_ok &= check("DLL · 菜单 kShow 开关", blob, "已请求打开任务菜单".encode())
         # ★ 第 17 轮的核心判据：DLC 的两个 + 基础游戏一共 4 个数据源名都编进了 DLL
         for master in (b"Starfield.esm", b"ShatteredSpace.esm", b"SFBGS050.esm", b"SFBGS00D.esm"):
             all_ok &= check(f"DLL · 数据源 {master.decode()}", blob, master)
@@ -763,6 +786,15 @@ def main() -> int:
         all_ok &= check("PEX · 目标未加载提示", blob, "目标地点尚未加载".encode())
         all_ok &= check("PEX · 提示冷却属性", blob, b"GuideNoticeCooldownTicks")
         all_ok &= check("PEX · 失败次数节流", blob, b"GuideFailCount")
+        # ★★ 第 49 轮（引擎内 harness）：脚本侧的测试命令执行器 ——
+        #   DLL 写命令 → 这里执行（Quest.Reset/Start/SetStage/CompleteQuest、Actor.MoveTo）
+        #   → 写回执。写侧动作用**语言级 API**（不经原生函数指针，见 docs/04 的调用约定）。
+        all_ok &= check("PEX · 测试通道就绪 Trace", blob, "测试通道已就绪".encode())
+        all_ok &= check("PEX · 测试命令 Trace", blob, "测试命令：seq=".encode())
+        all_ok &= check("PEX · 测试通道不可用提示", blob, "测试通道不可用".encode())
+        all_ok &= check("PEX · 写侧-完成", blob, b"CompleteQuest")
+        all_ok &= check("PEX · 写侧-推阶段", blob, b"SetStage")
+        all_ok &= check("PEX · 写侧-传送", blob, b"MoveTo")
         # 反向检查：第 40 轮把「地点自己没有行星，改用父地点」并入候选链诊断，旧串不应再出现
         gone = "地点自己没有行星，改用父地点".encode() not in blob
         print(("OK  " if gone else "MISS") + " PEX · 旧父地点兜底文案已替换(反向检查)")

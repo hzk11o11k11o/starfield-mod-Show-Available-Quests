@@ -212,4 +212,18 @@ namespace SAQ::Guide
 		g_prefix = 0;
 		g_failDetail.clear();
 	}
+
+	// ★★ 第 49 轮：给 harness（SAQ_TestOps）用的「按记录号取 GLOB」。
+	//   认领流程与 EnsureChannel 完全一致（魔数锚点 + 类型校验），只是不缓存指针 ——
+	//   GLOB 数量很少、调用频率很低（每 0.5 秒几条），没必要再维护一份缓存。
+	RE::TESGlobal* FindGlob(std::uint32_t a_lowId)
+	{
+		if (!g_resolved) {
+			EnsureChannel();
+		}
+		if (!g_resolved) {
+			return nullptr;
+		}
+		return GlobAt(g_prefix, a_lowId);
+	}
 }

@@ -32,6 +32,8 @@
 #include "SAQ_QuestCond.h"   // ★ 第 35 轮：进度门槛（「进度没到不显示」）
 #include "SAQ_QuestState.h"  // TESQuest 运行时状态（已开始/已完成/追踪中）
 #include "SAQ_UI.h"          // UI 通道（菜单表 → IMenu → Movie → ASMovieRoot）
+#include "SAQ_Test.h"        // ★ 第 49 轮：引擎内 harness 的用例驱动器（ini [Test] Harness）
+#include "SAQ_TestOps.h"     // ★ 第 49 轮：harness 原语（日志环形缓冲 / 命令通道 / 菜单开关）
 #include "SAQ_QuestTable.h"  // 生成物：master + 记录号 -> 中/英文名 + 类型 + 引导目标（tools/esm/gen_quest_table.py）
 #include "SAQ_EntryTable.h"  // 生成物：无限任务入口（任务板）条目（tools/esm/gen_entry_table.py）
 
@@ -475,7 +477,16 @@ namespace SAQ
 				";   1 = 过滤（默认）；0 = 只写日志（便于对照界面）\r\n"
 				"[Filter]\r\n"
 				"ProgressCond=1\r\n"
-				"InfoCond=1\r\n";
+				"InfoCond=1\r\n"
+				";\r\n"
+				"; ---- 引擎内自动化测试（harness，第 49 轮，「可接任务」这个 mod 的开发用） ----\r\n"
+				"; 普通玩家保持 Harness=0。Harness=1 时插件会读 Plan 指向的用例文件，在游戏里自动\r\n"
+				"; 执行（造任务进度 → 开关菜单 → 选中/按键 → 断言），跑完把结果写到同目录的\r\n"
+				"; SAQ_testresults.json。★ 会改任务状态：先备份存档、别在主力存档上跑。\r\n"
+				"; ★ 只在插件加载时读一次（改完要重启游戏）；一轮跑完本会话不再重跑。\r\n"
+				"[Test]\r\n"
+				"Harness=0\r\n"
+				"Plan=SAQ_TestPlan.txt\r\n";
 			std::ofstream f{ path.c_str(), std::ios::binary };
 			if (!f) {
 				REX::WARN("测试开关 ini 写不进去（忽略；不影响其它功能）");
@@ -3130,6 +3141,11 @@ namespace SAQ
 			if (open) {
 				CheckScriptLiveness();
 			}
+
+			// ★★ 第 49 轮：引擎内 harness（自动化测试）的用例驱动器。
+			//   放在最后：它可能自己开/关菜单、下命令、读界面报告，让「产品路径」先跑完。
+			//   ini 里 [Test] Harness=0 时这里是**一次 bool 判断**（零开销）。
+			Test::Tick(open);
 		}
 	}
 
@@ -3163,6 +3179,13 @@ namespace SAQ
 
 		// ★ 第 20 轮：首次运行生成测试开关 ini 模板（存在就不动；失败不影响任何功能）
 		EnsureTestModeIniTemplate();
+
+		// ★★ 第 49 轮：引擎内 harness（自动化测试）。
+		//   ① 装日志环形缓冲（断言要「本步骤之后有没有出现某行」——比读 1MB 上限的日志文件可靠；
+		//      必须在 ApplyLogSizeLimit 之后调，否则 sink 会被那次 clear() 清掉）；
+		//   ② 读 ini + 用例文件（[Test] Harness=0 时不读、不注册任何东西）。
+		Test::InstallLogRing();
+		Test::LoadPlan();
 
 		auto* task = SFSE::GetTaskInterface();
 		if (!task) {

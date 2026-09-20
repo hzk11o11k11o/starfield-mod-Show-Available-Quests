@@ -41,6 +41,11 @@
 #include <cstdint>
 #include <string>
 
+namespace RE
+{
+	class TESGlobal;
+}
+
 namespace SAQ
 {
 	namespace Guide
@@ -86,5 +91,10 @@ namespace SAQ
 
 		// 丢掉认领结果（换存档/换加载顺序后用；正常流程不需要）。
 		void ResetChannel();
+
+		// ★★ 第 49 轮：按「已认领前缀 + 记录号」取 GLOB（未认领 / 记录不存在 ⇒ nullptr）。
+		//   harness（SAQ_TestOps）用它拿测试命令通道的 8 条 GLOB（0x806~0x80D）——
+		//   这样认领逻辑只有一份（前缀扫描 + 锚点校验都留在本模块），测试层不重复实现。
+		RE::TESGlobal* FindGlob(std::uint32_t a_lowId);
 	}
 }

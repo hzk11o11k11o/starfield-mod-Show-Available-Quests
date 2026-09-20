@@ -165,6 +165,29 @@ int Property StarMapTimerID = 2 AutoReadOnly
 ;   7 = 父地点链里第一个带行星的地点。DLL 的自动重试会依次换 5 → 6 → 7。
 int StarMapPendingMode = 5
 
+; ============================================================================
+;  ★★ 第 49 轮：引擎内 harness 的**测试命令通道**（变量声明）
+;
+;  这些 GLOB 是 ESM 里新追加的记录（0x806~0x80D，见 tools/esm/patch_saq_esm.py）。
+;  ★ 为什么**不作为脚本属性**：属性要在 VMAD 里写绑定（Object/Alias 联合体的字节格式，
+;    容易写错，而且每次改都要重建 VMAD）。本脚本能**自推自己插件的 FormID 前缀**
+;    （自己任务 FormID 的高 8 位）再 Game.GetForm() 取 —— 于是 ESM 侧只要追加 8 条
+;    GLOB，VMAD 一个字节都不用碰。
+;  ★ 为什么用「新增变量」而不是复用现有通道：引导通道（0x801~0x803）是产品功能，
+;    测试命令绝不能写进去（写错一条就是一个玩家可见的 bug）。新增变量追加在
+;    声明块末尾（Papyrus 的惯例：新变量加在最后，读旧存档时补默认值）。
+; ============================================================================
+int TestPrefix = -1          ; 本插件在加载顺序里的序号（自己任务 FormID >> 24）；-1 = 还没算
+int TestLastSeq = -1         ; 已经执行过的最新序号（DLL 以「Seq 变化」当提交点）
+GlobalVariable TestSeq = None       ; 0x806：命令序号（DLL 写）
+GlobalVariable TestCmd = None       ; 0x807：操作码（DLL 写）
+GlobalVariable TestArgA = None      ; 0x808：FormID 低 24 位
+GlobalVariable TestArgB = None      ; 0x809：FormID 高 8 位
+GlobalVariable TestArgC = None      ; 0x80A：数值参数（stage 等）
+GlobalVariable TestAck = None       ; 0x80B：脚本回执（= 已执行到的序号）
+GlobalVariable TestResult = None    ; 0x80C：结果码（0=成功 1=表单取不到 2=类型不对 3=异常 4=不支持）
+GlobalVariable TestHarnessCtl = None ; 0x80D：总开关（1=harness 启用）
+
 Event OnInit()
 	Debug.Trace("[SAQ] SAQ_Main OnInit —— 注册菜单事件 + 启动引导轮询")
 	If NotifyFlag != None
@@ -201,6 +224,9 @@ Event OnTimer(int aiTimerID)
 	; ★ 第 45 轮补丁 2 / 第 46 轮：HUD 提示重复发送 + 提示冷却递减
 	;   （首次在调用点已发；这里按间隔补发剩下几次）。
 	ProcessNotice()
+	; ★★ 第 49 轮：引擎内 harness —— 测试命令（DLL 写命令、这里执行、写回执）。
+	;   未启用时开销 = 一次判空（TestSeq == None 立刻返回）；启用后每拍比对一次序号。
+	ProcessTestCommand()
 EndEvent
 
 Event OnMenuOpenCloseEvent(String asMenuName, Bool abOpening)
@@ -572,4 +598,139 @@ String Function FormIDText(Form akForm)
 		Return "-"
 	EndIf
 	Return "" + (akForm.GetFormID() as int)
+EndFunction
+
+; ============================================================================
+;  ★★ 第 49 轮：引擎内 harness（自动化测试）—— 测试命令执行器
+;
+;  ## 为什么写侧动作放在 Papyrus 而不是 DLL
+;
+;  「造出任意游戏进度」（接取 / 推阶段 / 完成 / 回滚 / 传送）需要**写**引擎状态。
+;  但 docs/04 已定案：Papyrus 原生函数的调用约定是 `rcx=VM, rdx=栈帧, r8=self`，
+;  DLL 直接调它们要伪造 VM 栈帧 —— 风险远大于收益（第 10 轮起就一直这么定的）。
+;  而这些动作在 Papyrus 里就是**语言级 API**（Quest.Reset/Start/SetStage/CompleteQuest、
+;  Actor.MoveTo）—— 零 RVA、零栈帧。所以：DLL 只下命令 + 收回执，脚本负责执行。
+;
+;  ## 协议（与 DLL 侧 SAQ_TestOps.cpp 一一对应）
+;
+;    DLL ：ArgA/ArgB/ArgC → Cmd → Seq（**Seq 最后写 = 提交点**，避免读到半条命令）
+;    脚本：Seq != LastSeq ⇒ 读 Cmd+Args → 执行 → 写 Result → 写 Ack = Seq
+;    DLL ：轮询 Ack == Seq（超时 2 秒 ⇒ 该用例 SKIP，不 FAIL）
+;
+;  ## 时序红线（很重要）
+;
+;  本函数挂在**轮询节拍**上，而第 27 轮实测定案「菜单开着 = 游戏暂停 = 定时器冻结」。
+;  ⇒ 命令只在**菜单关着**时被消化。所以用例的 setup（造状态）必须排在 menu.open 之前，
+;    断言必须排在 menu.close 之后 —— DLL 侧的用例执行器按这个顺序排步骤。
+;
+;  ## 结果码
+;
+;    0 = 成功 / 1 = 表单取不到（含非常驻引用未加载）/ 2 = 表类型不对 / 3 = 执行异常
+;    4 = 未知操作码 / 5 = 通道未就绪（ESM 缺 GLOB 或 harness 开关关着）
+; ============================================================================
+
+; 取测试通道的 8 条 GLOB（只做一次）。旧 ESM（没有这套记录）⇒ 返回 False、整套静默关闭。
+Bool Function EnsureTestChannel()
+	If TestSeq != None
+		Return True
+	EndIf
+	If TestPrefix < 0
+		Int fid = GetFormID()
+		If fid <= 0
+			Return False
+		EndIf
+		TestPrefix = fid / 16777216
+		; 前缀 >= 128 时 Papyrus 的 int 会变成负数（加载顺序里超过 127 个全量插件）
+		; —— 这种环境下 harness 自动关闭（与 CurrentGuideTargetFormID() 同一限制）。
+		If TestPrefix < 0 || TestPrefix > 127
+			Debug.Trace("[SAQ] 测试通道不可用：插件前缀 " + TestPrefix + " 超出 Papyrus int 可表示范围")
+			Return False
+		EndIf
+	EndIf
+	Int base = TestPrefix * 16777216
+	TestSeq = Game.GetForm(base + 0x806) as GlobalVariable
+	TestCmd = Game.GetForm(base + 0x807) as GlobalVariable
+	TestArgA = Game.GetForm(base + 0x808) as GlobalVariable
+	TestArgB = Game.GetForm(base + 0x809) as GlobalVariable
+	TestArgC = Game.GetForm(base + 0x80A) as GlobalVariable
+	TestAck = Game.GetForm(base + 0x80B) as GlobalVariable
+	TestResult = Game.GetForm(base + 0x80C) as GlobalVariable
+	TestHarnessCtl = Game.GetForm(base + 0x80D) as GlobalVariable
+	If TestSeq == None || TestCmd == None || TestArgA == None || TestArgB == None || TestArgC == None || TestAck == None || TestResult == None || TestHarnessCtl == None
+		; ★ ESM 是旧版（没打第 49 轮的补丁）⇒ 把指针清空、下次节拍再试（换局/热加载后会重新检查）。
+		TestSeq = None
+		Return False
+	EndIf
+	; 基线：把「已执行序号」追平当前值，避免把上一局残留的序号当新命令执行一遍。
+	TestLastSeq = TestSeq.GetValue() as Int
+	Debug.Trace("[SAQ] 测试通道已就绪（前缀=" + TestPrefix + "，当前 seq=" + TestLastSeq + "）")
+	Return True
+EndFunction
+
+Function ProcessTestCommand()
+	If TestSeq == None
+		; 只有第一次（或 ESM 是旧版）才会走到这里 —— 之后是纯内存判断。
+		If !EnsureTestChannel()
+			Return
+		EndIf
+	EndIf
+	; 总开关：0 = 什么都不做（DLL 也只在 1 时写命令；这里再挡一道）
+	If TestHarnessCtl.GetValue() < 0.5
+		Return
+	EndIf
+	Int seq = TestSeq.GetValue() as Int
+	If seq == TestLastSeq
+		Return
+	EndIf
+	TestLastSeq = seq
+
+	Int op = TestCmd.GetValue() as Int
+	Int fid = ((TestArgB.GetValue() as Int) * 16777216) + (TestArgA.GetValue() as Int)
+	Int arg = TestArgC.GetValue() as Int
+	Int result = 0
+	; ★ 变量名不能叫 note —— Papyrus 4.7 里 `note` 是已知类型名
+	;   （实测编译报 "variable note cannot have the same name as a known type or script"）。
+	String cmdNote = ""
+
+	If op == 1
+		cmdNote = "Ping（通道可用）"
+	ElseIf op == 2 || op == 3 || op == 4 || op == 5
+		Quest q = Game.GetForm(fid) as Quest
+		If q == None
+			result = 1
+			cmdNote = "表单取不到 / 不是 Quest（FormID=" + fid + "）"
+		ElseIf op == 2
+			q.Reset()
+			cmdNote = "Reset " + FormText(q)
+		ElseIf op == 3
+			q.Start()
+			cmdNote = "Start " + FormText(q)
+		ElseIf op == 4
+			q.SetStage(arg)
+			cmdNote = "SetStage " + FormText(q) + " => " + arg
+		Else
+			q.CompleteQuest()
+			cmdNote = "CompleteQuest " + FormText(q)
+		EndIf
+	ElseIf op == 6
+		ObjectReference target = Game.GetForm(fid) as ObjectReference
+		Actor player = Game.GetPlayer()
+		If target == None
+			result = 1
+			cmdNote = "传送目标取不到（FormID=" + fid + "；非常驻引用 / 所在 cell 没加载？）"
+		ElseIf player == None
+			result = 2
+			cmdNote = "玩家引用取不到"
+		Else
+			player.MoveTo(target)
+			cmdNote = "MoveTo " + FormText(target) + "（cell=" + FormText(target.GetParentCell()) + "）"
+		EndIf
+	Else
+		result = 4
+		cmdNote = "未知操作码 " + op
+	EndIf
+
+	TestResult.SetValue(result)
+	TestAck.SetValue(seq)
+	Debug.Trace("[SAQ] 测试命令：seq=" + seq + " op=" + op + " 结果=" + result + " —— " + cmdNote)
 EndFunction

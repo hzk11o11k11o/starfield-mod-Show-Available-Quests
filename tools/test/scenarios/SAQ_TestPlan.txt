@@ -1,0 +1,42 @@
+; ============================================================================
+;  SAQ 引擎内自动化测试 —— 用例计划（第 49 轮 harness）
+;
+;  怎么用：
+;    ① 把本文件放到 mod 目录的 SFSE\Plugins\ 下（build-saq.ps1 部署时会自动拷过去）；
+;    ② ini（SFSE\Plugins\SAQ_ShowAvailableQuests.ini）里设 [Test] Harness=1；
+;    ③ 启动游戏并**读一个存档**（随便哪个，用例会自己把需要的那几条任务回滚）；
+;    ④ 等日志出现 `harness：全部用例结束`，看 mod 目录里的 SAQ_testresults.json。
+;
+;  语法：`[case:名字]` 开一个用例；`desc = 说明`；`step = <操作> [参数]`。
+;  ★ 会改任务状态（Reset/Start/SetStage/CompleteQuest）—— 先备份存档，别在主力存档上跑。
+;  ★ 造状态的步骤必须在 menu.open **之前**；断言引导结果必须在 menu.close **之后**
+;    （Papyrus 的轮询节拍在菜单开着时冻结，第 27 轮实测定论）。
+; ============================================================================
+
+; ----------------------------------------------------------------------------
+;  用例 1：链路自检
+;  目的 = 证明 harness 的每一段都通：命令通道（ping / Reset）、菜单开关、AS3 测试入口
+;         （切 tab / 选中 / 按 R）、日志与界面断言。
+;  目标任务 = 「沙布罗的解决方案」（0x0006E0A1，赛格哈特服饰店，新亚特兰蒂斯城）
+;         —— 基础游戏任务、首选引导候选是常驻的具名 NPC（迪特里希·赛格哈特），
+;            远处点引导也能立即生效，不依赖「靠近才加载」。
+; ----------------------------------------------------------------------------
+[case:smoke]
+desc = 链路自检：命令通道 + 菜单开关 + 切 tab/选中/按 R + 日志断言
+step = note === 1. 命令通道 ===
+step = ping
+step = quest.reset 0x0006E0A1
+step = note === 2. 开菜单 + 等 C++ 数据推送 ===
+step = menu.open
+step = assert.log 推送成功 timeout=10000
+step = note === 3. 切到「可接任务」tab 并选中目标任务 ===
+step = ui.tab
+step = ui.select 0x0006E0A1
+step = assert.ui src=cpp timeout=3000
+step = note === 4. 按 R（SET COURSE）→ C++ 应收到引导请求 ===
+step = ui.key XButton
+step = assert.log 引导请求： timeout=4000
+step = note === 5. 关菜单 → 脚本应用引导 ===
+step = menu.close
+step = assert.log 引导已生效|引导延迟生效|引导确认 timeout=30000
+step = guide.clear

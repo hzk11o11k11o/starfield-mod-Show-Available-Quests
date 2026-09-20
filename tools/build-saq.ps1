@@ -14,7 +14,11 @@ param(
     [switch]$SkipPapyrus,
     [switch]$SkipPlugin,
     [switch]$SkipSwf,
-    [switch]$SkipDeploy
+    [switch]$SkipDeploy,
+    # ★ 第 49 轮：部署时把测试开关 ini 的 [Test] Harness 强制写成 1
+    # （引擎内自动化测试模式：启动游戏 → 读档 → 自动跑完用例 → 写 SAQ_testresults.json）。
+    # 不加这个开关就只保证 key 存在、**不动已有值**（玩家设置优先）。
+    [switch]$Harness
 )
 
 $ErrorActionPreference = 'Stop'
@@ -151,8 +155,9 @@ if (-not $SkipPapyrus) {
     Copy-Item (Join-Path $pexSrc '*.psc') "$pt\src" -Force
     $pscFiles = Get-ChildItem "$pt\src" -Filter '*.psc'
     foreach ($f in $pscFiles) {
+        # ★ 第 49 轮：原来只回显最后 2 行，编译错误常常正好被截掉（踩过一次）—— 多给几行。
         & $papyrusCmp $f.FullName "-f=$papyrusFlags" "-i=$papyrusInc" "-o=$pt\out" 2>&1 |
-            Select-Object -Last 2 | Write-Host
+            Select-Object -Last 6 | Write-Host
     }
     $pexes = Get-ChildItem "$pt\out" -Filter '*.pex' -ErrorAction SilentlyContinue
     if (-not $pexes -or $pexes.Count -lt $pscFiles.Count) {
@@ -249,6 +254,40 @@ if (-not $SkipDeploy) {
     if (-not (Test-Path $iniDest)) {
         Copy-Item (Join-Path $root 'resources\SAQ_ShowAvailableQuests.ini') $iniDest -Force
         Write-Host '    已放入配置文件模板（SFSE\Plugins\SAQ_ShowAvailableQuests.ini）'
+    }
+
+    # ★ 第 49 轮（引擎内 harness）：
+    #   ① 用例文件（tools\test\scenarios\SAQ_TestPlan.txt）拷进插件目录；
+    #   ② 预建空的 SAQ_testresults.json —— MO2 的 usvfs 会「写 mod 目录里已存在的文件」
+    #      重定向回 mod 目录，否则 harness 新建的结果文件会落到 overwrite 里；
+    #   ③ 保证 ini 的 [Test] 段有 Harness / Plan 两个键（**不改已有值**；-Harness 才强制 1）。
+    $pluginDest = Join-Path $dest 'SFSE\Plugins'
+    Copy-Item (Join-Path $root 'tools\test\scenarios\SAQ_TestPlan.txt') `
+        (Join-Path $pluginDest 'SAQ_TestPlan.txt') -Force
+    $resDest = Join-Path $pluginDest 'SAQ_testresults.json'
+    if (-not (Test-Path $resDest)) {
+        [System.IO.File]::WriteAllText($resDest, '{}', (New-Object System.Text.UTF8Encoding $false))
+    }
+    if (Test-Path $iniDest) {
+        $iniText = [System.IO.File]::ReadAllText($iniDest, [System.Text.Encoding]::UTF8)
+        $iniChanged = $false
+        if ($iniText -notmatch '(?m)^\s*Harness\s*=') {
+            $iniText = $iniText.TrimEnd() + "`r`n; ★ 第 49 轮：引擎内自动化测试（1=启用；普通玩家保持 0）`r`nHarness=0`r`n"
+            $iniChanged = $true
+        }
+        if ($iniText -notmatch '(?m)^\s*Plan\s*=') {
+            $iniText = $iniText.TrimEnd() + "`r`n; 用例文件（相对插件目录）—— 见 tools\test\scenarios`r`nPlan=SAQ_TestPlan.txt`r`n"
+            $iniChanged = $true
+        }
+        if ($Harness) {
+            $iniText = [regex]::Replace($iniText, '(?m)^\s*Harness\s*=.*$', 'Harness=1')
+            $iniChanged = $true
+        }
+        if ($iniChanged) {
+            # 带 BOM 写回（ini 里有中文注释，记事本按 UTF-8 认）
+            [System.IO.File]::WriteAllText($iniDest, $iniText, (New-Object System.Text.UTF8Encoding $true))
+            Write-Host ("    已更新测试开关 ini：Harness=" + $(if ($Harness) { '1（本轮 -Harness）' } else { '保持原值' }))
+        }
     }
 
     $meta = Join-Path $dest 'meta.ini'

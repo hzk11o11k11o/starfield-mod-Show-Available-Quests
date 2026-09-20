@@ -1291,6 +1291,87 @@ package
             + "|" + (this.SaqPendingCloseToGame ? 1 : 0);
       }
 
+      // ==================================================================
+      //  ★★ 第 49 轮（引擎内 harness）：测试驱动入口
+      //
+      //  只有 DLL 会调（SAQ_TestOps::InvokeUiTestDrive → _root.SAQ_TestDrive*）。用途：
+      //  让「引擎内自动化测试」代替人做「切到可接任务 tab / 选中某条 / 按 R / 点条目」，
+      //  于是判据不必每次人肉复现（进游戏一次就能跑完一批用例）。
+      //
+      //  ★ 关键约定：这些入口**调用真实的处理函数**，不复制任何逻辑 ——
+      //    SAQ_TestDriveKey    → ProcessUserEvent（与玩家按键完全同一条链，含按钮启用判定）
+      //                          / Accept 走 MissionsList.onEntryPress（与鼠标点击同一条链）
+      //    SAQ_TestDriveSelect → 设 selectedIndex 后派发 ScrollingEvent.SELECTION_CHANGE
+      //                          （原版列表自己派发的就是同一个事件、同一个处理函数）
+      //    SAQ_TestDriveTab    → onFilterChanged + SaqRefresh（与原版切 tab 同一条路）
+      //    否则测的就是测试代码，不是产品代码。
+      //
+      //  返回串约定："ok|…" = 动作已送出（调用方继续断言）；"err|…" = 前置条件不满足。
+      // ==================================================================
+      public function SAQ_TestDriveTab() : String
+      {
+         var _loc1_:int = this.FilterInfoA != null ? int(this.FilterInfoA.length - 1) : -1;
+         if(_loc1_ < 0)
+         {
+            return "err|no-tabs";
+         }
+         this.TabbedFilterSelection_mc.selectedIndex = _loc1_;
+         this.onFilterChanged(null);
+         this.SaqRefresh();
+         return "ok|tab=" + _loc1_ + "|mask=" + this.MissionsList_mc.filterMask + "|n=" + this.MissionsList_mc.entryCount;
+      }
+
+      public function SAQ_TestDriveSelect(param1:String) : String
+      {
+         var _loc2_:Number = Number(param1);
+         var _loc3_:int = int(this.MissionsList_mc.SAQ_FindEntryIndexByUID(_loc2_));
+         if(_loc3_ < 0)
+         {
+            return "err|notfound|n=" + this.MissionsList_mc.entryCount;
+         }
+         this.MissionsList_mc.selectedIndex = _loc3_;
+         this.MissionsList_mc.dispatchEvent(new ScrollingEvent(ScrollingEvent.SELECTION_CHANGE));
+         return "ok|idx=" + _loc3_ + "|" + this.SaqEntryTag(this.MissionsList_mc.selectedEntry);
+      }
+
+      public function SAQ_TestDriveExpand(param1:String) : String
+      {
+         var _loc2_:Number = Number(param1);
+         var _loc3_:int = int(this.MissionsList_mc.SAQ_FindEntryIndexByUID(_loc2_));
+         if(_loc3_ < 0)
+         {
+            return "err|notfound";
+         }
+         this.MissionsList_mc.selectedIndex = _loc3_;
+         this.MissionsList_mc.ExpandOrCollapseSelection();
+         this.MissionsList_mc.dispatchEvent(new ScrollingEvent(ScrollingEvent.SELECTION_CHANGE));
+         return "ok|idx=" + _loc3_ + "|n=" + this.MissionsList_mc.entryCount;
+      }
+
+      public function SAQ_TestDriveKey(param1:String) : String
+      {
+         if(param1 == "Accept" || param1 == "Enter" || param1 == "Click")
+         {
+            // 回车 / 鼠标点击：原版由输入层**直接送给列表**（不是菜单的 ProcessUserEvent）
+            // ⇒ 这里走 MissionsList.onEntryPress（它内部 stopPropagation + onItemPress，
+            //   并派发 ITEM_ACTIVATED）—— 与真实点击完全同一条链。
+            this.MissionsList_mc.onEntryPress(new Event(Event.CLICK));
+            return "ok|entryPress|" + this.SaqLastPressNote;
+         }
+         // 其余（XButton = 键盘 R / 手柄 X、YButton、Cancel…）：与玩家按键完全相同的那条链
+         // （ProcessUserEvent → SaqNoteUserEvent → ButtonBar → 按钮回调，含按钮启用判定）。
+         var _loc2_:Boolean = this.ProcessUserEvent(param1,false);
+         return "ok|menu=" + (_loc2_ ? 1 : 0) + "|" + this.SaqLastPressNote;
+      }
+
+      // 给断言用的短状态（比 SAQ_Report 轻，跑用例时每一步都能打一行）。
+      public function SAQ_TestDriveState() : String
+      {
+         return "tab=" + this.currentFilterIndex + "|mask=" + this.MissionsList_mc.filterMask
+            + "|n=" + this.MissionsList_mc.entryCount + "|sel=" + this.MissionsList_mc.selectedIndex
+            + "|avail=" + (this.AvailableQuests != null ? this.AvailableQuests.length : -1);
+      }
+
       // ★ 第 38 轮：C++ 回写成功后的「关菜单」这一步（见 SaqPendingCloseToGame 的说明）。
       //   `CloseMenu(true)` = 原版「退回游戏」路径：
       //     设置 bReturningToGame → StartGameRender + DataMenu_SetMenuForQuickEntry
