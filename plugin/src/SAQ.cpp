@@ -358,15 +358,21 @@ namespace SAQ
 		//
 		// ★ 第 27 轮：N=5 = 只显示「无限任务入口」（任务板）条目 —— 验证任务板入口时
 		//   不受 260 条任务干扰（见 CollectAvailableQuests 里的 kEntryOnlyTestMode 分支）。
-		// ★★ 第 46 轮：N=6 = 只显示「需要靠近」的任务（候选池**全是非常驻引用**，
-		//   远处点引导会走「目标尚未加载 → 待生效 → 退避重试 → 靠近后自动生效」那条链路；
-		//   本机 76 条，实测样本「营救机器人」）—— 验证大项 B 的清单，不用在 261 条里翻。
+		// ★★ 第 46 轮：N=6 = 只显示「需要靠近」的任务。
+		// ★★ 第 47 轮（大项 C）：判据升级 —— 「**首选**（质量最优）候选非常驻」。
+		//   第 47 轮给这一类任务补了「同 cell 常驻兜底」候选（见 gen_guide_targets.py
+		//   的 find_fallbacks）⇒ 远处点引导会**落到兜底**（蓝点在目标附近，不再「没反应」），
+		//   但**精确目标仍然要靠近才加载**；没有兜底的（本机 20 条）走
+		//   「待生效 → 退避重试 → 靠近后自动生效」那条链路。清单仍是 76 条
+		//   （实测样本「营救机器人」）—— 验证这两条链路的清单，不用在 261 条里翻。
 		// ------------------------------------------------------------------
 
 		// ★ 第 46 轮：候选池判定助手 —— 定义在下面的候选池区（`CandidateAt` 之后）。
+		//   ★ 第 47 轮改名（原 AllCandidatesNonPersistent）：判据从「全部候选都非常驻」
+		//   改为「**首选**候选非常驻」（兜底候选是常驻的，不该把这一类判没）。
 		//   两处调用：① 这里的测试模式 6（筛「需要靠近」的任务）；② CollectAvailableQuests
 		//   组 QuestEntry 时算 needsApproach（推给界面提示用）。
-		bool AllCandidatesNonPersistent(const StaticQuestInfo& a_info);
+		bool FirstCandidateNonPersistent(const StaticQuestInfo& a_info);
 
 		bool PassesTestFilter(const StaticQuestInfo& a_info, int a_mode)
 		{
@@ -380,7 +386,7 @@ namespace SAQ
 			case 4:
 				return a_info.candCount != 0 && a_info.whereZh != nullptr && a_info.whereZh[0] != '\0';
 			case 6:
-				return AllCandidatesNonPersistent(a_info);   // ★ 第 46 轮：「需要靠近」那一类
+				return FirstCandidateNonPersistent(a_info);   // ★ 第 46/47 轮：「需要靠近」那一类
 			default:
 				return true;  // 0 / 未知值 = 不过滤
 			}
@@ -396,7 +402,7 @@ namespace SAQ
 			case 3: return "只显示 DLC 条目";
 			case 4: return "只显示「有引导目标 + 有具名地点」的条目";
 			case 5: return "只显示「无限任务入口」（任务板）条目";
-			case 6: return "只显示「需要靠近」的条目（候选全是非常驻引用；远处点引导 = 待生效那条链路）";
+			case 6: return "只显示「需要靠近」的条目（首选候选非常驻：远处 = 就近兜底 / 待生效）";
 			default: return "关闭（显示全部）";
 			}
 		}
@@ -438,8 +444,8 @@ namespace SAQ
 				";   3 = 只显示 DLC 任务（59 条）\r\n"
 				";   4 = 只显示「有引导目标 + 有具名地点」的任务（85 条，最少最好找）\r\n"
 				";   5 = 只显示「无限任务入口」（任务板，12 条）—— 验证任务板条目的显示与引导\r\n"
-				";   6 = 只显示「需要靠近」的任务（候选全是非常驻引用，76 条；含「营救机器人」）\r\n"
-				";       —— 验证第 46 轮：待生效 / HUD 提示 / 自动重试 / 靠近后生效\r\n"
+				";   6 = 只显示「需要靠近」的任务（首选候选非常驻，76 条；含「营救机器人」）\r\n"
+				";       —— 验证第 46/47 轮：就近兜底 / 待生效 / HUD 提示 / 自动重试 / 靠近后生效\r\n"
 				"; 控制台（如果你的游戏认 `set SAQ_TestMode to N`）非 0 时优先于本文件。\r\n"
 				"[Test]\r\n"
 				"Mode=0\r\n"
@@ -830,9 +836,11 @@ namespace SAQ
 				// ★ 第 23 轮：把「有没有引导目标」也推给界面（能不能导航要看得见）
 				// ★ 第 45 轮：判据换成候选池（candCount > 0 等价于旧 guideRefLocal != 0）。
 				entry.hasGuideTarget = info.candCount != 0;
-				// ★★ 第 46 轮（大项 B）：全是非常驻候选 ⇒ 远处点引导会「尚未加载」。
+				// ★★ 第 46 轮（大项 B）：精确目标非常驻 ⇒ 远处点引导取不到它。
 				//   界面据此在描述里**提前**告知玩家「靠近目标区域后才能导航」。
-				entry.needsApproach = AllCandidatesNonPersistent(info);
+				//   ★★ 第 47 轮：判据 = **首选**候选非常驻（第 47 轮起这类任务在远处
+				//   会落到「同 cell 常驻兜底」，蓝点在目标附近；靠近后自动升级回精确目标）。
+				entry.needsApproach = FirstCandidateNonPersistent(info);
 				entry.nameZh = info.nameZh;        // 中英都带上，AS3 侧按游戏语言挑
 				entry.nameEn = info.nameEn;
 				a_out.push_back(std::move(entry));
@@ -1255,26 +1263,31 @@ namespace SAQ
 			return 0;
 		}
 
-		// ★★ 第 46 轮（大项 B）：这条任务的候选池里**没有任何一个常驻引用**
-		//   —— 玩家在远处（目标的 cell 没加载）时必然全部取不到，必须靠近才能导航。
+		// ★★ 第 46 轮（大项 B）：「需要靠近」判定 —— 这条任务的**精确目标**（首选候选）
+		//   是非常驻引用 ⇒ 玩家在远处（目标的 cell 没加载）时取不到，必须靠近才能拿到。
+		//
+		//   ★★ 第 47 轮（大项 C）：判据从「**全部**候选都非常驻」改为「**首选**候选非常驻」。
+		//   为什么：第 47 轮给这一类任务补了「同 cell 常驻兜底」候选（常驻 ⇒ 任何位置都能
+		//   取到，见 tools/esm/gen_guide_targets.py::find_fallbacks）—— 远处点引导不再
+		//   「什么都不发生」，而是**落到兜底**（蓝点落在目标附近），靠近后由运行时
+		//   「候选复算」（UpdateQuestGuideTarget）自动升级回精确目标。
+		//   但**精确目标仍要靠近才加载**：描述里的「需靠近」提示 + 测试模式 6 的清单
+		//   继续按「首选取不到」来算（否则这一类会被判没，见 docs/05 第二十一节）。
 		//
 		//   用途：① 推给界面，在描述里**提前**告知（MissionMenu 的 bSaqNeedsApproach）；
-		//         ② 点引导且全不可得时，据此走「保持待生效 + 慢速重试 + HUD 提示」
-		//            而不是 19 秒后静默放弃（实测「营救机器人」，见 docs/05 第二十节）。
-		//   数据来源 = StaticGuideCandidate.flags bit0（离线由持久位算出，
-		//   见 tools/esm/gen_guide_targets.py 的 persistent）。
-		bool AllCandidatesNonPersistent(const StaticQuestInfo& a_info)
+		//         ② 点引导且全不可得（含兜底也没有 / 兜底也没命中）时，据此走
+		//            「保持待生效 + 慢速重试 + HUD 提示」而不是 19 秒后静默放弃。
+		//   数据来源 = StaticGuideCandidate.flags bit0（离线由持久位算出）。
+		bool FirstCandidateNonPersistent(const StaticQuestInfo& a_info)
 		{
 			if (a_info.candCount == 0) {
 				return false;  // 没有目标：那是「暂无导航目标」，与「需要靠近」是两回事
 			}
-			for (std::uint8_t i = 0; i < a_info.candCount; ++i) {
-				const auto* c = CandidateAt(a_info, i);
-				if (!c || (c->flags & kGuideCandidatePersistent) != 0) {
-					return false;  // 有常驻候选（或有取不到的槽位）⇒ 不算「必须靠近」
-				}
+			const auto* c = CandidateAt(a_info, 0);
+			if (!c) {
+				return false;  // 取不到的槽位：保守放行
 			}
-			return true;
+			return (c->flags & kGuideCandidatePersistent) == 0;
 		}
 
 		// ★ 第 45 轮：换候选（定义在下方 ReissueGuideIfScriptLost 之前）——

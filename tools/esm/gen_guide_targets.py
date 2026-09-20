@@ -217,7 +217,11 @@ def scan_quests(mm: mmap.mmap, meta: dict, want: set[int]):
 #  第二遍：世界数据（CELL/WRLD 名字、NPC 名字、放置引用、引用的常驻标志）
 # ---------------------------------------------------------------------------
 def scan_world(mm: mmap.mmap, meta: dict, wanted_npc: set[int], wanted_refr: set[int], acc: dict):
-    """把世界数据累积进 acc（多 master 共用；后扫的覆盖同 FormID 的条目）。"""
+    """把世界数据累积进 acc（多 master 共用；后扫的覆盖同 FormID 的条目）。
+
+    ★ 第 47 轮：REFR/ACHR 的 info 新增 `pos`（DATA 子记录前 12 字节 = 世界坐标）——
+      「同 cell 常驻兜底」要用它算「哪个常驻引用离目标最近」。
+    """
     for sig, formid, flags, cell, world, payload in iter_records_with_context(mm):
         if sig == b"NPC_":
             if formid in wanted_npc:
@@ -243,11 +247,14 @@ def scan_world(mm: mmap.mmap, meta: dict, wanted_npc: set[int], wanted_refr: set
         elif sig in (b"ACHR", b"REFR"):
             base = 0
             edid = ""
+            pos = None
             for s, sp in subrecords(payload):
                 if s == b"NAME" and len(sp) >= 4:
                     base = u32(sp)
                 elif s == b"EDID":
                     edid = ascii_z(sp)
+                elif s == b"DATA" and pos is None and len(sp) >= 12:
+                    pos = tuple(struct.unpack_from("<3f", sp, 0))
             if base not in wanted_npc and formid not in wanted_refr:
                 continue
             info = {
@@ -257,6 +264,8 @@ def scan_world(mm: mmap.mmap, meta: dict, wanted_npc: set[int], wanted_refr: set
                 "persistent": bool(flags & 0x400),
                 "edid": edid,
                 "owner": owner_of(formid, meta),
+                "pos": pos,
+                "flags": flags,
             }
             if base in wanted_npc:
                 acc["placements"].setdefault(base, []).append(info)
@@ -264,9 +273,110 @@ def scan_world(mm: mmap.mmap, meta: dict, wanted_npc: set[int], wanted_refr: set
                 acc["refr_info"][formid] = info
 
 
+# ---------------------------------------------------------------------------
+#  ★★ 第 47 轮（大项 C）：同 cell 常驻兜底
+# ---------------------------------------------------------------------------
+def collect_cell_persistents(mm: mmap.mmap, cells: set[int]) -> list[tuple[int, int, tuple, int, str, int]]:
+    """第三遍用：收集给定 cell 里的**常驻** REFR/ACHR。
+
+    返回 [(formid, cell, pos, base, edid, flags)] —— 这是「同 cell 常驻兜底」的原料
+    （引擎对常驻引用始终保留加载，任何位置 `LookupByID` 都取得到；见 docs/05）。
+    ★ 距离只在**同一 cell 内**比较（不同 cell 的坐标不可比）。
+    """
+    out: list[tuple[int, int, tuple, int, str, int]] = []
+    for sig, formid, flags, cell, world, payload in iter_records_with_context(mm):
+        if sig not in (b"ACHR", b"REFR") or cell not in cells or not (flags & 0x400):
+            continue
+        pos = None
+        base = 0
+        edid = ""
+        for s, sp in subrecords(payload):
+            if s == b"DATA" and pos is None and len(sp) >= 12:
+                pos = tuple(struct.unpack_from("<3f", sp, 0))
+            elif s == b"NAME" and len(sp) >= 4:
+                base = u32(sp)
+            elif s == b"EDID":
+                edid = ascii_z(sp)
+        if pos:
+            out.append((formid, cell, pos, base, edid, flags))
+    return out
+
+
+def _dist3(a, b) -> float:
+    return sum((x - y) ** 2 for x, y in zip(a, b)) ** 0.5
+
+
+def find_fallbacks(pre_cands: dict[int, list[dict]], wanted_by_master: dict[str, set[int]],
+                   meta_by_lower: dict[str, dict], esm_extra: list[str]) -> dict[int, dict]:
+    """为「全部候选都非常驻」的任务找「同 cell 常驻引用」兜底（★ 第 47 轮）。
+
+    起因（玩家实测「营救机器人」）：这类任务远处点引导时全部候选 `LookupByID`
+    取不到 ⇒「引导不生效」，而世界里的标记仍是上一条生效引导的残留 —— 玩家观感
+    =「导航点被锁定在某个地方不动、导航没用」。兜底 = 一个**常驻**引用（引擎始终
+    能取到）⇒ 远处点引导立刻可用（蓝点落在目标附近），靠近后由运行时「候选复算」
+    自动升级为首选（精确）。
+
+    规则：对每条需要兜底的任务，在它**任一候选目标所在的 cell** 里找最近的
+    常驻 REFR/ACHR（排除候选自身）作为兜底；找不到（cell 里没有常驻引用）则不补。
+    返回 {任务 FormID: 兜底候选 dict（不含 pos/cell，由调用方补）}。
+    """
+    # 1) 需要兜底的任务 → 候选目标 (cell, pos)
+    need: dict[int, list[tuple[int, tuple]]] = {}
+    cells: set[int] = set()
+    for fid, cands in pre_cands.items():
+        if not cands or any(c.get("persistent") for c in cands):
+            continue
+        tgts = [(c["cell"], c["pos"]) for c in cands if c.get("cell") and c.get("pos")]
+        if not tgts:
+            continue
+        need[fid] = tgts
+        cells.update(c for c, _ in tgts)
+    if not need:
+        return {}
+    print(f"  需要常驻兜底的任务 {len(need)} 条（涉及 {len(cells)} 个 cell），扫描中...")
+
+    # 2) 扫各 master，收集这些 cell 里的常驻引用（按 cell 分池 —— 距离只在同 cell 内可比）
+    pool: dict[int, list[tuple[int, tuple, int, str, int]]] = {c: [] for c in cells}
+    seen_files: set[str] = set()
+    for m in list(dict.fromkeys(list(wanted_by_master) + list(esm_extra))):
+        meta = meta_by_lower.get(m.lower())
+        if not meta or meta["path"] in seen_files:
+            continue
+        seen_files.add(meta["path"])
+        with Path(meta["path"]).open("rb") as f:
+            mm = mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ)
+            try:
+                found = collect_cell_persistents(mm, cells)
+            finally:
+                mm.close()
+        for formid, cell, pos, base, edid, flags in found:
+            pool.setdefault(cell, []).append((formid, pos, base, edid, flags))
+    print(f"  常驻引用池 {sum(len(v) for v in pool.values())} 条（{len(cells)} 个 cell）")
+
+    # 3) 每条任务：取「同 cell 内、离任一候选目标最近」的常驻引用
+    out: dict[int, dict] = {}
+    for fid, tgts in need.items():
+        best = None  # (dist, formid, pos, base, edid)
+        for cell, tp in tgts:
+            for formid, pos, base, edid, flags in pool.get(cell, []):
+                d = _dist3(pos, tp)
+                if best is None or d < best[0]:
+                    best = (d, formid, pos, base, edid)
+        if best is None:
+            continue
+        d, formid, pos, base, edid = best
+        out[fid] = {"refr": formid, "dist": d, "base": base, "edid": edid, "pos": pos}
+    return out
+
+
 def collect_candidates(fid: int, info: dict, acc: dict, quest_lctn: dict, meta: dict,
-                       meta_by_lower: dict, named) -> list[dict]:
-    """把一条任务的别名候选整理成候选列表（与第 10 轮的规则一致，只是数据来源换了）。"""
+                       meta_by_lower: dict, named, fallback: dict | None = None) -> list[dict]:
+    """把一条任务的别名候选整理成候选列表（与第 10 轮的规则一致，只是数据来源换了）。
+
+    ★ 第 47 轮：`fallback` = find_fallbacks() 为该任务找到的「同 cell 常驻兜底」
+    （没有则为 None）—— 追加在候选列表尾部（质量最低但**永远可得**）。
+    每个候选另带内部的 `pos` / `cell`（供第三遍扫描与兜底计算用；输出时会剥掉）。
+    """
     cands: list[dict] = []
 
     def owner_fields(refr_id: int, fallback_meta: dict) -> tuple[str, bool]:
@@ -301,6 +411,7 @@ def collect_candidates(fid: int, info: dict, acc: dict, quest_lctn: dict, meta: 
             "nameEn": name, "nameZh": name,
             "whereEn": where_en, "whereZh": where_zh,
             "src": f"ALFR {alias}", "tier": 1, "generic": 0, "order": order,
+            "pos": ri.get("pos"), "cell": ri.get("cell", 0),
         })
 
     # ② ALUA「Unique Actor」：任务发布者（最常见，也最贴「去哪里接」）
@@ -322,6 +433,7 @@ def collect_candidates(fid: int, info: dict, acc: dict, quest_lctn: dict, meta: 
                 "nameEn": name_en, "nameZh": name_zh,
                 "whereEn": where_en, "whereZh": where_zh,
                 "src": f"ALUA {alias}", "tier": 0, "generic": generic, "order": order,
+                "pos": pl.get("pos"), "cell": pl.get("cell", 0),
             })
 
     # ③ 任务地点的地图标记引用（只有少部分地点有，但指向最准）
@@ -344,15 +456,38 @@ def collect_candidates(fid: int, info: dict, acc: dict, quest_lctn: dict, meta: 
                 return "", ""
             n_en, n_zh = name_of(lctn)
             owner, local, small = owner_fields(marker, meta)
+            mi = acc["refr_info"].get(marker, {})
             cands.append({
                 "kind": "loc", "refr": local, "refrMaster": owner, "refrSmall": small,
-                "persistent": acc["refr_info"].get(marker, {}).get("persistent", False),
+                "persistent": mi.get("persistent", False),
                 "nameEn": n_en, "nameZh": n_zh, "whereEn": n_en, "whereZh": n_zh,
                 "src": lsrc, "tier": 2, "generic": 0, "order": 0,
+                "pos": mi.get("pos"), "cell": mi.get("cell", 0),
             })
     # ★ 第 45 轮：统一补「名字质量」（质量分级的输入；见 quality_key）。
     for c in cands:
         c["nameq"] = name_quality(c.get("nameEn", ""))
+
+    # ★★ 第 47 轮：同 cell 常驻兜底（候选池最后一位）。
+    #   为什么需要它：这条任务的候选**全是非常驻引用**时，玩家在目标 cell 之外
+    #   点引导 ⇒ `LookupByID` 全部取不到 ⇒「引导不生效」，世界里的标记仍是上一条
+    #   生效引导的残留 —— 玩家观感 =「导航点被锁定在某处不动、导航没用」（实测：
+    #   「营救机器人」）。兜底是一个**常驻**引用（引擎始终保留加载）⇒ 远处点引导
+    #   立刻可用（蓝点落在目标附近），靠近后由运行时「候选复算」自动升级为首选。
+    #   名字强制内部名质量（nameq=1 ⇒ grade 4）：它只是「就近落脚点」，不该在
+    #   排序上压过任何真正的候选；但同 grade 内常驻优先 ⇒ 仍排在「非常驻内部名」之前。
+    if fallback:
+        owner, local, small = owner_fields(fallback["refr"], meta)
+        fname = fallback.get("edid") or f"Ref_{local:06X}"
+        cands.append({
+            "kind": "ref", "refr": local, "refrMaster": owner, "refrSmall": small,
+            "persistent": True,
+            "nameEn": fname, "nameZh": fname, "nameq": 1,
+            "whereEn": "", "whereZh": "",
+            "src": f"同 cell 常驻兜底（距目标 {fallback['dist']:.1f} 米）",
+            "tier": 3, "generic": 1, "order": 999,
+            "pos": fallback.get("pos"), "cell": 0,
+        })
     return cands
 
 
@@ -440,6 +575,24 @@ def main() -> int:
         en, zh = strings.get(meta["file"], ({}, {}))
         return lambda sid: (en.get(sid, ""), zh.get(sid, "")) if sid else ("", "")
 
+    # ---- ★★ 第 47 轮：第三遍 —— 为「全部候选都非常驻」的任务找「同 cell 常驻兜底」 ----
+    #   先预跑一遍候选（不带兜底）判定哪些任务需要兜底（判定与正式生成同一套规则），
+    #   再扫各 master 的常驻引用（find_fallbacks 内部做）。
+    fallbacks: dict[int, dict] = {}
+    if not a.no_world:
+        pre: dict[int, list[dict]] = {}
+        for m, wanted in wanted_by_master.items():
+            meta = meta_by_lower[m.lower()]
+            named = make_named(meta)
+            for fid in wanted:
+                info = aliases.get(fid, {"actors": [], "refs": [], "locs": [], "lctn": 0})
+                try:
+                    pre[fid] = collect_candidates(fid, info, acc, quest_lctn, meta, meta_by_lower, named)
+                except Exception:  # noqa: BLE001
+                    pre[fid] = []
+        fallbacks = find_fallbacks(pre, wanted_by_master, meta_by_lower, a.esm)
+        print(f"  同 cell 常驻兜底：{len(fallbacks)} 条任务找到了兜底")
+
     out: dict[str, dict] = {}
     stats = Counter()
     samples: list[str] = []
@@ -451,7 +604,8 @@ def main() -> int:
         for fid in wanted:
             info = aliases.get(fid, {"actors": [], "refs": [], "locs": [], "lctn": 0})
             try:
-                cands = collect_candidates(fid, info, acc, quest_lctn, meta, meta_by_lower, named)
+                cands = collect_candidates(fid, info, acc, quest_lctn, meta, meta_by_lower, named,
+                                           fallbacks.get(fid))
             except Exception as exc:  # noqa: BLE001
                 print(f"  候选生成失败 {m} 0x{fid:08X}: {exc}")
                 cands = []
@@ -502,12 +656,16 @@ def main() -> int:
                         kept.add(key)
                         n_persist_kept += 1
             cands = keep
-            got = {k: v for k, v in cands[0].items() if k not in ("tier", "generic", "order", "nameq")}
+            got = {k: v for k, v in cands[0].items()
+                   if k not in ("tier", "generic", "order", "nameq", "pos", "cell")}
             entry = dict(got)
             # ★ 第 45 轮：完整候选池（含第一候选）—— gen_quest_table.py 用它生成
             #   kGuideCandidates[]（运行时 DLL 在「脚本报取不到」时按顺序换下一个）。
-            entry["cands"] = [{k: v for k, v in c.items() if k != "tier"} for c in cands]
+            # ★ 第 47 轮：候选里带的 `pos`/`cell` 是内部字段（第三遍算兜底用），剥掉。
+            entry["cands"] = [{k: v for k, v in c.items() if k not in ("tier", "pos", "cell")} for c in cands]
             out[str(fid)] = entry
+            if any(c["persistent"] and c.get("src", "").startswith("同 cell 常驻兜底") for c in cands):
+                stats["带常驻兜底"] += 1
             stats[got["kind"]] += 1
             stats["常驻" if got["persistent"] else "非常驻"] += 1
             if len(samples) < 12:

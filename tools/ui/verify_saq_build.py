@@ -86,6 +86,18 @@
               有名字的 NPC / 目标失效时回退到可得候选）；认领遍历候选池并记住下标。
            本脚本检查：DLL 5 条新日志 + 静态表候选池完整性（数据侧：切片不越界 /
            209 条有目标 / 旧字段反向检查）
+  第 47 轮：★★ 引导可用性收口（大项 C）—— 「同 cell 常驻兜底」候选：
+           起因（玩家实测「营救机器人」）：「全部候选都非常驻」的任务（76 条）在目标
+           cell 之外点引导时 `LookupByID` 全不可得 ⇒「引导不生效」，而世界里的标记
+           仍是上一条生效引导的残留 —— 玩家观感 =「导航点被锁定在某个位置不动、
+           导航没用」。
+           修法：① 数据：gen_guide_targets.py 新增 find_fallbacks —— 为这类任务在
+              **候选目标所在的 cell** 里找最近的**常驻** REFR/ACHR 作为候选池最后一位
+              （常驻 ⇒ 任何位置都取得到；本机 56/76 条补到）；② 表：候选总数 875→931；
+              ③ DLL：「需要靠近」判据从「全部候选都非常驻」改为「**首选**候选非常驻」
+              （兜底是常驻的，不能把这一类判没 —— 描述提示/测试模式 6 清单照旧 76 条）。
+           本脚本检查：静态表常驻兜底已并入 + 营救机器人兜底链（0x08ECA5→0x08ECA6）+
+           DLL 新判据文案 + 反向检查（旧「全是 非常驻」说法已替换）
 
 用法：python tools/ui/verify_saq_build.py
 """
@@ -517,14 +529,23 @@ def main() -> int:
             "重试停手日志": "引导待生效（暂停重试）".encode(),
             "星图本次不打开": "星图：本次不打开（目标尚未加载）".encode(),
             # ★★ 第 46 轮：测试过滤新增 Mode=6 —— 只显示「需要靠近」的任务
-            #   （候选全是非常驻引用；实测样本「营救机器人」），方便实测时找条目。
+            #   （实测样本「营救机器人」），方便实测时找条目。
+            #   ★ 第 47 轮：判据升级为「首选候选非常驻」（兜底候选是常驻的）。
             "测试模式 6 日志文案": "只显示「需要靠近」的条目".encode(),
             "测试模式 6 ini 说明": "含「营救机器人」".encode(),
             # 上限写死成 5 曾把 Mode=6 静默折成 0（玩家看到的是「过滤失效」）⇒ 现在
             # 超范围要 WARN，且模式行**无论开没开都打**（缺了这行就没法区分「ini 没读到」）。
             "测试模式超范围告警": "超出已知范围".encode(),
+            # ★★ 第 47 轮（大项 C）：同 cell 常驻兜底 —— 「需要靠近」判据改成
+            #   「**首选**候选非常驻」（ini 模板与 TestModeNote 的文案同步更新）。
+            "需要靠近判据(首选)": "首选候选非常驻".encode(),
         }.items():
             all_ok &= check(f"DLL · {name}", blob, needle)
+        # 反向检查：第 47 轮把「候选**全是**非常驻引用」的旧说法换掉
+        #   （判据已改为「首选候选非常驻」—— 兜底候选是常驻的，旧说法已不成立）
+        gone = "候选全是非常驻引用".encode() not in blob
+        print(("OK  " if gone else "MISS") + " DLL · 旧「全是 非常驻」判据文案已替换(反向检查)")
+        all_ok &= gone
         # 反向检查：第 31 轮把候选链顺序换掉，第 30 轮的「marker 优先」诊断文案不应再出现
         gone = "这些条目没走新建的常驻 marker".encode() not in blob
         print(("OK  " if gone else "MISS") + " DLL · 旧候选链诊断文案已替换(反向检查)")
@@ -711,6 +732,33 @@ def main() -> int:
         gone = "guideRefLocal" not in blob and "guideRefMaster" not in blob
         print(("OK  " if gone else "MISS") + " 静态表 · 旧单目标字段已移除(反向检查)")
         all_ok &= gone
+        # ★★ 第 47 轮（大项 C）：同 cell 常驻兜底候选 —— 数据侧完整性：
+        #   ① 「全部候选都非常驻」的任务（76 条）里 56 条补到了常驻兜底 ⇒ 候选总数
+        #      875 → 931、常驻候选 283 → 339；
+        #   ② 实测样本「营救机器人」（0x0008EBDC）的候选切片 = 2 条：第 1 条是非常驻的
+        #      「G型」（Model G），第 2 条 = 常驻的 0x08ECA6（距目标 3.3 米的
+        #      「损坏 Model G 家具标记」—— 玩家在远处点引导时命中的就是它）。
+        c0 = blob.find("kGuideCandidates[] = {")
+        c1 = blob.find("kGuideCandidateCount")
+        cand_region = blob[c0:c1] if 0 <= c0 < c1 else ""
+        c_rows = re.findall(r"\{\s*0x([0-9A-F]+)u,\s*(\d+)u,\s*0x([0-9A-F]+)u,\s*(\d+)u,", cand_region)
+        n_persist = sum(1 for r in c_rows if int(r[2], 16) & 0x01)
+        ok = n_persist >= 330
+        print(("OK  " if ok else "MISS") +
+              f" 静态表 · 常驻兜底候选已并入（候选 {len(c_rows)} 条，其中常驻 {n_persist} 条）")
+        all_ok &= ok
+        m_row = re.search(
+            r"\{\s*0x0008EBDCu,\s*\d+u,\s*\d+u,\s*0x[0-9A-F]+u,\s*(\d+)u,\s*(\d+)u,", blob)
+        ok_slice = False
+        if m_row and len(c_rows) > 0:
+            begin, cnt = int(m_row.group(1)), int(m_row.group(2))
+            if cnt == 2 and begin + 2 <= len(c_rows):
+                first, second = c_rows[begin], c_rows[begin + 1]
+                ok_slice = (first[0] == "08ECA5" and (int(first[2], 16) & 0x01) == 0
+                            and second[0] == "08ECA6" and (int(second[2], 16) & 0x01) == 1)
+        print(("OK  " if ok_slice else "MISS") +
+              " 静态表 · 营救机器人兜底链（0x08ECA5 非常驻 → 0x08ECA6 常驻）")
+        all_ok &= ok_slice
     else:
         print(f"MISS 缺少 {table_h}")
         all_ok = False
