@@ -12,3 +12,4 @@
 *SFBGS050.esm
 *ShatteredSpace.esm
 *BlueprintShips-SFBGS050.esm
+*SAQ_ShowAvailableQuests.esm

@@ -17,12 +17,17 @@
   第 27 轮：无限任务入口（任务板）—— DLL 入口条目表 + 测试模式 5；
            SWF 入口专用文案（前往任务板 / 任务板描述）；
            降噪（菜单开着时不轮询引导确认、停顿行加「有事在等」条件）
+  第 28 轮：入口可用性判定（LookupByID）+ 入口专用提示文案
+  第 29 轮：11 条任务板引用 override 成**常驻引用**（ESM 的 CellPersistent 组 + flags 0x400，
+           任何位置都能导航）；「太远」文案退场（换中性兜底）
 
 用法：python tools/ui/verify_saq_build.py
 """
 from __future__ import annotations
 
+import json
 import pathlib
+import struct
 import sys
 import zlib
 
@@ -42,6 +47,65 @@ def swf_text_bytes(path: pathlib.Path) -> bytes:
 def check(name: str, blob: bytes, needle: bytes) -> bool:
     ok = needle in blob
     print(("OK  " if ok else "MISS") + f" {name}")
+    return ok
+
+
+REF_SIGS = (b"REFR", b"ACHR", b"PGRE", b"PMIS", b"PARW", b"PBAR", b"PHZD")
+
+
+def check_esm_persist(path: pathlib.Path, expect: set[int], label: str) -> bool:
+    """第 29 轮：expect 里的 REFR 必须已 override 成常驻（CellPersistent 组 + flags 0x400）。
+
+    这是「任何位置都能导航」的**数据侧保证** —— 只查字节特征证明不了这个，
+    必须真正按组结构解析（顺带做组边界自检：结构被写坏时立刻能看出来）。
+    """
+    buf = path.read_bytes()
+    found: dict[int, tuple[int, tuple]] = {}
+    problems: list[str] = []
+
+    def walk(p: int, end: int, chain: tuple) -> None:
+        while p + 24 <= end:
+            if buf[p:p + 4] == b"GRUP":
+                sub = struct.unpack_from("<I", buf, p + 4)[0]
+                if sub < 24 or p + sub > end:
+                    problems.append(f"GRUP 越界 @0x{p:X}")
+                    return
+                gt = struct.unpack_from("<i", buf, p + 12)[0]
+                walk(p + 24, p + sub, chain + (gt,))
+                p += sub
+                continue
+            size = struct.unpack_from("<I", buf, p + 4)[0]
+            flags = struct.unpack_from("<I", buf, p + 8)[0]
+            fid = struct.unpack_from("<I", buf, p + 12)[0]
+            if bytes(buf[p:p + 4]) in REF_SIGS and (fid & 0xFFFFFF) in expect:
+                found[fid & 0xFFFFFF] = (flags, chain)
+            p += 24 + size
+
+    head = struct.unpack_from("<I", buf, 4)[0]
+    pos = 24 + head
+    while pos + 24 <= len(buf):
+        if buf[pos:pos + 4] != b"GRUP":
+            problems.append(f"顶层 @0x{pos:X} 不是 GRUP")
+            break
+        gsize = struct.unpack_from("<I", buf, pos + 4)[0]
+        if pos + gsize > len(buf):
+            problems.append(f"顶层 GRUP @0x{pos:X} size 越界")
+            break
+        walk(pos + 24, pos + gsize, ())
+        pos += gsize
+
+    hit = 0
+    for low in expect:
+        got = found.get(low)
+        if got and (got[0] & 0x400) and got[1] and got[1][-1] == 8:
+            hit += 1
+        else:
+            problems.append(f"0x{low:06X} 未常驻化（flags/组链={got}）")
+    ok = hit == len(expect) and not problems
+    print(("OK  " if ok else "MISS") +
+          f" ESM({label}) · 常驻化 override {hit}/{len(expect)} 条（CellPersistent + 0x400）")
+    for p in problems:
+        print(f"       - {p}")
     return ok
 
 
@@ -66,10 +130,11 @@ def main() -> int:
         "入口子项名(英)": b"Go to the mission board",
         "入口描述(中)": "这是一块任务板".encode(),
         "入口描述(英)": b"This is a mission board",
-        # 第 28 轮：入口「离得太远、引用未加载」的如实提示（与任务的「没有导航目标」分开）
-        "入口太远描述(中)": "你现在离这个位置还很远".encode(),
-        "入口太远描述(英)": b"You are too far from this location",
-        "入口太远提示": "暂时无法导航（离得太远）".encode(),
+        # 第 28 轮：入口「引用取不到」的如实提示（与任务的「没有导航目标」分开）
+        # ★ 第 29 轮：引用已常驻化（任何位置都取得到）⇒ 文案不再提「太远」，改中性兜底
+        "入口不可用描述(中)": "这个位置此刻取不到".encode(),
+        "入口不可用描述(英)": b"the location is not available at the moment",
+        "入口不可用提示": "暂时无法导航:".encode(),
     }
     swf_paths = [
         ROOT / "ui/missionmenu/build/missionmenu.swf",
@@ -85,6 +150,10 @@ def main() -> int:
         blob = swf_text_bytes(p)
         for name, needle in swf_checks.items():
             all_ok &= check(f"{p.name} · {name}", blob, needle)
+        # 反向检查：第 29 轮起「太远」的说法退场（玩家反馈不该有这种限制）
+        gone = "离得太远".encode() not in blob and b"You are too far from this location" not in blob
+        print(("OK  " if gone else "MISS") + f" {p.name} · 旧「太远」文案已移除(反向检查)")
+        all_ok &= gone
 
     dll = ROOT / "plugin/build/windows/x64/releasedbg/SAQ_ShowAvailableQuests.dll"
     if dll.exists():
@@ -134,6 +203,8 @@ def main() -> int:
             # 第 28 轮：入口可用性的运行时判定（LookupByID；与脚本 Game.GetForm 同源）
             "入口统计列": "入口={}(可导航 {})".encode(),
             "入口太远不写通道": "的任务板引用当前取不到".encode(),
+            # 第 29 轮：常驻化 override 的诊断（不可导航名单 —— 正常应恒为空）
+            "入口不可导航名单": "入口不可导航: ".encode(),
         }.items():
             all_ok &= check(f"DLL · {name}", blob, needle)
         # 反向检查：第 27 轮把「每次切条目打一行」的旧说明换成「每菜单一行」，旧串不应再出现
@@ -176,6 +247,9 @@ def main() -> int:
         all_ok = False
 
     # ★ 第 20 轮：ESM 里的测试开关 GLOB（控制台 `set SAQ_TestMode to N` 的落点）
+    # ★ 第 29 轮：同时检查 11 条任务板引用的常驻化 override（数据侧解析，不只是特征串）
+    entries = json.loads((ROOT / "ref/entry_targets.json").read_text(encoding="utf-8"))
+    expect_persist = {e["refLocal"] for e in entries if not e["persistent"]}
     for label, path in (("工作区", ROOT / "esm/SAQ_ShowAvailableQuests.esm"),
                         ("MO2 部署", MO2_MOD / "SAQ_ShowAvailableQuests.esm")):
         if path.exists():
@@ -183,6 +257,7 @@ def main() -> int:
             all_ok &= check(f"ESM({label}) · 测试开关 GLOB", blob, b"SAQ_TestMode")
             # ★ 第 21 轮：引导目标高位 GLOB（+ VMAD 属性绑定）
             all_ok &= check(f"ESM({label}) · 引导目标高位 GLOB", blob, b"SAQ_GuidePrefix")
+            all_ok &= check_esm_persist(path, expect_persist, label)
         else:
             print(f"MISS 缺少 {path}")
             all_ok = False

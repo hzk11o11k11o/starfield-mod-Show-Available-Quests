@@ -120,6 +120,7 @@ namespace SAQ
 			bool        filterApplied{};      // 这次到底有没有按运行时状态过滤
 			std::string samples;              // 被剔掉的前几条（名字 + 状态）
 			std::string vtableSamples;        // 未识别虚表的样本（诊断）
+			std::string entryUnavailable;     // ★ 第 29 轮：取不到引用的入口名单（override 没生效的证据）
 		};
 
 		// 推送重试状态（只在主线程读写，不需要锁）。
@@ -420,6 +421,12 @@ namespace SAQ
 				entry.hasGuideTarget = (RE::TESForm::LookupByID(static_cast<RE::TESFormID>(id)) != nullptr);
 				entry.nameZh = e.nameZh;
 				entry.nameEn = e.nameEn;
+				// ★ 第 29 轮：这些引用已在 ESM 里 override 成**常驻引用**（CellPersistent + 0x400）
+				//   ⇒ 任何位置都取得到、都能导航。这里为 false = override 没生效（ESM 没加载
+				//   / 被别的插件覆盖掉）——把名单记进日志，「可导航 12」这条判据失败时一眼看出是谁。
+				if (!entry.hasGuideTarget) {
+					a_stats.entryUnavailable += std::format("{}[0x{:08X}] ", e.nameZh, id);
+				}
 				a_out.push_back(std::move(entry));
 				++a_stats.entries;
 				if (entry.hasGuideTarget) {
@@ -612,6 +619,10 @@ namespace SAQ
 			}
 			if (!a_stats.vtableSamples.empty()) {
 				out += " 未识别例: " + a_stats.vtableSamples;
+			}
+			if (!a_stats.entryUnavailable.empty()) {
+				// ★ 第 29 轮：入口引用取不到 = 常驻化 override 没生效（正常应恒为空）
+				out += " 入口不可导航: " + a_stats.entryUnavailable;
 			}
 			return out;
 		}

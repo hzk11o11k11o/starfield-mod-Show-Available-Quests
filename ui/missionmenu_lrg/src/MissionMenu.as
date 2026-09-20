@@ -638,15 +638,16 @@ package
       private function SaqDescriptionText(param1:Boolean, param2:Boolean = false) : String
       {
          // ★ 第 27 轮：无限任务入口（任务板）。
-         // ★ 第 28 轮：入口的「无目标」不是「没有导航目标」，而是「引用当前没加载」
-         //   （任务板大多是非持久引用，你离得太远时取不到）—— 如实说明。
+         // ★ 第 29 轮：入口引用已经在 ESM 里 override 成**常驻引用**（任何位置都能取到），
+         //   所以这个「取不到」分支只是兜底（ESM 没加载 / 被别的插件覆盖掉时）。
+         //   措辞不再提「太远」——玩家明确反馈「不该存在太远就不能导航」。
          if(param2 == true)
          {
             if(param1 != true)
             {
                return this.SaqUseChinese()
-                  ? "你现在离这个位置还很远 —— 暂时无法导航。到它所在的城市/据点附近后，再打开一次任务菜单即可。"
-                  : "You are too far from this location - navigation is unavailable for now. Come closer to its city/outpost, then reopen the mission menu.";
+                  ? "暂时无法导航 —— 这个位置此刻取不到（多半是所在区域还没加载出来）。稍后重新打开一次任务菜单再试。"
+                  : "Cannot navigate right now - the location is not available at the moment (its area has not loaded yet). Reopen the mission menu and try again.";
             }
             if(this.SaqCourseKeyName().length == 0)
             {
@@ -1009,11 +1010,12 @@ package
          if(param1.bSaqHasTarget != true)
          {
             GlobalFunc.PlayMenuSound(MISSION_TRACKING_TOGGLE_OFF_SOUND);
-            // ★ 第 28 轮：入口条目（任务板）的「不可导航」是「离得太远（引用未加载）」，
-            //   与任务的「没有导航目标」不是一回事 —— 提示分开写。
+            // ★ 第 28 轮：入口条目（任务板）与任务的「不可导航」原因不同 —— 提示分开写。
+            // ★ 第 29 轮：常驻化 override 之后这是兜底分支（引用理论上总取得到），
+            //   提示语不再说「太远」。
             if(param1.iType == SAQ_ENTRY_TYPE)
             {
-               this.SaqGuideNote = "暂时无法导航（离得太远）:" + this.SaqQuestName(param1);
+               this.SaqGuideNote = "暂时无法导航:" + this.SaqQuestName(param1);
             }
             else
             {

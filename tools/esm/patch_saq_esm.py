@@ -174,6 +174,30 @@ def make_glob_payload(edid: str, value: float) -> bytes:
             make_sub(b"FLTV", struct.pack("<f", value)))
 
 
+def has_nested_groups(buf: bytes) -> bool:
+    """顶层组里再出现 GRUP ⇒ 有嵌套组（第 29 轮的 CELL override 组就是嵌套结构）。
+
+    为什么需要这个检查：本工具用「线性重建」处理顶层组 —— 遇到嵌套组会把层级拍平
+    （内层组被当成同级组重写），静默破坏文件。所以一旦发现嵌套组，宁可拒绝运行。
+    """
+    pos = 24 + struct.unpack_from("<I", buf, 4)[0]
+    while pos + 24 <= len(buf):
+        if buf[pos:pos + 4] != b"GRUP":
+            return False
+        gsize = struct.unpack_from("<I", buf, pos + 4)[0]
+        p = pos + 24
+        end = pos + gsize
+        while p + 4 <= end:
+            if buf[p:p + 4] == b"GRUP":
+                return True
+            if p + 24 > end:
+                break
+            size = struct.unpack_from("<I", buf, p + 4)[0]
+            p += 24 + size
+        pos += gsize
+    return False
+
+
 def has_edid(buf: bytes, edid: str) -> bool:
     """整个文件里有没有这个 EDID 的记录（任何类型）。"""
     for kind, _off, hdr, payload in walk_linear(buf):
@@ -377,6 +401,14 @@ def main() -> int:
     flags = struct.unpack_from("<I", buf, 8)[0]
     if flags & 0x80:
         print("警告：TES4 头里 Localized 位被置起来了 —— 内联文本会失效（先确认为什么）")
+
+    # ★ 第 29 轮防呆：本工具不认识嵌套组（CELL override 组）—— 遇到就拒绝运行，
+    #   否则线性重建会把层级拍平、静默破坏文件。
+    if has_nested_groups(buf):
+        print("检测到嵌套组（CELL override 组）—— 本工具不认识嵌套结构，先清掉再跑：")
+        print("    python tools/esm/persist_entry_refs.py --clean")
+        print("（正常构建顺序是 patch → persist，见 build-saq.ps1）")
+        return 1
 
     quest_off = None
     quest_formid = 0

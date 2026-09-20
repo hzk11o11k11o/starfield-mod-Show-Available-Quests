@@ -86,9 +86,22 @@ if ($RebuildEsm) {
     }
     Ok "复用 $esmStable"
 }
+# ★ 第 29 轮：先清掉上一次构建留下的 CELL override 组（若有）——
+#   patch_saq_esm.py 是线性重建，不认识嵌套组（文件里留着它会被拒绝运行）。
+& python (Join-Path $root 'tools\esm\persist_entry_refs.py') --clean | Write-Host
+if ($LASTEXITCODE -ne 0) { throw "persist_entry_refs.py --clean 失败（exit $LASTEXITCODE）" }
+
 # ★ 无论走哪条路，都要把「引导别名 + 引导目标」补进去（xEdit 重新生成会把它冲掉）。
 #   幂等，可反复运行；结构与自校验见 tools/esm/patch_saq_esm.py。
 & python (Join-Path $root 'tools\esm\patch_saq_esm.py') | Write-Host
+
+# ★ 第 29 轮：把 11 条非常驻任务板引用 override 成**常驻引用**
+#   （玩家反馈「我在亚特兰蒂斯城也不能导航」+「不该存在太远就不能导航」——
+#    常驻引用在任何位置都被引擎加载，脚本 Game.GetForm 永远取得到）。
+#   ★ 顺序：必须在 patch_saq_esm.py **之后**（那个工具是线性重建，不认识嵌套组）。
+#   写法（抄官方 SFBGS003/SFBGS008 的 override 形态）与自校验见 persist_entry_refs.py。
+& python (Join-Path $root 'tools\esm\persist_entry_refs.py') | Write-Host
+if ($LASTEXITCODE -ne 0) { throw "persist_entry_refs.py 失败（exit $LASTEXITCODE）" }
 
 # --- 3. Papyrus --------------------------------------------------------------
 Step '3/6' '编译 Papyrus 脚本'
