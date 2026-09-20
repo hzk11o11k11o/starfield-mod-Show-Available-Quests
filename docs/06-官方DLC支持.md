@@ -41,10 +41,10 @@ DLC 不是 0 号：`ShatteredSpace.esm` 里的一条任务在文件里写的是 
 离线（构建期）                          运行期（DLL）
 ─────────────────────────────────     ──────────────────────────────────────────
 fetch_sources.py                       Masters::Refresh()
-  ├ 每个 master 的 strings 表             └ 遍历 TESDataHandler.files（当前加载的插件）
-  │  <master>_{en,zhhans}.strings            · fileName 对上表里的 master 名（大小写不敏感）
-  └ quests_all.json（多 master QUST）        · fileIndex.fullIndex / smallIndex = 序号
-        ↓                                    · prefix = index << 24
+  ├ 每个 master 的 strings 表             └ 前缀探测（第 18 轮重写，见 3.4）：
+  │  <master>_{en,zhhans}.strings            · 拿表里该 master 的记录号当样本
+  └ quests_all.json（多 master QUST）        · 扫 prefix<<24 | local 问 LookupByID
+        ↓                                    · 全量命中率 ≥90% ⇒ 认定序号
 gen_quest_table.py → SAQ_QuestTable.h    MakeFormID(master, local) = prefix | local
   { localFormID, master, ... }                ↓
         ↓                                BuildRuntimeRows()  每次打开菜单重建
@@ -88,19 +88,48 @@ DLC 要再跑几次太贵，而 QUST 的别名子记录本来就在记录里：
 `ALST`(别名 id) → `ALID`(名字) → `ALUA`(NPC) / `ALFR`(REFR) / `ALFL`(地点)。
 `gen_guide_targets.py` 现在直接解析它们，xEdit 导出在这条链路上不再需要。
 
-### 3.4 抽样自校验（序号算错要能自己喊出来）
+### 3.4 前缀探测（第 18 轮重写）+ 全量确认
 
-`Masters::Refresh()` 之后，每个 master 从表里挑 6 条记录号，按算出来的 FormID 问
-`TESForm::LookupByID`，再核验虚表是不是 TESQuest，命中率写进日志：
+**为什么重写**：第 17 轮用 `TESDataHandler::files` 拿「插件名 → 序号」，
+2026-09-20 09:40 实测**四个 master 全部报「未加载」**（而游戏 Data 目录里它们都在、
+ESM 通道前缀=0x0F 证明 16+ 插件已加载）—— commonlibsf 的 TESDataHandler 结构体
+偏移在本游戏版本上不可信（formArrays 第 5 轮就踩过同款，见 docs/02）。
+**结论：凡是 commonlibsf 硬编码的结构体偏移，都不要用。**
+
+新方案「前缀探测」不碰任何结构体布局，只用两个已实测可靠的接口：
+`TESForm::LookupByID`（按 ID 问引擎要表单）+ 虚表核验（确认是 TESQuest）：
 
 ```
-数据源：Starfield.esm 序号=0x00 前缀=0x00 样本 6/6；ShatteredSpace.esm 序号=0x0C 前缀=0x0C 样本 6/6；
-       SFBGS050.esm 序号=0x0D 前缀=0x0D 样本 6/6；SFBGS00D.esm 序号=0x0B 前缀=0x0B 样本 6/6
+对每个 master：
+  1. 从静态表取该 master 的记录号（去重 + 等距采样 ≤6 条）；
+  2. 阶段 1（找候选）：用样本扫全空间 ——
+       full 插件：prefix<<24 | local，prefix ∈ 0x00..0xFD
+       light(ESL)：0xFE000000 | (smallIndex<<12) | local，smallIndex ∈ 0x000..0xFFF
+                    （只在 full 段一个都没命中时才扫）
+     能查到且虚表是 TESQuest ⇒ 候选；一命中即停（多样本是容忍「某条记录被删」）
+  3. 阶段 2（确认）：把该 master 的**全部**记录按候选前缀数一遍命中率，
+     取最高者；≥90% ⇒ 认定，否则按「未加载」处理并留 WARN 作证据。
 ```
 
-出现 `样本 0/6` 就是「序号/位宽算错了」——这条日志是这套机制的保险丝。
-light（ESL）插件的方案也实现了（`0xFE000000 | (smallIndex << 12) | local`），
-medium / blueprint 两种档位**明确标记为不支持**（宁可跳过也不猜）。
+自检锚点：**Starfield.esm 必须解析出 0x00**（基础游戏永远是第一个 master）。
+不满足 ⇒ 打 WARN，且本次**不缓存**结果（下次打开菜单重试）—— 避免把
+「游戏尚未就绪」这种瞬时状态钉死成「表里什么都没有」。
+
+日志形态（第 18 轮起）：
+
+```
+数据源：Starfield.esm 序号=0x00 前缀=0x00 记录命中 202/202；ShatteredSpace.esm 序号=0x0C 前缀=0x0C 记录命中 22/22；
+       SFBGS050.esm 序号=0x0D 前缀=0x0D 记录命中 22/22；SFBGS00D.esm 序号=0x0B 前缀=0x0B 记录命中 15/15
+```
+
+「未加载（或档位不支持，跳过其任务）」就是探测不到的形态。
+
+成本：已加载的 master ≈ 254 次扫描 + 全量确认；未加载的 master 最多再扫 light
+空间（4096 次）—— 都在毫秒级以内，且**一次游戏运行内加载顺序不会变** ⇒ 基础游戏
+解析成功后做会话级缓存，之后零成本。
+
+medium / blueprint 档位探测不到（FormID 方案未验证）⇒ 表现为「未加载」，
+**宁可跳过也不猜**；light 的扫描分支已实现但本机没有真实样本可验（算法来自引擎规则）。
 
 ## 四、不装 DLC 的玩家会怎样
 

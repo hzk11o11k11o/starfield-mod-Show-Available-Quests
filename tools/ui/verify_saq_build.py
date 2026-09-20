@@ -7,6 +7,7 @@
 检查的特征（随版本演进补充；旧特征缺失代表功能被回退，不要删）：
   第 16 轮：SAQ_GuideReply / SAQ_SyncGuideState / 引导失败文案 / 各类新日志
   第 17 轮：SaqAutoCancelIfAccepted（已接取自动取消引导）/ 多 master 的日志与字段
+  第 18 轮：前缀探测（不再读 TESDataHandler::files）/ 新「未加载」文案 / 空推送说明
 
 用法：python tools/ui/verify_saq_build.py
 """
@@ -71,11 +72,20 @@ def main() -> int:
             "引导重新下发": "引导重新下发".encode(),
             # 第 17 轮：多 master（DLC）+ 引导结果确认 + 认领已有引导
             "master 数据源日志": "数据源：".encode(),
-            "master 未加载跳过": "未加载（跳过其任务）".encode(),
+            # ★ 第 18 轮改了文案（前缀探测下「未加载」也可能是「档位不支持」）
+            "master 未加载跳过": "未加载（或档位不支持，跳过其任务）".encode(),
             "引导结果确认": "引导已生效".encode(),
             "认领已有引导": "认领已有引导".encode(),
+            # 第 18 轮：前缀探测（替代 TESDataHandler::files）+ 空推送说明
+            "前缀探测日志": "前缀探测：".encode(),
+            "记录命中率": "记录命中 {}/{}".encode(),
+            "空推送说明": "本轮没有可推送的条目".encode(),
         }.items():
             all_ok &= check(f"DLL · {name}", blob, needle)
+        # 反向检查：第 18 轮换掉的旧「未加载」文案不应再出现（新文案不含完整旧串）
+        gone = "未加载（跳过其任务）".encode() not in blob
+        print(("OK  " if gone else "MISS") + " DLL · 旧未加载文案已替换(反向检查)")
+        all_ok &= gone
         # ★ 第 17 轮的核心判据：DLC 的两个 + 基础游戏一共 4 个数据源名都编进了 DLL
         for master in (b"Starfield.esm", b"ShatteredSpace.esm", b"SFBGS050.esm", b"SFBGS00D.esm"):
             all_ok &= check(f"DLL · 数据源 {master.decode()}", blob, master)

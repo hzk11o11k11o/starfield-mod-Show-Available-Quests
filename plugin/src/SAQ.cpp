@@ -18,8 +18,10 @@
 //    ② **只看主线程**：读档期间加载线程也会跑到这里；加主线程判定。
 //    ③ ★ **不要用 UI::GetMenuMovie()**：1.16.244.0 上它查的表（0x470）是错的，
 //       真实菜单表在 UI+0x450（反汇编 UI::IsMenuOpen 实证）—— 详见 SAQ_UI.cpp。
-//    ④ ★ **不要用 TESDataHandler::formArrays 数任务**：本机实测读到空表（见 docs/02），
-//       改用 TESForm::LookupByID 按 FormID 问引擎。
+//    ④ ★ **不要读 TESDataHandler 的任何成员**：formArrays 读到空表（第 5 轮，见 docs/02）、
+//       files 读到空链表（第 17 轮，四个 master 全被误判「未加载」，见 docs/99 第 18 轮）——
+//       它的结构体偏移在本机游戏版本上整体不可信。改用 TESForm::LookupByID 按 FormID 问引擎；
+//       master 序号走「前缀探测」（SAQ_Masters.h）。
 // ============================================================================
 
 #include "PCH.h"
@@ -121,6 +123,7 @@ namespace SAQ
 			std::uint32_t           attempts{};        // 正式推送尝试（预算 14 次，指数退避）
 			std::uint32_t           menuWaitTries{};   // 「菜单还没就绪」的等待次数（预算 24 次，150ms 短退避）
 			bool                    done{};            // 本次菜单打开已处理完（成功/放弃）
+			bool                    emptiedLogged{};   // ★ 第 18 轮：「本轮没有可推送条目」的日志只打一次
 			std::uint64_t           lastAttemptMs{};
 			// ★ 第 11 轮：失败退避间隔（400 → 800 → 1600 → …封顶 4000）。
 			//   实测「菜单打开后 40 秒才就绪」的场景（日志：重试间隔 15 秒 × 2 次），
@@ -269,7 +272,13 @@ namespace SAQ
 		//   * 名称中英都带上，AS3 侧按游戏语言挑
 		void CollectAvailableQuests(std::vector<QuestEntry>& a_out, std::size_t& a_totalQuests, RuntimeFilterStats& a_stats)
 		{
+			// ★ 第 18 轮：这里原来是无条件 `a_stats = {}`，把 BuildRuntimeRows 刚写进去的
+			//   `skippedMaster`（master 未加载而跳过的条数）清零了 —— 第 17 轮实测日志里
+			//   因此出现自相矛盾的一行：「引擎存在=0 … 跳过(master未加载)=0」。
+			//   现在只清本函数自己要写的字段，保留上游统计。
+			const auto skippedByMaster = a_stats.skippedMaster;
 			a_stats = {};
+			a_stats.skippedMaster = skippedByMaster;
 			a_totalQuests = kQuestTableSize;
 			a_out.reserve(g_runtimeRows.size());
 
@@ -434,6 +443,16 @@ namespace SAQ
 		void TryPushPending()
 		{
 			if (g_pending.done || g_pending.quests.empty()) {
+				// ★ 第 18 轮：空集合原来直接 return，日志里没有任何一行说明「C++ 这次没推」
+				//   （第 17 轮实测：master 解析失败 ⇒ 待推送=0 ⇒ 整条推送路径静默停摆，
+				//   玩家看到的是 SWF 内嵌回退数据，日志却只能靠 `src=embedded` 反推）。
+				//   补一行 INFO，把「为什么没推」写清楚（每轮菜单只打一次）。
+				if (!g_pending.done && g_pending.quests.empty() && !g_pending.emptiedLogged) {
+					g_pending.emptiedLogged = true;
+					REX::INFO("本轮没有可推送的条目（静态表={} 引擎里存在={} 跳过(master未加载)={}）"
+							  "—— 本次由 SWF 内嵌回退数据兜底",
+						g_pending.total, g_pending.stats.live, g_pending.stats.skippedMaster);
+				}
 				return;
 			}
 			const auto now = NowMs();
@@ -944,12 +963,15 @@ namespace SAQ
 			g_pending.attempts = 0;
 			g_pending.menuWaitTries = 0;
 			g_pending.done = false;
+			g_pending.emptiedLogged = false;  // 第 18 轮：新的一轮菜单，「没有可推送条目」日志可再打一次
 			g_pending.lastAttemptMs = 0;
 			g_pending.total = 0;
 			g_pending.backoffMs = kPushRetryIntervalMs;  // 新一轮重试：退避复位
 
 			// ★ 第 17 轮：先按**当前加载顺序**把「master + 记录号」解析成运行期 FormID，
 			//   再建运行期行表（没装/没启用的 DLC 在这一步被丢掉）。
+			//   ★ 第 18 轮：解析方式改为「前缀探测」（不再读 TESDataHandler —— 它的结构体
+			//   偏移在本游戏版本上不可信），设计与证据见 SAQ_Masters.h 顶部注释。
 			const auto t0 = NowMs();
 			const auto masters = BuildRuntimeRows(g_pending.stats);
 			CollectAvailableQuests(g_pending.quests, g_pending.total, g_pending.stats);
