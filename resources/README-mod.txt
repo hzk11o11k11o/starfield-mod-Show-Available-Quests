@@ -54,8 +54,12 @@
   · 无限生成任务本身不显示，但其接取入口（12 处任务板）会作为独立条目列出；
     无论你在哪都能一键导航过去——远处先给大致方位，走到那块板所在的区域后
     蓝点会自动落到板上（读档/重启后也会自动校正）。
-  · 「游戏进度还没到时应当不显示」目前覆盖任务记录里「引用别的任务」的
-    前置条件（7 条任务 / 9 条门槛）；对话条件与位置/遭遇类条件暂未覆盖。
+  · 少数任务的导航目标所在区域要**先靠近才会加载**：远处点引导会先落到附近
+    位置（HUD 会提示「目标尚未加载」），走近后自动生效，不必重新点。
+  · 「游戏进度还没到时应当不显示」覆盖两类条件：任务记录里「引用别的任务」的
+    前置条件（7 条任务），以及任务对话（INFO）里的同类条件（60 条任务 /
+    290 条对话 / 341 条条件，例如「大器晚成」要「孤立无援」完成）；
+    位置/遭遇类条件暂未覆盖。
   · 本 mod 会覆盖 Interface\missionmenu.swf 与 missionmenu_lrg.swf：
     与其它修改任务菜单 UI 的 mod 同时使用时，需要做补丁（patch）。
 
@@ -136,9 +140,15 @@
     navigated to from anywhere - far away you get the approximate direction,
     and once you reach the board's area the marker snaps onto the board
     itself (it also self-corrects after a save reload or restart).
-  · "Not shown when your progress is not far enough" currently covers
-    record-level preconditions that reference another quest (7 quests /
-    9 gates); dialogue and location/encounter conditions are not covered yet.
+  · A few quest targets only load once you get near: from afar the guide
+    first lands on a nearby spot (the HUD says "target not loaded yet"), and
+    it activates automatically once you arrive - no need to press again.
+  · "Not shown when your progress is not far enough" covers two layers of
+    conditions: record-level preconditions that reference another quest
+    (7 quests) and the same kind of conditions inside a quest's dialogues
+    (INFOs, 60 quests / 290 dialogues / 341 conditions, e.g. "A House
+    Divided" needs "The Empty Nest" finished); location/encounter based
+    conditions are not covered yet.
   · This mod overrides Interface\missionmenu.swf and
     missionmenu_lrg.swf: patches are needed if you use another mod that
     modifies the mission menu UI.

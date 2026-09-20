@@ -1364,7 +1364,13 @@ namespace SAQ::UI
 		return CallAs3WithString(root, "_root.SAQ_SyncGuideState", arg.c_str(), a_reply);
 	}
 
+#if SAQ_WITH_HARNESS
 	// ★★ 第 49 轮（harness）：把「测试驱动」调用发给 AS3 的 SAQ_TestDrive* 入口。
+	//
+	// ★ 第 53 轮（大项 F · 发布就绪）：整个函数只在开发构建（SAQ_WITH_HARNESS=1）里存在 ——
+	//   发布构建的 DLL 里不该出现 `SAQ_TestDrive*` / 「SWF 指纹」这类测试期字符串。
+	//   AS3 侧的那几个入口（SWF 里）保留：它们只在 DLL 主动调用时才起作用，
+	//   而发布版 DLL 已不存在任何调用路径（见 docs/09 的发布构建一节）。
 	//
 	// 用途：引擎内自动测试要代替人做「选中某条 / 按 R / 展开子项」这些操作 ——
 	// 用的是**同一条 Invoke 通道**（本项目已经跑了十几轮的那条），所以不需要键鼠、
@@ -1472,4 +1478,5 @@ namespace SAQ::UI
 		}
 		return true;
 	}
+#endif
 }

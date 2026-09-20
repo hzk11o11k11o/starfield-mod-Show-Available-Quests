@@ -99,7 +99,16 @@
            本脚本检查：静态表常驻兜底已并入 + 营救机器人兜底链（0x08ECA5→0x08ECA6）+
            DLL 新判据文案 + 反向检查（旧「全是 非常驻」说法已替换）
 
-用法：python tools/ui/verify_saq_build.py
+  第 53 轮（大项 F · 发布就绪）：DLL 两种构建模式 —— 开发构建（xmake saq_harness=y，
+           含 harness）与**发布构建**（saq_harness=n，DLL 里不允许出现任何 harness
+           特征；多一条「发布构建提示」正向检查 + 13 项反向检查）。默认按 DLL 内容
+           自动探测，`--release` / `--dev` 强制（打包脚本用 --release）。
+           另加：MO2 部署副本与工作区**字节一致**（部署未落后 —— 第 50 轮的教训）。
+           注：SWF / PEX / ESM 两种模式相同（AS3 测试入口与脚本测试执行器保留 ——
+           它们只在 DLL 主动调用/写通道时才起作用，发布版 DLL 已无调用路径；
+           见 docs/09 第十一节）。
+
+用法：python tools/ui/verify_saq_build.py [--release|--dev]
 """
 from __future__ import annotations
 
@@ -304,6 +313,37 @@ TEST_GLOBS = (
 )
 
 
+# ★★ 第 53 轮（大项 F · 发布就绪）：开发构建（SAQ_WITH_HARNESS=1）里必须有的 harness 特征串。
+#   发布构建（xmake f --saq_harness=n）里**这些一条都不该出现** —— 同一张表反向用：
+#   · 开发模式：逐条必须命中（缺 = 功能被回退）；
+#   · 发布模式：逐条必须不见（出现 = 「发布包」里带着测试代码/能力）。
+HARNESS_STRINGS = (
+    ("harness 用例载入", "harness：用例文件已载入"),
+    ("harness 通道就绪", "harness：通道就绪"),
+    ("harness 结果落盘", "harness：结果已写入"),
+    ("harness 未启用文案", "引擎内自动化测试关闭"),
+    ("harness 状态行", "harness="),
+    ("命令通道自检", "测试命令通道 GLOB"),
+    ("通道垃圾读数拒写", "拒绝写内存"),
+    ("脚本未就绪判定", "SAQ_TestHarness"),
+    ("界面测试驱动入口", "SAQ_TestDriveSelect"),
+    ("菜单 kShow 开关", "已请求打开任务菜单"),
+    ("harness 结束清菜单", "结束时菜单还开着"),
+    ("失败带 SWF 指纹", "SWF 指纹"),
+    ("旧版 SWF 判定文案", "游戏加载的还是旧版 SWF"),
+)
+
+
+def dll_build_mode(blob: bytes) -> str:
+    """探测 DLL 是开发构建（含 harness）还是发布构建（无 harness）。
+
+    判据用「harness：通道就绪」——这条只在 SAQ_Test.cpp 里，发布构建（saq_harness=n）
+    整个翻译单元都不参与编译。`--release` / `--dev` 可强制覆盖（发布校验用强制，
+    免得「构建没切过去」时 auto 探测把带 harness 的 DLL 当成发布版放行 —— 那是最危险的失败模式）。
+    """
+    return "dev" if "harness：通道就绪".encode() in blob else "release"
+
+
 def check_esm_test_globs(path: pathlib.Path, label: str, require_zero: bool) -> bool:
     """★ 第 49 轮：引擎内 harness 的**测试命令通道 GLOB**（0x806~0x80D，共 8 条）。
 
@@ -383,6 +423,15 @@ def check_esm_test_globs(path: pathlib.Path, label: str, require_zero: bool) -> 
 
 
 def main() -> int:
+    # ★ 第 53 轮（大项 F · 发布就绪）：构建模式 ——
+    #   `--release` 强制按**发布构建**校验（package-saq.ps1 用：即使 xmake 配置没切过去，
+    #     也会因为「DLL 里还有 harness 字符串」直接失败，挡住「带着测试代码打包」）；
+    #   `--dev` 强制开发构建；默认按 DLL 内容自动探测。
+    force_release = "--release" in sys.argv[1:]
+    force_dev = "--dev" in sys.argv[1:]
+    if force_release and force_dev:
+        print("参数互斥：只能给 --release 或 --dev 之一")
+        return 2
     all_ok = True
 
     swf_checks = {
@@ -521,8 +570,14 @@ def main() -> int:
             all_ok &= ok
 
     dll = ROOT / "plugin/build/windows/x64/releasedbg/SAQ_ShowAvailableQuests.dll"
+    release_mode = force_release
     if dll.exists():
         blob = dll.read_bytes()
+        if not force_release and not force_dev:
+            release_mode = dll_build_mode(blob) == "release"
+        print("---- DLL 构建模式：" +
+              ("发布构建（无 harness）" if release_mode else "开发构建（含 harness）") +
+              ("（--release 强制）" if force_release else "") + " ----")
         for name, needle in {
             "引导结果回写": "引导结果已回写界面".encode(),
             "引导状态同步": "引导状态已同步界面".encode(),
@@ -758,27 +813,26 @@ def main() -> int:
         #   ② 原语层（SAQ_TestOps.cpp）：日志环形缓冲 / 命令通道（GLOB 0x806~0x80D）/
         #      菜单开关（kShow/kHide，与已实测的关菜单同一机制）/ 界面测试驱动；
         #   ③ 只有 ini [Test] Harness=1 才启用（其余情况零开销）。
-        all_ok &= check("DLL · harness 用例载入", blob, "harness：用例文件已载入".encode())
-        all_ok &= check("DLL · harness 通道就绪", blob, "harness：通道就绪".encode())
-        all_ok &= check("DLL · harness 结果落盘", blob, "harness：结果已写入".encode())
-        all_ok &= check("DLL · harness 未启用文案", blob, "引擎内自动化测试关闭".encode())
-        all_ok &= check("DLL · harness 状态行", blob, b"harness=")
-        all_ok &= check("DLL · 命令通道自检", blob, "测试命令通道 GLOB".encode())
-        all_ok &= check("DLL · 通道垃圾读数拒写", blob, "拒绝写内存".encode())
-        all_ok &= check("DLL · 脚本未就绪判定", blob, b"SAQ_TestHarness")
-        all_ok &= check("DLL · 界面测试驱动入口", blob, b"SAQ_TestDriveSelect")
-        all_ok &= check("DLL · 菜单 kShow 开关", blob, "已请求打开任务菜单".encode())
-        # ★ 第 49 轮补丁（首测复查）：
-        #   ① 无参 AS3 入口必须按 0 参调用（`SAQ_TestDriveTab()` 是 0 参，
-        #      传 1 个空字符串占位 ⇒ Invoke 直接失败 ⇒ 首测 smoke 卡在 ui.tab）；
-        #   ② 用例结束（含失败中止）时把菜单恢复成关着 —— 首测失败中止后
-        #      menu.close 步骤没跑到，任务菜单一直留在屏幕上（游戏暂停）。
-        all_ok &= check("DLL · harness 结束清菜单", blob, "结束时菜单还开着".encode())
-        # ★★ 第 50 轮：ui.* 失败时的「SWF 版本指纹」诊断（见 SAQ_UI.cpp 的
-        #   InvokeUiTestDrive）—— 失败时读 SAQ_Report 看有没有 `stamp=` 字段，
-        #   把「游戏加载的 SWF 是新版还是旧版」直接写进失败详情。
-        all_ok &= check("DLL · 失败带 SWF 指纹", blob, "SWF 指纹".encode())
-        all_ok &= check("DLL · 旧版 SWF 判定文案", blob, "游戏加载的还是旧版 SWF".encode())
+        #   ★ 第 49 轮补丁：无参 AS3 入口按 0 参调用（传空串占位 ⇒ 首测卡在 ui.tab）；
+        #     用例结束（含失败中止）清菜单（否则失败后菜单留在屏幕上、游戏暂停）。
+        #   ★★ 第 50 轮：ui.* 失败时带「SWF 版本指纹」（读 SAQ_Report 的 stamp=，
+        #     分清「游戏加载的是新版还是旧版 SWF」）。
+        #   ★★ 第 53 轮（大项 F · 发布就绪）：这些条目在**发布构建**
+        #     （SAQ_WITH_HARNESS=0）里一条都不该出现 —— 同一张表反向检查
+        #     （漏一条 = 发布包里带着测试代码，正是本层要挡的事）。
+        if release_mode:
+            leaked = [name for name, needle in HARNESS_STRINGS if needle.encode() in blob]
+            if leaked:
+                print("MISS DLL · 发布构建不含 harness 特征（泄漏：" + "、".join(leaked) + "）")
+                all_ok = False
+            else:
+                print(f"OK   DLL · 发布构建不含 harness 特征（{len(HARNESS_STRINGS)} 项全无）")
+            # 反过来的正向要求：发布版要带上「Harness=1 但没编译」的那行 WARN ——
+            # 否则「改了开关没反应」又变成静默失败（第 49 轮 ini 段坑的教训）。
+            all_ok &= check("DLL · 发布构建提示（Harness=1 时 WARN）", blob, "未编译 harness".encode())
+        else:
+            for name, needle in HARNESS_STRINGS:
+                all_ok &= check(f"DLL · {name}", blob, needle.encode())
         # ★ 第 17 轮的核心判据：DLC 的两个 + 基础游戏一共 4 个数据源名都编进了 DLL
         for master in (b"Starfield.esm", b"ShatteredSpace.esm", b"SFBGS050.esm", b"SFBGS00D.esm"):
             all_ok &= check(f"DLL · 数据源 {master.decode()}", blob, master)
@@ -790,6 +844,18 @@ def main() -> int:
         gone = "formArrays[类型=数量]".encode() not in blob
         print(("OK  " if gone else "MISS") + " DLL · 旧自检已移除(反向检查)")
         all_ok &= gone
+        # ★ 第 53 轮（大项 F · 发布就绪）：MO2 部署副本必须与工作区**字节一致** ——
+        #   第 50 轮的教训：游戏进程加载的是「部署那一刻的产物」，构建了但没部署 =
+        #   玩家跑的还是旧的（当时排查半天，最后靠 usvfs 日志才定性）。
+        mo2_dll = MO2_MOD / "SFSE/Plugins/SAQ_ShowAvailableQuests.dll"
+        if mo2_dll.exists():
+            same = mo2_dll.read_bytes() == blob
+            print(("OK  " if same else "MISS") +
+                  " DLL · MO2 部署副本与工作区一致（部署未落后）")
+            all_ok &= same
+        else:
+            print(f"MISS DLL · MO2 部署副本不存在：{mo2_dll}")
+            all_ok = False
     else:
         print(f"MISS 缺少 DLL {dll}")
         all_ok = False

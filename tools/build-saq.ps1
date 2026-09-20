@@ -2,9 +2,11 @@
 #  Show Available Quests - 一键构建 + 部署
 #
 #  用法（必须 pwsh 7，直接 & 调用，不要再套一层 pwsh）：
-#     & ".\tools\build-saq.ps1"                 # 全流程（ESM 复用已有产物）
+#     & ".\tools\build-saq.ps1"                 # 全流程（ESM 复用已有产物；DLL 含 harness）
 #     & ".\tools\build-saq.ps1" -RebuildEsm     # 用 xEdit 重新生成 ESM（约 5 分钟）
 #     & ".\tools\build-saq.ps1" -SkipTable -SkipSwf     # 只重编 DLL
+#     & ".\tools\build-saq.ps1" -Harness        # 开发/自测：含 harness + 部署用例 + ini Harness=1
+#     & ".\tools\build-saq.ps1" -Release        # 发布构建：DLL **不含 harness**（打包/当玩家跑）
 #
 #  产物与部署位置见 docs\01-构建与环境.md
 # ============================================================================
@@ -18,7 +20,14 @@ param(
     # ★ 第 49 轮：部署时把测试开关 ini 的 [Test] Harness 强制写成 1
     # （引擎内自动化测试模式：启动游戏 → 读档 → 自动跑完用例 → 写 SAQ_testresults.json）。
     # 不加这个开关就只保证 key 存在、**不动已有值**（玩家设置优先）。
-    [switch]$Harness
+    [switch]$Harness,
+    # ★★ 第 53 轮（大项 F · 发布就绪）：**发布构建** —— xmake 的 saq_harness 开关设为 n，
+    # DLL 里彻底没有 harness（测试命令通道 / 界面测试驱动 / 结果落盘都不编译进去），
+    # 部署时也不拷测试用例文件。与 -Harness 互斥。
+    # 用途：① tools\package-saq.ps1 用它做「构建 + 部署 → 校验 → 打包」的构建入口；
+    #       ② 想「像玩家一样」跑一遍时用。
+    # 回到开发构建：不带 -Release 跑一次（默认 saq_harness=y），或加 -Harness（测试版）。
+    [switch]$Release
 )
 
 $ErrorActionPreference = 'Stop'
@@ -216,9 +225,19 @@ if (-not $SkipSwf) {
 
 # --- 5. DLL ------------------------------------------------------------------
 if (-not $SkipPlugin) {
-    Step '5/6' '编译 SFSE 插件（xmake）'
+    if ($Release -and $Harness) { throw '-Release 与 -Harness 互斥（发布版不含 harness）' }
+    Step '5/6' ("编译 SFSE 插件（xmake，harness " + $(if ($Release) { '关 —— 发布构建' } else { '开' }) + "）")
     Push-Location (Join-Path $root 'plugin')
     try {
+        # ★★ 第 53 轮：显式设置编译开关（y = 含 harness（默认，开发/自测）；n = 发布版）。
+        #   值没变化时 xmake 直接复用现有配置、不触发重编 —— 日常构建零额外开销。
+        #   ★ 踩过的坑：`xmake f` 只传 --saq_harness 会**把其它构建参数重置回默认**
+        #     （实测 mode 从 releasedbg 变回 release、产物跑到 build\windows\x64\release\）
+        #     ⇒ 必须每次带全套（与 xmake.lua 头部注释里的手动命令一致）。
+        $harnessFlag = if ($Release) { 'n' } else { 'y' }
+        & xmake f -y -p windows -a x64 -m releasedbg --vs=2022 "--saq_harness=$harnessFlag" 2>&1 |
+            Select-Object -Last 1 | Write-Host
+        if ($LASTEXITCODE -ne 0) { throw "xmake 配置失败（exit $LASTEXITCODE）" }
         & xmake build -y SAQ_ShowAvailableQuests 2>&1 | Select-Object -Last 2 | Write-Host
         if ($LASTEXITCODE -ne 0) { throw "xmake 构建失败（exit $LASTEXITCODE）" }
     } finally { Pop-Location }
@@ -261,6 +280,9 @@ if (-not $SkipDeploy) {
     #   ② 预建空的 SAQ_testresults.json —— MO2 的 usvfs 会「写 mod 目录里已存在的文件」
     #      重定向回 mod 目录，否则 harness 新建的结果文件会落到 overwrite 里；
     #   ③ 保证 ini 的 [Test] 段有 Harness / Plan 两个键（**不改已有值**；-Harness 才强制 1）。
+    #   ★ 第 53 轮（大项 F · 发布就绪）：-Release（发布构建）时整段跳过 ——
+    #   发布版 DLL 里没有 harness，测试用例/结果文件也不该出现在部署里。
+    if (-not $Release) {
     $pluginDest = Join-Path $dest 'SFSE\Plugins'
     Copy-Item (Join-Path $root 'tools\test\scenarios\SAQ_TestPlan.txt') `
         (Join-Path $pluginDest 'SAQ_TestPlan.txt') -Force
@@ -310,17 +332,31 @@ if (-not $SkipDeploy) {
             Write-Host ("    已更新测试开关 ini：Harness=" + $(if ($Harness) { '1（本轮 -Harness）' } else { '保持原值' }))
         }
     }
+    } else {
+        Write-Host '    发布构建：跳过测试资产部署（不拷用例文件、不动 ini 测试键）'
+    }
 
     $meta = Join-Path $dest 'meta.ini'
+    # ★ 第 53 轮（大项 F）：meta.ini 的版本号与 xmake.lua / main.cpp 同步（本次 0.1.1）。
+    #   老逻辑只在文件不存在时创建 ⇒ 升级版本后 MO2 里显示的还是旧版本号。
+    $metaVer = '0.1.1'
     if (-not (Test-Path $meta)) {
         @"
 [General]
 modid=0
-version=0.1.0
-newestVersion=0.1.0
+version=$metaVer
+newestVersion=$metaVer
 category="-1,"
 installationFile=
 "@ | Set-Content -Path $meta -Encoding ASCII
+    } else {
+        $mt = [System.IO.File]::ReadAllText($meta)
+        $mt2 = [regex]::Replace($mt, '(?m)^version=.*$', "version=$metaVer")
+        $mt2 = [regex]::Replace($mt2, '(?m)^newestVersion=.*$', "newestVersion=$metaVer")
+        if ($mt2 -ne $mt) {
+            [System.IO.File]::WriteAllText($meta, $mt2)
+            Write-Host "    已同步 meta.ini 版本号 -> $metaVer"
+        }
     }
 
     # ESM 必须在 MO2 的 plugins.txt 里启用

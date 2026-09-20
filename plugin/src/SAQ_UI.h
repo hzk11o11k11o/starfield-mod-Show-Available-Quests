@@ -88,10 +88,14 @@ namespace SAQ
 		// a_formID = 0 表示当前没有引导（界面保持 0 即可，调用方通常跳过这种同步）。
 		bool SyncGuideState(std::uint32_t a_formID, std::string& a_reply);
 
+#if SAQ_WITH_HARNESS
 		// ★★ 第 49 轮（引擎内 harness）：调 AS3 的测试驱动入口（`_root.<a_fn>`，
 		// 单字符串参数、返回字符串）—— 用来代替人做「选中条目 / 按键 / 展开子项」。
 		// 入口名见 MissionMenu.as：SAQ_TestDriveSelect / SAQ_TestDriveKey / SAQ_TestDriveExpand。
 		// 返回 false = 桥没通 / SWF 是旧版（没有这些入口）；true 时 a_reply = AS3 的短状态串。
+		// ★ 第 53 轮（大项 F）：只在开发构建（SAQ_WITH_HARNESS=1）里存在 ——
+		//   调用方只有 harness 原语层（SAQ_TestOps.cpp），发布构建不含它们。
 		bool InvokeUiTestDrive(const char* a_fn, const std::string& a_arg, std::string& a_reply);
+#endif
 	}
 }

@@ -1,3 +1,9 @@
+// ★★ 第 53 轮（大项 F · 发布就绪）：整个文件只在开发构建（SAQ_WITH_HARNESS=1）里编译。
+//   发布构建（xmake saq_harness=n）里 xmake 根本不加入这个文件；这里再包一层 #if
+//   是**双保险** —— 万一被误加入编译，也只会编成空单元，不会产生任何引用
+//   （SAQ.cpp 的调用点同样在 #if 里）。
+#if SAQ_WITH_HARNESS
+
 #include "PCH.h"
 
 #include "SAQ_Test.h"
@@ -908,3 +914,6 @@ namespace SAQ::Test
 		RunStep(a_menuOpen);
 	}
 }
+
+#endif  // SAQ_WITH_HARNESS
+

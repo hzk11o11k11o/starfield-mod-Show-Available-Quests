@@ -1,4 +1,4 @@
-# Nexus 上传素材（v0.1.0）
+# Nexus 上传素材（v0.1.1）
 
 > 用途：复制下面内容到 Nexus 的 mod 页。Summary 填「名称/摘要」栏，
 > Description 填「描述」栏（Nexus 描述框可用 BBCode，纯文本换行也正常）。
@@ -58,7 +58,7 @@ Starfield 从不告诉你去哪接任务，全靠自己撞见。这个 mod 在�
 [*] 261 条任务中有 52 条暂无导航目标：界面会如实提示，不会假装能引导
 [*] 无限生成任务本身不显示，但其接取入口（12 处任务板）作为独立条目列出；任何位置都能一键导航过去——在远处先给你一个大致方位，等你走到那块任务板所在的区域，蓝点会自动落到任务板上（不会停在几米外；读档或重启游戏后也会自动校正）
 [*] 引导在关闭任务菜单后生效（与原版一致：HUD 蓝点本来就要关菜单才可见）
-[*] 「进度没到就不显示」目前覆盖**任务记录级条件**里「引用别的任务」的那一类（7 条任务 / 9 条门槛，例如「要先完成 A 才能接到 B」）；对话条件与位置/遭遇类条件暂未覆盖
+[*] 「进度没到就不显示」覆盖**两层条件**：任务记录级条件里「引用别的任务」的那一类（7 条任务 / 9 条门槛，例如「要先完成 A 才能接到 B」），以及任务对话（INFO）里的同类条件（60 条任务 / 290 条对话 / 341 条条件，例如「大器晚成」要「孤立无援」完成）；位置/遭遇类条件暂未覆盖
 [*] 会覆盖任务菜单的 UI 文件（missionmenu.swf / missionmenu_lrg.swf），与其它改任务菜单的 mod 需要打补丁
 [/list]
 
@@ -109,7 +109,7 @@ Mission menu (TAB) -> "Available Quests" -> select an entry -> expand the "Go to
 [*] 52 of 261 quests currently have no navigation target; the UI says so honestly
 [*] Radiant quests themselves are not listed, but their pickup points (12 mission boards) are listed as entries; every entry can be navigated to from anywhere — far away you get the approximate direction, and once you reach the board's area the marker automatically snaps onto the board itself (no more stopping a few metres short; it also self-corrects after a save reload or restart)
 [*] Guidance applies after you close the mission menu (same as vanilla: the HUD marker only appears outside menus)
-[*] "Hidden when your progress isn't far enough" currently covers record-level quest preconditions that reference another quest (7 quests / 9 gates, e.g. "you must finish A before B shows up"); dialogue conditions and location/encounter based conditions are not covered yet
+[*] "Hidden when your progress isn't far enough" covers **two layers**: record-level preconditions that reference another quest (7 quests / 9 gates, e.g. "you must finish A before B shows up") and the same kind of conditions inside a quest's dialogues (INFOs: 60 quests / 290 dialogues / 341 conditions); location/encounter based conditions are not covered yet
 [*] Overrides the mission menu UI (missionmenu.swf / missionmenu_lrg.swf): patching needed with other mission-menu mods
 [/list]
 
@@ -122,11 +122,25 @@ Please include SFSE\Plugins\SAQ_ShowAvailableQuests.log, install method (MO2 / m
 
 ---
 
+## 更新日志（Changelog）
+
+### v0.1.1（2026-09-21）
+- 「进度没到就不显示」扩展到任务对话（INFO）条件：例如「大器晚成」要「孤立无援」完成后才会出现在列表里（60 条任务 / 290 条对话 / 341 条条件）
+- 导航目标很远的任务会**提前在描述里写明**「需要靠近」；点引导后 HUD 会提示、引导保持待生效，走近后自动生效（不必重新点）
+- 修复：读档 / 快速旅行后引导目标偶发「降级再升回」的抖动（候选降级观察期）
+- 修复：极少数情况下星图聚焦到「上一次」引导位置的问题（星图改由脚本节拍打开）
+- 任务板入口：即便是远处也能给一个大致方位（就近常驻目标），走近后蓝点自动精确落到任务板上
+- 内部：发布包不再包含引擎内测试代码（harness）
+
+（v0.1.0 = 首个公开版本。）
+
+---
+
 ## 发布检查清单（上传前）
 
 | 项 | 说明 |
 | --- | --- |
-| 上传包 | `dist\SAQ-ShowAvailableQuests-0.1.0.zip`（由 `tools\package-saq.ps1` 生成） |
+| 上传包 | `dist\SAQ-ShowAvailableQuests-0.1.1.zip`（由 `tools\package-saq.ps1` 生成；会先以发布构建重编 DLL —— 包里不含任何 harness/测试代码） |
 | 版本号 | 三处一致：`plugin\xmake.lua`、`plugin\src\main.cpp`、`meta.ini` |
 | 依赖声明 | Nexus 上标注 SFSE 为必需依赖（版本 0.2.21+） |
 | 权限 | 若允许转载/整合，按 GPL-3.0 说明；建议注明"可自由打包，保留署名" |

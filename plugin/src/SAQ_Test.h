@@ -1,5 +1,9 @@
 #pragma once
 
+// ★ 第 53 轮（大项 F · 发布就绪）：本头文件只在开发构建（SAQ_WITH_HARNESS=1）里有内容 ——
+//   发布构建里没人引用它（SAQ.cpp 的 include 在 #if 内）。
+#if SAQ_WITH_HARNESS
+
 // ============================================================================
 //  SAQ_Test —— 引擎内 harness 的**用例驱动器**（第 49 轮）
 //
@@ -61,3 +65,6 @@ namespace SAQ::Test
 	bool        Finished();
 	std::string StatusLine();  // 一行状态（日志用）
 }
+
+#endif  // SAQ_WITH_HARNESS
+

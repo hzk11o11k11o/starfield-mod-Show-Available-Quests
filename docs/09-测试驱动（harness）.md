@@ -294,15 +294,36 @@ SWF 常量池里同名常量只有一份 ⇒ 字符串检查**区分不了**「�
    单元测试（毫秒级、零游戏）+ 数据管线黄金快照。harness 覆盖「引擎时序」，
    离线层覆盖「决策逻辑的组合爆炸」，两者互补。
 
-## 十、发布包（Nexus）
+## 十、发布构建：DLL 不含 harness（第 53 轮已落地）
 
-harness 的代码**编进 DLL**（同一份源码），但：
+发布包给玩家，DLL 里不该带测试代码（能改任务状态的命令通道 / 界面测试驱动 / 结果落盘）。
+第 49 轮时 harness 是「整份编进 DLL、靠 ini 开关零开销」的；第 53 轮起改为**编译开关**：
 
-* 只有在 ini `[Test] Harness=1` 时激活（默认 0）⇒ 玩家侧零开销、零行为；
-* 用例文件与结果文件都在 `SFSE\Plugins\` 下，随 mod 一起删干净；
-* 若要做到「发布包完全不含 harness」，在 `plugin/xmake.lua` 加
-  `add_defines("SAQ_WITH_HARNESS")` 并把 `SAQ_Test*.cpp` 用宏包起来，
-  `package-saq.ps1` 用不带该宏的构建 —— 见下一轮排期。
+```powershell
+# 发布构建（DLL 不含 harness）+ 部署：
+& ".\tools\build-saq.ps1" -Release -SkipTable -SkipSwf -SkipPapyrus
+
+# 开发/自测构建（默认：含 harness）：
+& ".\tools\build-saq.ps1" -SkipTable -SkipSwf -SkipPapyrus
+```
+
+* 开关 = `plugin/xmake.lua` 的 xmake option **`saq_harness`**（默认 `y`）；
+  关闭时 `SAQ_Test.cpp` / `SAQ_TestOps.cpp` **不参与编译**，`SAQ.cpp` 的三个调用点与
+  `SAQ_UI.cpp` 的 `InvokeUiTestDrive` 都在 `#if SAQ_WITH_HARNESS` 内 ⇒ DLL 里不出现
+  任何 harness 字符串（实测 911360 B → **784896 B**）。
+  ★ 两个文件自身也用 `#if SAQ_WITH_HARNESS` 包住（**双保险**：即使被误加入编译，
+  也只编成空单元，不会产生对 `UI::InvokeUiTestDrive` 之类的引用）。
+* 发布版若发现 ini `[Test] Harness=1`，打一行 WARN（`…但本 DLL 是发布构建（未编译 harness）…`）
+  —— 不静默（第 49 轮 ini 段坑的教训：开关失效要能一眼看出来）。
+* `tools\package-saq.ps1` 自动完成：**发布构建 + 部署 → `verify_saq_build.py --release`
+  → 打包**。`--release` = 13 项反向检查（DLL 出现任何 harness 特征即失败）+
+  1 项正向检查（发布提示串在）—— 能挡住「xmake 配置没切过去、带着测试代码打包」。
+* **SWF / PEX / ESM 两版相同**：AS3 的 `SAQ_TestDrive*` 入口与脚本侧的测试命令执行器
+  保留 —— 它们只在「DLL 主动调用 / 写通道」时才起作用，而发布版 DLL 已无任何调用路径
+  （改 SWF/PEX 的成本与风险不值得；见 `docs/99` 第 53 轮）。
+* verify 的两种模式：默认按 DLL 内容自动探测；`--release` 强制作发布校验（打包用），
+  `--dev` 强制开发校验。另加一条：**MO2 部署副本与工作区字节一致**（部署未落后 ——
+  第 50 轮「游戏加载的是部署时那份」的教训）。
 
 ## 十一、第 51 轮：ui.tab 仍未过 —— 诊断增强与判读
 

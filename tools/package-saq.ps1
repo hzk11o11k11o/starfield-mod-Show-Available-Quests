@@ -2,9 +2,10 @@
 #  Show Available Quests - 打包 Nexus 上传包
 #
 #  用法（pwsh 7）：
-#     & ".\tools\package-saq.ps1"                   # 默认按 v0.1.0 打包
+#     & ".\tools\package-saq.ps1"                   # 默认按 v0.1.1 打包
 #     & ".\tools\package-saq.ps1" -Version 0.2.0    # 指定版本号
 #     & ".\tools\package-saq.ps1" -SkipVerify       # 跳过产物特征校验
+#     & ".\tools\package-saq.ps1" -SkipBuild        # 不重新构建（用当前产物，调试用）
 #
 #  产物：
 #     dist\SAQ-ShowAvailableQuests-<版本>.zip   ← 上传包（zip 根 = mod 根结构）
@@ -15,10 +16,22 @@
 #       手动安装 = 把包内 SFSE\ / Interface\ / Scripts\ 与 esm 放进 Starfield\Data\
 #     · 包内 README.txt 的 {{VERSION}} 会替换为本次版本号
 #     · 打包前会跑 tools\ui\verify_saq_build.py（产物特征检查），失败即终止
+#
+#  ★★ 第 53 轮（大项 F · 发布就绪）：本脚本现在**自己完成发布构建** ——
+#     ① 以 xmake `saq_harness=n` 重新编译 DLL（DLL 里彻底没有 harness/测试代码）
+#        并部署到 MO2（让「部署 == 包内容」，第 50 轮的教训）；
+#     ② 用 `verify_saq_build.py --release` 反向校验（DLL 里**不允许**出现任何
+#        harness 特征；这一步能挡住「配置没切过去、带着测试代码打包」）；
+#     ③ 然后才组装/压缩。
+#     打完包后，工作区与 MO2 部署都是**发布构建**；要回到开发构建（含 harness）：
+#       & ".\tools\build-saq.ps1" -SkipTable -SkipSwf -SkipPapyrus -Harness
 # ============================================================================
 param(
-    [string]$Version = '0.1.0',
-    [switch]$SkipVerify
+    [string]$Version = '0.1.1',
+    [switch]$SkipVerify,
+    # ★ 第 53 轮：跳过「发布构建 + 部署」这一步（用当前产物打包 —— 只用于调试脚本本身；
+    #   正常打包必须让它跑，否则可能把含 harness 的 DLL 打进包里）。
+    [switch]$SkipBuild
 )
 
 $ErrorActionPreference = 'Stop'
@@ -41,7 +54,16 @@ foreach ($f in @((Join-Path $root 'plugin\xmake.lua'), (Join-Path $root 'plugin\
     }
 }
 
-# --- 1. 产物清单（zip 根 = mod 根）-------------------------------------------
+# --- 1. 发布构建 + 部署（★ 第 53 轮：DLL 不含 harness）------------------------
+if (-not $SkipBuild) {
+    Step '1/5 发布构建 + 部署（xmake saq_harness=n —— DLL 里没有 harness）'
+    & (Join-Path $root 'tools\build-saq.ps1') -Release -SkipTable -SkipSwf -SkipPapyrus
+    Ok 'DLL 已按发布构建重编，并部署到 MO2（部署 == 即将打包的内容）'
+} else {
+    Step '1/5 跳过发布构建（-SkipBuild —— 请自行确认产物是发布构建）'
+}
+
+# --- 2. 产物清单（zip 根 = mod 根）-------------------------------------------
 $items = @(
     @{ src = 'esm\SAQ_ShowAvailableQuests.esm';                                 dst = 'SAQ_ShowAvailableQuests.esm' },
     @{ src = 'plugin\build\windows\x64\releasedbg\SAQ_ShowAvailableQuests.dll'; dst = 'SFSE\Plugins\SAQ_ShowAvailableQuests.dll' },
@@ -51,7 +73,7 @@ $items = @(
     @{ src = 'resources\SAQ_ShowAvailableQuests.ini';                           dst = 'SFSE\Plugins\SAQ_ShowAvailableQuests.ini' }
 )
 
-Step '1/4 检查产物'
+Step '2/5 检查产物'
 $rows = @()
 $missing = $false
 foreach ($it in $items) {
@@ -73,15 +95,17 @@ if ($missing) { throw '有产物缺失 —— 先跑 tools\build-saq.ps1 重新�
 
 # --- 2. 产物特征校验 ----------------------------------------------------------
 if (-not $SkipVerify) {
-    Step '2/4 产物特征校验（tools\ui\verify_saq_build.py）'
-    & python (Join-Path $root 'tools\ui\verify_saq_build.py') | Write-Host
+    Step '3/5 产物特征校验（tools\ui\verify_saq_build.py --release）'
+    # ★ 第 53 轮：--release = 按**发布构建**反向校验（DLL 里不允许出现任何 harness 特征；
+    #   这一步能挡住「xmake 配置没切过去、带着测试代码打包」——最危险的失败模式）。
+    & python (Join-Path $root 'tools\ui\verify_saq_build.py') --release | Write-Host
     if ($LASTEXITCODE -ne 0) { throw "产物特征校验未全部通过（exit $LASTEXITCODE），已终止打包" }
 } else {
-    Step '2/4 跳过产物特征校验'
+    Step '3/5 跳过产物特征校验'
 }
 
 # --- 3. 组装 staging ----------------------------------------------------------
-Step '3/4 组装 staging（zip 根 = mod 根）'
+Step '4/5 组装 staging（zip 根 = mod 根）'
 Remove-Item $stageDir -Recurse -Force -ErrorAction SilentlyContinue
 foreach ($it in $items) {
     $src = Join-Path $root $it.src
@@ -102,7 +126,7 @@ Ok "README.txt（v$Version）"
 Copy-Item (Join-Path $root 'resources\nexus-description.md') (Join-Path $distDir 'nexus-description.md') -Force
 
 # --- 4. 压缩 -----------------------------------------------------------------
-Step '4/4 压缩'
+Step '5/5 压缩'
 Remove-Item $zipPath -Force -ErrorAction SilentlyContinue
 [System.IO.Compression.ZipFile]::CreateFromDirectory(
     $stageDir, $zipPath,
@@ -115,3 +139,4 @@ Write-Host "上传包：$($zip.FullName)" -ForegroundColor Cyan
 Write-Host ("        大小 {0:N0} 字节    SHA256 {1}" -f $zip.Length, $sha)
 Write-Host '        包内 = mod 根：MO2 可直接「从压缩包安装」；手动安装解压到 Starfield\Data\' -ForegroundColor DarkGray
 Write-Host "Nexus 文案：$distDir\nexus-description.md" -ForegroundColor Cyan
+Write-Host '       要回到开发构建（含 harness）：& ".\tools\build-saq.ps1" -SkipTable -SkipSwf -SkipPapyrus -Harness' -ForegroundColor DarkGray

@@ -139,7 +139,8 @@ namespace SAQ::Guide
 		//     5   = 待处理 + 应用后打开星图（只有玩家按 R 的那条路会写这个值）
 		//     6/7 = ★ 第 40 轮：同 5，但换别的地点候选（星图重试时用，见 SAQ.cpp）
 		//   取消引导（a_formID == 0）永远写 0 —— 玩家要的是「撤掉引导」，不是要航线。
-		const float kStarMapRequest = 5.0f;
+		//   ★ 第 53 轮：删掉未再使用的 kStarMapRequest 常量（第 44 轮改由 a_starMapState
+		//   传入后它就成了死变量，编译器一直报 C4189）。
 		const float requested = (a_starMap && a_formID != 0) ? a_starMapState : 0.0f;
 		const std::string requestedNote = requested > 0.0f
 			? std::format("{:.0f}（星图请求）", requested)
