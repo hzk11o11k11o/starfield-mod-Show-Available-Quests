@@ -389,3 +389,18 @@ public function get selectedIndex() : int   // ← 只有 getter，没有 setter
 ★ 教训：**AS3 里给属性赋值前先确认对方有 `set x()`** —— BS 组件里「只有 getter」的属性
 （设计上只让组件自己改）赋值必抛 #1074，而且症状会被 Scaleform 的 Invoke 层压成
 「0 ms 失败 / 路径不存在」的假象。
+
+## 十三、★ 实测：`[case:smoke]` 首次全绿（2026-09-21 06:53 会话）
+
+按第七节的流程（**先构建部署 → 再启动游戏**）重进游戏、读档，harness 自动跑完并全过：
+
+* `python tools\test\check_results.py`：用例 1｜**PASS 1**｜FAIL 0｜SKIP 0；`smoke` 2640 ms；
+* `ui.tab` = `ok|tab=7|mask=64|n=245`（第 52 轮 `SetSelectedCategoryIndex` 修复生效）；
+* `SAQ_Report` 带 `stamp=52` + `ep=pub=ok,ep=ok`（新版 SWF 已加载 + 入口挂载全好）；
+* 引导链完整：`press=R@…` → `引导请求` → 菜单关闭 → 828 ms `引导已生效`（脚本状态=1）
+  → 星图 1.1 秒打开（第 1 次尝试）→ `guide.clear` → `引导状态对账：通道里已没有目标`；
+* 读档候选无抖动（补丁②复查通过）；全会话仅 2 条 `[W]`（开菜单第 1 次推送桥解析失败，
+  0.8 s 后第 2 次成功）、无 `[E]`。
+
+⇒ 链路（用例 DSL → DLL 驱动器 → Papyrus 写侧 → 界面真实处理路径 → 断言 → 结果 JSON）
+端到端跑通；后续把更多判据落成用例即可（见 `docs/99` 十四·第 7 节）。
