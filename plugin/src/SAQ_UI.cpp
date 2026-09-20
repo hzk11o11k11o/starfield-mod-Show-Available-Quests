@@ -1390,7 +1390,6 @@ namespace SAQ::UI
 			a_reply = "ASMovieRoot 指针为空";
 			return false;
 		}
-		const std::string path = std::string{ "_root." } + a_fn;
 		// 缓冲区比 CallAs3WithString 的大（那个是 96）：测试入口会回一行诊断，
 		// 可能带任务名（中文）与下标，96 字节会被截断在多字节字符中间。
 		const std::wstring wide = Utf8ToWide(a_arg.c_str());
@@ -1405,13 +1404,36 @@ namespace SAQ::UI
 		//   同一个 `_root` 上的对照：0 参的 `SAQ_Report` 用 0 参调用一直成功
 		//   （每 500ms 轮询在读），1 参的 `SAQ_Probe` 用 1 参调用也成功
 		//   ⇒ 无参入口必须走 0 参调用，不能拿空字符串占位。
+		//
+		// ★★ 第 51 轮：调用路径改成**多条尝试**（原来只有 `_root.<fn>` 一条）——
+		//   起因：06:34 会话 SWF 已带 stamp=50（新构建、挂载字节码经 FFDec 验证在）、
+		//   0 参调用也正确，ui.tab 仍 0 ms 失败；C++ 侧必须先把「路径写法」这一层
+		//   自证干净：与推送同风格，按 裸名 / `_root.` / `_root.root.` 依次试，
+		//   失败详情里列出每一条的结果（成功走非首选写法时补一行 INFO 日志）。
+		const char* const kPathPrefixes[] = { "_root.", "", "_root.root." };
 		RE::Scaleform::GFx::Value ret;
+		std::string tried;
+		std::string usedPath;
 		bool called = false;
-		if (a_arg.empty()) {
-			called = SafeInvoke(root, path.c_str(), &ret, nullptr, 0);
-		} else {
-			RE::Scaleform::GFx::Value arg(wide.c_str());
-			called = SafeInvoke(root, path.c_str(), &ret, &arg, 1);
+		for (const char* prefix : kPathPrefixes) {
+			const std::string path = std::string{ prefix } + a_fn;
+			bool thisCalled = false;
+			if (a_arg.empty()) {
+				thisCalled = SafeInvoke(root, path.c_str(), &ret, nullptr, 0);
+			} else {
+				RE::Scaleform::GFx::Value arg(wide.c_str());
+				thisCalled = SafeInvoke(root, path.c_str(), &ret, &arg, 1);
+			}
+			tried += (tried.empty() ? "" : "｜");
+			tried += path + (thisCalled ? "=ok" : "=fail");
+			if (thisCalled) {
+				usedPath = path;
+				called = true;
+				break;
+			}
+		}
+		if (called && usedPath != std::string{ "_root." } + a_fn) {
+			REX::INFO("测试驱动：{} 用写法 {} 调用成功（首选 `_root.` 前缀失败）", a_fn, usedPath);
 		}
 		if (!called) {
 			// ★★ 第 50 轮：失败时顺便把「游戏加载的 SWF 是新版还是旧版」带出来 ——
@@ -1422,7 +1444,7 @@ namespace SAQ::UI
 			//   这里读一次 SAQ_Report（0 参、已挂载、一直可用的入口）：
 			//     有 `stamp=` 字段 = SWF 是带指纹的新版 ⇒ 失败另有其因；
 			//     没有              = 游戏加载的是旧版 SWF ⇒ 完全重启游戏后可解。
-			a_reply = path + "=fail(路径不存在或调用失败；SWF 是旧版？)";
+			a_reply = tried + "｜(各写法都失败：路径不存在或调用失败；SWF 是旧版？)";
 			const auto report = CallAs3NoArg(root, "_root.SAQ_Report");
 			const auto at = report.find("stamp=");
 			if (at != std::string::npos) {
@@ -1431,6 +1453,14 @@ namespace SAQ::UI
 			} else {
 				a_reply += "｜SWF 指纹：SAQ_Report 里没有 stamp= 字段"
 					"（⇒ 游戏加载的还是旧版 SWF；完全重启游戏后再跑）";
+			}
+			// ★ 第 51 轮：界面侧入口自检（ep=）也带出来 ——
+			//   一眼分清「挂载没跑到 / root 上取不到入口 / 全在但 Invoke 仍失败」。
+			const auto epAt = report.find("ep=");
+			if (epAt != std::string::npos) {
+				const auto epEnd = report.find(' ', epAt);
+				a_reply += "｜入口自检=" + report.substr(epAt,
+					epEnd == std::string::npos ? std::string::npos : epEnd - epAt);
 			}
 			return false;
 		}

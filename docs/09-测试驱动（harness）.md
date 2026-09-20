@@ -303,3 +303,32 @@ harness 的代码**编进 DLL**（同一份源码），但：
 * 若要做到「发布包完全不含 harness」，在 `plugin/xmake.lua` 加
   `add_defines("SAQ_WITH_HARNESS")` 并把 `SAQ_Test*.cpp` 用宏包起来，
   `package-saq.ps1` 用不带该宏的构建 —— 见下一轮排期。
+
+## 十一、第 51 轮：ui.tab 仍未过 —— 诊断增强与判读
+
+06:34 会话（**SWF 已是最新**，失败详情带 `｜SWF 指纹=50`）`ui.tab` 仍 0 ms 失败 ——
+第 50 轮「游戏进程启动太早」的解释**在这个会话不成立**（那只是 22:48 会话的成立解释）。
+本轮把静态层能查的全查了（部署 SWF 两版的挂载字节码、DLL 产物、0 参调用、SWF 覆盖），
+全部排除 —— 详见 `docs/99` 第 51 轮。
+
+**新增诊断（stamp=51，已构建部署，待下次启动游戏生效）**：
+
+1. `SAQ_Report` 的 `ep=` 字段（`SaqEntryProbe`）：`pub=…,ep=…`
+   —— `pub` = 挂载函数执行结果（ok / not-run / no-root / ex:…）；
+   `ep=ok` = 11 个入口在 root 上全能取到，`ep=缺:…` = 列出取不到的（名字）；
+2. 5 个 `SAQ_TestDrive*` 入口包 try-catch：内部异常以 `err|ex:<消息>` 回传
+   （此前这种情况与「路径不存在」同为 0 ms 失败，完全不可区分）；
+3. `InvokeUiTestDrive` 多写法尝试（裸名 / `_root.` / `_root.root.`），失败详情带
+   每条写法的结果 + 入口自检；成功走非首选写法时补一行 INFO。
+
+**判读表（下次失败时照此定性）**：
+
+| 失败详情里看到的 | 结论 |
+| --- | --- |
+| 各写法 `=fail` + `ep=pub=ok,ep=ok` | 挂载全好 —— 问题在 Invoke/Scaleform 调用层 |
+| `ep=pub=ok,ep=缺:<名>` | 该入口没挂上（拿名字去 `SaqPublishEntryPoint` 序列里查） |
+| `ep=pub=not-run` | `onAddedToStage` 没执行（SWF 生命周期 / 不是这份 SWF） |
+| `ep=pub=ex:…` | 挂载过程抛异常（消息即真因） |
+| `ui.tab` 步返回 `err|ex:…` | 入口函数内部异常（消息即真因） |
+
+★ 跑测试流程不变：**先构建部署 → 再启动游戏**（SWF 在启动阶段加载）。

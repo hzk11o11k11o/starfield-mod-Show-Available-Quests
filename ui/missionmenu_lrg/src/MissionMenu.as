@@ -146,6 +146,10 @@ package
       
       private var SaqLangZh:Boolean = false;
       
+      // ★ 第 51 轮：入口挂载自检 —— SaqPublishEntryPoint() 的执行结果
+      // （"not-run" 还没跑 / "ok" 已挂好 / "no-root" root 取不到 / "ex:…" 抛异常）。
+      private var SaqPublishNote:String = "not-run";
+      
       private var SaqTabProbe:String = "-";
 
       private var SaqOurTabProbe:String = "-";
@@ -915,10 +919,19 @@ package
                _loc1_["SAQ_TestDriveExpand"] = this.SAQ_TestDriveExpand;
                _loc1_["SAQ_TestDriveKey"] = this.SAQ_TestDriveKey;
                _loc1_["SAQ_TestDriveState"] = this.SAQ_TestDriveState;
+               // ★ 第 51 轮：记录挂载结果 —— SAQ_Report 的 ep= 自检字段据此定性：
+               //   挂载代码没跑到（not-run）/ root 取不到（no-root）/ 抛异常（ex:…）/
+               //   挂载完成（ok，此时若 root 上仍取不到入口，就是另一层的问题）。
+               this.SaqPublishNote = "ok";
                }
+            else
+            {
+               this.SaqPublishNote = "no-root";
+            }
          }
          catch(e:Error)
          {
+            this.SaqPublishNote = "ex:" + e.message;
          }
       }
       
@@ -1021,7 +1034,11 @@ package
          //   指纹写进本报告 ⇒ 日志里一眼看出游戏加载的是哪一版 SWF：
          //     有 `stamp=50` = 本次构建；没有 = 旧版（**完全重启游戏**后才会更新）。
          //   ★ 以后每改一次 SWF，就把这个数字 +1（verify 检查 `stamp=` 是否存在）。
-         _loc8_ += " stamp=50";
+         _loc8_ += " stamp=51";
+         // ★★ 第 51 轮：入口自检（ep=）—— 见 SaqEntryProbe 的说明。
+         //   位置在 stamp 之后、其余字段之前：报告有长度上限，这个字段是当前排查
+         //   「测试入口调不到」问题的关键证据，必须优先保下来。
+         _loc8_ += " ep=" + this.SaqEntryProbe();
          _loc8_ += " last=" + this.SaqTabProbe + " ourTab=" + this.SaqOurTabProbe + " ourTabMax=" + this.SaqOurTabMaxList;
          _loc8_ += " guide=" + this.SaqGuideSeq + "|" + this.SaqGuideQuest + "|" + this.SaqGuideNote;
          // ★ 第 37 轮：本次请求要不要打开星图（R = 1 / Enter = 0）—— 与 `SAQ_PeekGuide`
@@ -1059,6 +1076,55 @@ package
          //   drop 只是纯 uID 十六进制（通常 0~5 条），实际几乎不会被截到。
          _loc8_ += " drop[" + this.SaqDropCount + "]=[" + this.SaqDropList + "]";
          return _loc8_;
+      }
+      
+      // ★★ 第 51 轮：入口自检（SAQ_Report 的 ep= 字段）。
+      //
+      // 起因：06:34 会话里 SWF 已带 stamp=50（证明游戏加载的就是新构建），
+      // 但 harness 的 `ui.tab` 仍 0 ms 失败（`_root.SAQ_TestDriveTab=fail`）。
+      // 静态排查已排除：入口挂载字节码在（FFDec P-code）、0 参调用正确、
+      // 两个 SWF（标准/lrg）都有 —— 所以必须把「运行期到底挂没挂上」报出来。
+      //
+      //   pub=not-run  → SaqPublishEntryPoint 还没执行（onAddedToStage 没跑）
+      //   pub=no-root  → 执行了但 this.root 取不到（挂载被跳过）
+      //   pub=ex:…     → 执行时抛异常（异常消息）
+      //   pub=ok       → 挂载代码正常跑完
+      //   ep=ok             → root 上 11 个入口全在（问题在 Invoke/调用层）
+      //   ep=缺:名字,…      → 列出 root 上取不到（不是函数）的入口
+      //   ep=no-root / ex:… → 自检本身遇到的环境问题
+      //
+      // 只读；整段 try-catch 保证绝不把 SAQ_Report 拖崩（它在 500 ms 轮询里被读）。
+      private function SaqEntryProbe() : String
+      {
+         var _loc1_:String = "pub=" + this.SaqPublishNote + ",ep=";
+         try
+         {
+            var _loc2_:Object = this.root;
+            if(_loc2_ == null)
+            {
+               return _loc1_ + "no-root";
+            }
+            var _loc3_:Array = ["SAQ_SetAvailableQuests","SAQ_Probe","SAQ_Report","SAQ_PeekGuide","SAQ_GuideReply","SAQ_SyncGuideState","SAQ_TestDriveTab","SAQ_TestDriveSelect","SAQ_TestDriveExpand","SAQ_TestDriveKey","SAQ_TestDriveState"];
+            var _loc4_:String = "";
+            var _loc5_:int = 0;
+            while(_loc5_ < _loc3_.length)
+            {
+               if(typeof _loc2_[_loc3_[_loc5_]] != "function")
+               {
+                  _loc4_ += (_loc4_.length > 0 ? "," : "") + _loc3_[_loc5_];
+               }
+               _loc5_++;
+            }
+            if(_loc4_.length == 0)
+            {
+               return _loc1_ + "ok";
+            }
+            return _loc1_ + "缺:" + _loc4_;
+         }
+         catch(_loc6_:Error)
+         {
+            return _loc1_ + "ex:" + _loc6_.message;
+         }
       }
       
       // ==================================================================
@@ -1333,66 +1399,104 @@ package
       // ==================================================================
       public function SAQ_TestDriveTab() : String
       {
-         var _loc1_:int = this.FilterInfoA != null ? int(this.FilterInfoA.length - 1) : -1;
-         if(_loc1_ < 0)
+         // ★ 第 51 轮：整段包 try-catch —— 若函数内部抛异常，Scaleform 的 Invoke 会
+         //   整体失败（表现与「路径不存在」一样是 0 ms 失败），看不出一丝原因；
+         //   捕获后把异常消息当 "err|ex:…" 正常返回，失败详情里就能看到真因。
+         try
          {
-            return "err|no-tabs";
+            var _loc1_:int = this.FilterInfoA != null ? int(this.FilterInfoA.length - 1) : -1;
+            if(_loc1_ < 0)
+            {
+               return "err|no-tabs";
+            }
+            this.TabbedFilterSelection_mc.selectedIndex = _loc1_;
+            this.onFilterChanged(null);
+            this.SaqRefresh();
+            return "ok|tab=" + _loc1_ + "|mask=" + this.MissionsList_mc.filterMask + "|n=" + this.MissionsList_mc.entryCount;
          }
-         this.TabbedFilterSelection_mc.selectedIndex = _loc1_;
-         this.onFilterChanged(null);
-         this.SaqRefresh();
-         return "ok|tab=" + _loc1_ + "|mask=" + this.MissionsList_mc.filterMask + "|n=" + this.MissionsList_mc.entryCount;
+         catch(_loc9_:Error)
+         {
+            return "err|ex:" + _loc9_.message;
+         }
       }
 
       public function SAQ_TestDriveSelect(param1:String) : String
       {
-         var _loc2_:Number = Number(param1);
-         var _loc3_:int = int(this.MissionsList_mc.SAQ_FindEntryIndexByUID(_loc2_));
-         if(_loc3_ < 0)
+         try
          {
-            return "err|notfound|n=" + this.MissionsList_mc.entryCount;
+            var _loc2_:Number = Number(param1);
+            var _loc3_:int = int(this.MissionsList_mc.SAQ_FindEntryIndexByUID(_loc2_));
+            if(_loc3_ < 0)
+            {
+               return "err|notfound|n=" + this.MissionsList_mc.entryCount;
+            }
+            this.MissionsList_mc.selectedIndex = _loc3_;
+            this.MissionsList_mc.dispatchEvent(new ScrollingEvent(ScrollingEvent.SELECTION_CHANGE));
+            return "ok|idx=" + _loc3_ + "|" + this.SaqEntryTag(this.MissionsList_mc.selectedEntry);
          }
-         this.MissionsList_mc.selectedIndex = _loc3_;
-         this.MissionsList_mc.dispatchEvent(new ScrollingEvent(ScrollingEvent.SELECTION_CHANGE));
-         return "ok|idx=" + _loc3_ + "|" + this.SaqEntryTag(this.MissionsList_mc.selectedEntry);
+         catch(_loc9_:Error)
+         {
+            return "err|ex:" + _loc9_.message;
+         }
       }
 
       public function SAQ_TestDriveExpand(param1:String) : String
       {
-         var _loc2_:Number = Number(param1);
-         var _loc3_:int = int(this.MissionsList_mc.SAQ_FindEntryIndexByUID(_loc2_));
-         if(_loc3_ < 0)
+         try
          {
-            return "err|notfound";
+            var _loc2_:Number = Number(param1);
+            var _loc3_:int = int(this.MissionsList_mc.SAQ_FindEntryIndexByUID(_loc2_));
+            if(_loc3_ < 0)
+            {
+               return "err|notfound";
+            }
+            this.MissionsList_mc.selectedIndex = _loc3_;
+            this.MissionsList_mc.ExpandOrCollapseSelection();
+            this.MissionsList_mc.dispatchEvent(new ScrollingEvent(ScrollingEvent.SELECTION_CHANGE));
+            return "ok|idx=" + _loc3_ + "|n=" + this.MissionsList_mc.entryCount;
          }
-         this.MissionsList_mc.selectedIndex = _loc3_;
-         this.MissionsList_mc.ExpandOrCollapseSelection();
-         this.MissionsList_mc.dispatchEvent(new ScrollingEvent(ScrollingEvent.SELECTION_CHANGE));
-         return "ok|idx=" + _loc3_ + "|n=" + this.MissionsList_mc.entryCount;
+         catch(_loc9_:Error)
+         {
+            return "err|ex:" + _loc9_.message;
+         }
       }
 
       public function SAQ_TestDriveKey(param1:String) : String
       {
-         if(param1 == "Accept" || param1 == "Enter" || param1 == "Click")
+         try
          {
-            // 回车 / 鼠标点击：原版由输入层**直接送给列表**（不是菜单的 ProcessUserEvent）
-            // ⇒ 这里走 MissionsList.onEntryPress（它内部 stopPropagation + onItemPress，
-            //   并派发 ITEM_ACTIVATED）—— 与真实点击完全同一条链。
-            this.MissionsList_mc.onEntryPress(new Event(Event.CLICK));
-            return "ok|entryPress|" + this.SaqLastPressNote;
+            if(param1 == "Accept" || param1 == "Enter" || param1 == "Click")
+            {
+               // 回车 / 鼠标点击：原版由输入层**直接送给列表**（不是菜单的 ProcessUserEvent）
+               // ⇒ 这里走 MissionsList.onEntryPress（它内部 stopPropagation + onItemPress，
+               //   并派发 ITEM_ACTIVATED）—— 与真实点击完全同一条链。
+               this.MissionsList_mc.onEntryPress(new Event(Event.CLICK));
+               return "ok|entryPress|" + this.SaqLastPressNote;
+            }
+            // 其余（XButton = 键盘 R / 手柄 X、YButton、Cancel…）：与玩家按键完全相同的那条链
+            // （ProcessUserEvent → SaqNoteUserEvent → ButtonBar → 按钮回调，含按钮启用判定）。
+            var _loc2_:Boolean = this.ProcessUserEvent(param1,false);
+            return "ok|menu=" + (_loc2_ ? 1 : 0) + "|" + this.SaqLastPressNote;
          }
-         // 其余（XButton = 键盘 R / 手柄 X、YButton、Cancel…）：与玩家按键完全相同的那条链
-         // （ProcessUserEvent → SaqNoteUserEvent → ButtonBar → 按钮回调，含按钮启用判定）。
-         var _loc2_:Boolean = this.ProcessUserEvent(param1,false);
-         return "ok|menu=" + (_loc2_ ? 1 : 0) + "|" + this.SaqLastPressNote;
+         catch(_loc9_:Error)
+         {
+            return "err|ex:" + _loc9_.message;
+         }
       }
 
       // 给断言用的短状态（比 SAQ_Report 轻，跑用例时每一步都能打一行）。
       public function SAQ_TestDriveState() : String
       {
-         return "tab=" + this.currentFilterIndex + "|mask=" + this.MissionsList_mc.filterMask
-            + "|n=" + this.MissionsList_mc.entryCount + "|sel=" + this.MissionsList_mc.selectedIndex
-            + "|avail=" + (this.AvailableQuests != null ? this.AvailableQuests.length : -1);
+         try
+         {
+            return "tab=" + this.currentFilterIndex + "|mask=" + this.MissionsList_mc.filterMask
+               + "|n=" + this.MissionsList_mc.entryCount + "|sel=" + this.MissionsList_mc.selectedIndex
+               + "|avail=" + (this.AvailableQuests != null ? this.AvailableQuests.length : -1);
+         }
+         catch(_loc9_:Error)
+         {
+            return "err|ex:" + _loc9_.message;
+         }
       }
 
       // ★ 第 38 轮：C++ 回写成功后的「关菜单」这一步（见 SaqPendingCloseToGame 的说明）。
