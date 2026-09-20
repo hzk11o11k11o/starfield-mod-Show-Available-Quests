@@ -420,7 +420,7 @@ namespace SAQ
 		// 依次取第一个命中的。日志 `入口=12(可导航 N｜marker a 原板 b 兜底 c 不可用 d)`：
 		//   a=11 ⇒ 新建常驻引用被引擎接受（理想）；若 b/c 为主，看「入口候选诊断」行定位。
 		// ==================================================================
-		enum class EntryGuideSource : std::uint8_t { none, marker, board, fallback };
+		enum class EntryGuideSource : std::uint8_t { none, exactBoard, exactMarker, fallback };
 		struct EntryGuideState
 		{
 			std::uint32_t    target{};   // 选中的引导目标（0 = 不可导航）
@@ -428,6 +428,115 @@ namespace SAQ
 			std::string      diag;       // 每个候选的命中情况（日志用）
 		};
 		std::array<EntryGuideState, kEntryTableSize> g_entryGuide{};
+		bool g_entryMarkerProbeLogged{};   // 第 31 轮：marker 探测一行，每会话一次
+
+		const char* SourceName(EntryGuideSource a_src)
+		{
+			switch (a_src) {
+			case EntryGuideSource::exactBoard:  return "任务板自身（精确）";
+			case EntryGuideSource::exactMarker: return "新建常驻 marker（精确）";
+			case EntryGuideSource::fallback:    return "同 cell 常驻兜底（大致位置）";
+			default:                            return "无";
+			}
+		}
+
+		// ★★ 第 31 轮：候选链改成**精确目标优先**。
+		//
+		// 实机反馈（2026-09-20 13:15 截图）：任务板的蓝点停在板子旁边 2~3 m。日志证据：
+		//     入口=12(可导航 12｜marker 0 原板 2 兜底 10 不可用 0)
+		//   ① 11 条新建常驻 marker **全部 `marker[未命中]`**（引擎里取不到，见 LogEntryMarkerProbe）；
+		//   ② 于是 10 条条目落到「同 cell 最近的原生常驻引用」——离线数据里它们离板 1.8~8.1 m
+		//      （陋室的兜底是 `MQ204_NoelBasement_Marker01a`，3.41 m ⇒ 正是截图里那个偏差）；
+		//   ③ 而玩家走到板前时，**任务板引用本身其实已经可用**（cell 加载了，非常驻引用就存在）——
+		//      可第 30 轮的顺序把 marker 排在最前、兜底排在原板后面，精确的目标永远轮不到。
+		//
+		// 现在的顺序（同样依次 `LookupByID` 取第一个命中的）：
+		//   ① 任务板引用自身 —— **精确**（蓝点就落在板上；cell 加载时才有，且引擎会给它高亮）
+		//   ② 新建常驻 marker —— **精确**，设计上任意位置可用（第 30 轮；目前实测取不到，见探测）
+		//   ③ 同 cell 的原生常驻引用兜底 —— 大致位置（1.8~8 m），只用于「板所在 cell 还没加载」
+		//
+		// ★ 目标会在引导过程中动态更新（见 UpdateEntryGuideTarget）：从远处选时用兜底，
+		//   走到板所在 cell 后自动换成精确目标，蓝点随之上板。
+		EntryGuideState EvaluateEntryGuide(std::size_t a_index, bool aWantDiag = true)
+		{
+			EntryGuideState st;
+			const auto& e = kEntryTable[a_index];
+			const auto boardID = Masters::MakeFormID(e.master, e.refLocal);
+			// ① marker 的运行期 FormID = (本插件加载序号 << 24) | markerLocal；序号取 Guide
+			//   通道认领出来的前缀（SAQ_Guide.cpp 的「魔数 7777」探测，日志 `ESM 通道：前缀=0x0F`）。
+			const auto ch = Guide::EnsureChannel();
+			const std::uint32_t markerPrefix = (ch.resolved && ch.prefix <= 0xFF) ? (ch.prefix << 24) : 0;
+			const auto tryCand = [&](std::uint32_t a_id, EntryGuideSource a_src, const char* a_tag) {
+				if (a_id == 0) {
+					if (aWantDiag) {
+						st.diag += std::format("{}[无] ", a_tag);
+					}
+					return;
+				}
+				if (st.target != 0) {
+					return;  // 已选中，剩下的候选不必再查（省一次 LookupByID）
+				}
+				const bool hit = RE::TESForm::LookupByID(static_cast<RE::TESFormID>(a_id)) != nullptr;
+				if (aWantDiag) {
+					st.diag += std::format("{}[{}] ", a_tag, hit ? "命中" : "未命中");
+				}
+				if (hit) {
+					st.target = a_id;
+					st.source = a_src;
+				}
+			};
+			tryCand(boardID, EntryGuideSource::exactBoard, "原板");
+			tryCand(e.markerLocal ? (markerPrefix | e.markerLocal) : 0,
+				EntryGuideSource::exactMarker, "marker");
+			tryCand(e.fallback1 ? Masters::MakeFormID(0, e.fallback1) : 0,
+				EntryGuideSource::fallback, "兜底1");
+			tryCand(e.fallback2 ? Masters::MakeFormID(0, e.fallback2) : 0,
+				EntryGuideSource::fallback, "兜底2");
+			return st;
+		}
+
+		// ★ 第 31 轮：新建常驻 marker 取不到时的**数据侧探针**（一行，够定位）。
+		//
+		// 要回答的两件事：
+		//   ① 基类 `XMarker`（0x0000003B）在引擎里存在吗？（不存在 ⇒ 我们的记录会被引擎丢掉）
+		//   ② marker 的 FormID 是不是算错了？——除了通道前缀，再扫一遍**全部 256 个加载序号**，
+		//      看 0x900 这个记录号有没有落在别的序号上（若有 ⇒ 「通道前缀 != 插件序号」，
+		//      说明 GLOB 和引用被引擎放在了不同的序号空间）。
+		void LogEntryMarkerProbe()
+		{
+			if (g_entryMarkerProbeLogged) {
+				return;
+			}
+			g_entryMarkerProbeLogged = true;
+
+			const auto probe = [](std::uint32_t a_id) {
+				return RE::TESForm::LookupByID(static_cast<RE::TESFormID>(a_id)) != nullptr;
+			};
+			const auto ch = Guide::EnsureChannel();
+			const std::uint32_t prefix = (ch.resolved && ch.prefix <= 0xFF)
+				? static_cast<std::uint32_t>(ch.prefix)
+				: 0;
+			const std::uint32_t sample = kEntryTable[0].markerLocal;   // 0x90A（新亚特兰蒂斯城）
+			std::string otherHits;
+			for (std::uint32_t p = 0; p <= 0xFF; ++p) {
+				if (p == prefix) {
+					continue;
+				}
+				if (probe((p << 24) | sample)) {
+					otherHits += std::format(" 0x{:02X}", p);
+				}
+			}
+			// 对照：同一个前缀下我们**自己的 QUST**（0x800）—— 它在脚本里一直是好的
+			// （引导能应用），所以它可以区分「序号映射坏了」和「只有 CELL 组里的引用没被加载」。
+			constexpr std::uint32_t kOwnQuestLocal = 0x800;
+			REX::INFO("入口 marker 探测：XMarker 基类(0x00003B)={}｜通道前缀=0x{:02X}（GLOB 认领值，"
+					  "兼作 marker 序号）｜marker 0x{:03X}@0x{:02X}={}｜该记录号在别的序号上={}"
+					  "｜对照 QUST@0x{:02X}={}",
+				probe(0x3Bu) ? "有" : "无", prefix, sample, prefix,
+				probe((prefix << 24) | sample) ? "有" : "无",
+				otherHits.empty() ? "无" : otherHits,
+				prefix, probe((prefix << 24) | kOwnQuestLocal) ? "有" : "无");
+		}
 
 		// ★ 第 27 轮：「无限任务入口」（任务板）条目 —— uID = 界面标识 = 任务板引用的运行期 FormID。
 		//
@@ -436,11 +545,7 @@ namespace SAQ
 		// 「已完成 / 已接取」那套运行时过滤。
 		void AppendEntryRows(std::vector<QuestEntry>& a_out, RuntimeFilterStats& a_stats)
 		{
-			// ① 的运行期 FormID = (本插件加载序号 << 24) | markerLocal；序号取 Guide 通道
-			//   认领出来的前缀（SAQ_Guide.cpp 的「魔数 7777」探测，日志 `ESM 通道：前缀=0x0F`）。
-			const auto ch = Guide::EnsureChannel();
-			const std::uint32_t markerPrefix = (ch.resolved && ch.prefix <= 0xFF) ? (ch.prefix << 24) : 0;
-			std::string diagAbnormal;  // 没走①（走②③/不可用）的条目诊断 —— 正常应完全为空
+			std::string diagAbnormal;  // 没走精确目标（走兜底/不可用）的条目诊断 —— 正常应完全为空
 
 			for (std::size_t i = 0; i < kEntryTableSize; ++i) {
 				const auto& e = kEntryTable[i];
@@ -448,29 +553,7 @@ namespace SAQ
 				if (boardID == 0) {
 					continue;  // 所属 master 没加载（入口目前全在基础游戏，理论上不会发生）
 				}
-				EntryGuideState st;
-				const auto tryCand = [&](std::uint32_t a_id, EntryGuideSource a_src, const char* a_tag) {
-					if (a_id == 0) {
-						st.diag += std::format("{}[无] ", a_tag);
-						return;
-					}
-					if (st.target != 0) {
-						return;  // 已选中，剩下的候选不必再查（省一次 LookupByID）
-					}
-					const bool hit = RE::TESForm::LookupByID(static_cast<RE::TESFormID>(a_id)) != nullptr;
-					st.diag += std::format("{}[{}] ", a_tag, hit ? "命中" : "未命中");
-					if (hit) {
-						st.target = a_id;
-						st.source = a_src;
-					}
-				};
-				tryCand(e.markerLocal ? (markerPrefix | e.markerLocal) : 0,
-					EntryGuideSource::marker, "marker");
-				tryCand(boardID, EntryGuideSource::board, "原板");
-				tryCand(e.fallback1 ? Masters::MakeFormID(0, e.fallback1) : 0,
-					EntryGuideSource::fallback, "兜底1");
-				tryCand(e.fallback2 ? Masters::MakeFormID(0, e.fallback2) : 0,
-					EntryGuideSource::fallback, "兜底2");
+				const auto st = EvaluateEntryGuide(i);
 				g_entryGuide[i] = st;
 
 				QuestEntry entry;
@@ -482,12 +565,13 @@ namespace SAQ
 				if (entry.hasGuideTarget) {
 					++a_stats.entryNavigable;
 					switch (st.source) {
-					case EntryGuideSource::marker:   ++a_stats.entryByMarker;   break;
-					case EntryGuideSource::board:    ++a_stats.entryByBoard;    break;
-					case EntryGuideSource::fallback: ++a_stats.entryByFallback; break;
+					case EntryGuideSource::exactMarker: ++a_stats.entryByMarker;   break;
+					case EntryGuideSource::exactBoard:  ++a_stats.entryByBoard;    break;
+					case EntryGuideSource::fallback:    ++a_stats.entryByFallback; break;
 					default: break;
 					}
-					if (st.source != EntryGuideSource::marker) {
+					// 只有「兜底」才值得诊断（精确目标 = 正常；第 31 轮：板自身也是精确的）
+					if (st.source == EntryGuideSource::fallback) {
 						diagAbnormal += std::format("{}[0x{:08X} {}] ", e.nameZh, boardID, st.diag);
 					}
 				} else {
@@ -499,7 +583,8 @@ namespace SAQ
 				++a_stats.entries;
 			}
 			if (!diagAbnormal.empty()) {
-				REX::INFO("入口候选诊断（这些条目没走新建的常驻 marker）：{}", diagAbnormal);
+				REX::INFO("入口候选诊断（这些条目只拿到「大致位置」，见 docs/05 第九节）：{}", diagAbnormal);
+				LogEntryMarkerProbe();
 			}
 		}
 
@@ -862,12 +947,17 @@ namespace SAQ
 			//   既然已实锤「菜单开着时脚本不可能响应」（第 27 轮结论，见 PollGuideVerify），
 			//   每菜单留一行说明就够。在 OnMissionMenuOpened 里重置。
 			bool          verifyWaitNoted{};
+			// ★ 第 31 轮：这次下发是「入口目标的静默更新」（玩家没操作，见 UpdateEntryGuideTarget）。
+			//   确认超时/失败时**不清通道、不回写界面** —— 否则会把玩家原本可用的引导一起清掉。
+			bool          verifySilent{};
+			std::uint64_t lastTargetCheckMs{};   // 入口目标复算的节流时间戳（第 31 轮）
 		};
 		GuideRuntime g_guide;
 		constexpr std::uint64_t kGuidePollIntervalMs = 100;
 		constexpr std::uint64_t kGuideVerifyFirstMs = 900;   // 下发后第一次查状态的时间
 		constexpr std::uint64_t kGuideVerifyRetryMs = 2000;  // 之后每次重查的间隔
 		constexpr std::uint32_t kGuideVerifyMaxTries = 6;    // 最多查这么久（≈ 11 秒）
+		constexpr std::uint64_t kEntryTargetCheckMs = 1500;  // 入口引导目标复算间隔（第 31 轮）
 
 		const StaticQuestInfo* FindStaticQuest(std::uint32_t a_formID)
 		{
@@ -1027,6 +1117,7 @@ namespace SAQ
 			g_guide.verifyTries = 0;
 			g_guide.verifySeq = static_cast<std::uint32_t>(a_seq);
 			g_guide.verifyResends = 0;
+			g_guide.verifySilent = false;   // 玩家请求：失败要回滚界面（静默更新会自己再设 true，见下）
 		}
 
 		// ★ 第 19 轮：**脚本活性探测**。
@@ -1140,23 +1231,19 @@ namespace SAQ
 				displayName = entry->nameZh;
 				whereZh = entry->whereZh;
 			} else {
-				// ★ 第 30 轮：用候选链选出来的目标（开菜单收集时算好，见 AppendEntryRows）。
-				//   收集 → 点击之间加载状态可能变化 ⇒ 写通道前复检一次（理由同第 28 轮：
-				//   避免「通道里塞进一个脚本注定取不到的目标、旧蓝点还留着」的混乱）。
+				// ★ 第 30 轮：用候选链选出来的目标；★ 第 31 轮：**点击时重算一次**（候选链
+				//   顺序改成「精确优先」后，这里重算就等于「按此刻的加载状态挑最精确的目标」——
+				//   玩家已经走到板前时，拿到的就是任务板引用自身，而不是几米外的兜底引用）。
+				//   EvaluateEntryGuide 内部只返回**此刻取得到**的引用，所以不需要再复检。
 				const auto idx = FindEntryIndexByFormID(a_formID);
-				guideRefID = (idx < kEntryTableSize) ? g_entryGuide[idx].target : 0;
+				const auto st = (idx < kEntryTableSize) ? EvaluateEntryGuide(idx, false) : EntryGuideState{};
+				guideRefID = st.target;
+				whereZh = SourceName(st.source);
 				displayName = gap->nameZh;
 				if (guideRefID == 0) {
 					REX::INFO("引导请求：{}（0x{:08X}）当前没有可用的引导目标"
-							  "（marker / 任务板 / 常驻兜底 全取不到）—— 按「暂时无法导航」处理，不写通道",
+							  "（任务板 / 常驻 marker / 常驻兜底 全取不到）—— 按「暂时无法导航」处理，不写通道",
 						displayName, a_formID);
-					NotifyGuideReply(a_seq, g_guide.questFormID, 1);
-					return;
-				}
-				if (RE::TESForm::LookupByID(static_cast<RE::TESFormID>(guideRefID)) == nullptr) {
-					REX::INFO("引导请求：{}（0x{:08X}）的引导目标 0x{:08X} 此刻取不到"
-							  "（开菜单之后加载状态变了）—— 按「暂时无法导航」处理，不写通道",
-						displayName, a_formID, guideRefID);
 					NotifyGuideReply(a_seq, g_guide.questFormID, 1);
 					return;
 				}
@@ -1187,6 +1274,20 @@ namespace SAQ
 		{
 			const auto questID = g_guide.questFormID;
 			const auto seq = static_cast<int>(g_guide.verifySeq);
+
+			// ★ 第 31 轮：静默的「入口目标更新」确认超时时**不清通道、不回写界面**。
+			//   理由：那是我们自己发起的优化（把兜底换成精确目标 / 精确目标失效后换回兜底），
+			//   玩家没有请求过任何东西；确认不上只说明脚本没在跑 —— 此时更应该把目标**留在
+			//   通道里**等脚本下次运行（开菜单/关菜单）时应用，而不是把引导一并放弃。
+			if (g_guide.verifySilent) {
+				g_guide.verifySilent = false;
+				g_guide.verifyAtMs = 0;
+				g_guide.verifySeq = 0;
+				REX::WARN("入口引导目标更新未被脚本确认：{}（0x{:08X}）—— {}；"
+						  "通道保持不动（脚本下次运行/关菜单时会应用它）",
+					DisplayNameOf(questID), questID, a_why);
+				return;
+			}
 
 			std::string detail;
 			const bool cleared = Guide::SetGuideTarget(0, detail);
@@ -1442,6 +1543,68 @@ namespace SAQ
 				DisplayNameOf(g_guide.questFormID), g_guide.questFormID, ch.guideState, detail);
 		}
 
+		// ★★ 第 31 轮：入口条目的引导目标**动态更新**（只写通道 + 记日志，不碰界面）。
+		//
+		// 场景（玩家的实际走法，也是 13:15 截图的成因）：
+		//   ① 站在别处选「任务板 · 陋室」→ 那一刻板所在 cell 没加载 ⇒ 目标只能落
+		//      「同 cell 常驻兜底引用」（`MQ204_NoelBasement_Marker01a`，离板 3.41 m）；
+		//   ② 玩家飞/走到陋室，蓝点仍停在那个兜底引用上 ⇒ 看起来「蓝点不在板上」。
+		//
+		// 这里在**菜单关着**时定期（1.5 s）复算候选链：
+		//   * 更精确的目标（任务板自身 / 常驻 marker）变得可用 ⇒ 换过去（蓝点随之上板）；
+		//   * 当前目标已经不可用（非常驻引用随 cell 卸载而消失）⇒ 换回兜底（蓝点回到大致位置）。
+		// 只处理「无限任务入口」条目 —— 普通任务的目标是离线算好的常驻引用，不需要动。
+		//
+		// 为什么不做任何界面动作：换的是**同一个条目**的引导目标（uID 不变），界面上
+		// 「正在引导的那条」没有任何变化，回写反而是噪声（且静默更新没有对应的请求序号）。
+		void UpdateEntryGuideTarget()
+		{
+			if (g_guide.questFormID == 0) {
+				return;  // 没在引导
+			}
+			if (g_guide.verifyAtMs != 0) {
+				return;  // 有一次下发还没确认（正常请求或上一次静默更新），别插队
+			}
+			const auto idx = FindEntryIndexByFormID(g_guide.questFormID);
+			if (idx >= kEntryTableSize) {
+				return;  // 不是入口条目（普通任务不在这里换目标）
+			}
+			const auto now = NowMs();
+			if (g_guide.lastTargetCheckMs != 0 &&
+				now - g_guide.lastTargetCheckMs < kEntryTargetCheckMs) {
+				return;  // 节流：1.5 秒最多复算一次
+			}
+			g_guide.lastTargetCheckMs = now;
+
+			const auto st = EvaluateEntryGuide(idx, false);
+			if (st.target == 0 || st.target == g_guide.guideRef) {
+				return;  // 没有可用目标（保持现状）/ 已经是最优的
+			}
+			const bool toExact = (st.source == EntryGuideSource::exactBoard ||
+								  st.source == EntryGuideSource::exactMarker);
+			const bool currentAlive = RE::TESForm::LookupByID(
+										  static_cast<RE::TESFormID>(g_guide.guideRef)) != nullptr;
+			if (!toExact && currentAlive) {
+				return;  // 现在这个目标还活着而且不会更差 —— 不换（避免精确→兜底的无谓抖动）
+			}
+
+			std::string detail;
+			if (!Guide::SetGuideTarget(st.target, detail)) {
+				REX::WARN("入口引导目标更新失败：{}（0x{:08X}）0x{:08X} → 0x{:08X}（{}）｜{}",
+					DisplayNameOf(g_guide.questFormID), g_guide.questFormID, g_guide.guideRef,
+					st.target, SourceName(st.source), detail);
+				return;
+			}
+			const auto old = g_guide.guideRef;
+			g_guide.guideRef = st.target;
+			ScheduleGuideVerify(0);            // 预约一次确认（失败不清通道，见 AbortUnverifiedGuide）
+			g_guide.verifySilent = true;
+			REX::INFO("入口引导目标已更新：{}（0x{:08X}）0x{:08X} → 0x{:08X}（{}）{}｜{}",
+				DisplayNameOf(g_guide.questFormID), g_guide.questFormID, old, st.target,
+				SourceName(st.source),
+				currentAlive ? std::string_view{} : std::string_view{ "（原目标已不可用）" }, detail);
+		}
+
 		void OnMissionMenuClosed()
 		{
 			if (!g_poll.lastReport.empty()) {
@@ -1571,6 +1734,11 @@ namespace SAQ
 				PollGuideRequest(); // 玩家按了引导键就下发给 ESM 通道（第 10 轮）
 			} else if (wasOpen) {
 				OnMissionMenuClosed();
+			} else {
+				// ★ 第 31 轮：菜单关着时才算「入口条目的引导目标能不能更精确」
+				//   （玩家从远处选完就关菜单去赶路 —— 蓝点该在到达后自动上板）。
+				//   函数内部按 lastTargetCheckMs 自我节流，没在引导时零开销。
+				UpdateEntryGuideTarget();
 			}
 
 			// ★ 第 17 轮：引导结果确认 —— **菜单关掉之后也要继续跑**

@@ -259,8 +259,18 @@ def main() -> int:
             "入口候选诊断": "入口候选诊断".encode(),
             # 不可导航名单（正常应恒为空；第 28/29 轮的兜底诊断，第 30 轮起带候选命中详情）
             "入口不可导航名单": "入口不可导航: ".encode(),
+            # ★ 第 31 轮：候选链改「精确优先」（任务板自身 → 常驻 marker → 常驻兜底）
+            #   + 引导过程中的目标动态更新 + marker 取不到时的数据侧探测
+            "入口精确目标来源": "任务板自身（精确）".encode(),
+            "入口目标动态更新": "入口引导目标已更新".encode(),
+            "入口 marker 探测": "入口 marker 探测".encode(),
+            "入口静默更新不清通道": "通道保持不动".encode(),
         }.items():
             all_ok &= check(f"DLL · {name}", blob, needle)
+        # 反向检查：第 31 轮把候选链顺序换掉，第 30 轮的「marker 优先」诊断文案不应再出现
+        gone = "这些条目没走新建的常驻 marker".encode() not in blob
+        print(("OK  " if gone else "MISS") + " DLL · 旧候选链诊断文案已替换(反向检查)")
+        all_ok &= gone
         # 反向检查：第 27 轮把「每次切条目打一行」的旧说明换成「每菜单一行」，旧串不应再出现
         gone = "脚本状态还是 0，但菜单还开着".encode() not in blob
         print(("OK  " if gone else "MISS") + " DLL · 旧引导确认文案已替换(反向检查)")
