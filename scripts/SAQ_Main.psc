@@ -663,7 +663,6 @@ Bool Function EnsureTestChannel()
 	EndIf
 	; 基线：把「已执行序号」追平当前值，避免把上一局残留的序号当新命令执行一遍。
 	TestLastSeq = TestSeq.GetValue() as Int
-	Debug.Trace("[SAQ] 测试通道已就绪（前缀=" + TestPrefix + "，当前 seq=" + TestLastSeq + "）")
 	Return True
 EndFunction
 
@@ -674,8 +673,20 @@ Function ProcessTestCommand()
 			Return
 		EndIf
 	EndIf
-	; 总开关：0 = 什么都不做（DLL 也只在 1 时写命令；这里再挡一道）
-	If TestHarnessCtl.GetValue() < 0.5
+	; ---- 总开关的三态（与 SAQ_TestOps 的协议一致）----
+	;   0 = 关（什么都不做）；1 = DLL 请求启用；2 = 本脚本已就绪（DLL 可以下命令了）。
+	;   为什么必须有「1 → 2」这一拍：上面 EnsureTestChannel 把「已执行序号」追平了当前值，
+	;   DLL 必须知道「基线已经拉平」才敢下第一条命令 —— 否则那条命令会被当成旧序号跳过。
+	Float ctl = TestHarnessCtl.GetValue()
+	If ctl < 0.5
+		Return
+	EndIf
+	If ctl < 1.5
+		TestLastSeq = TestSeq.GetValue() as Int
+		TestHarnessCtl.SetValue(2)
+		; ★ 注意：Papyrus 不支持跨行的表达式续行（实测报 "required (...)+ loop did not match"）
+		;   —— 这种长字符串拼接必须写在一行里。
+		Debug.Trace("[SAQ] 测试通道已就绪（前缀=" + TestPrefix + "，基线 seq=" + TestLastSeq + "；DLL 随后可下命令）")
 		Return
 	EndIf
 	Int seq = TestSeq.GetValue() as Int
