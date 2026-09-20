@@ -1,17 +1,20 @@
 # ============================================================================
-#  run-verify-persist.ps1 —— 用 xEdit 验证「任务板入口常驻化」override（第 29 轮）
+#  run-verify-persist.ps1 —— 用 xEdit 验证「任务板常驻 marker」（第 30 轮起）
 #
 #  做什么：
 #    1. 把 esm\SAQ_ShowAvailableQuests.esm 临时复制到游戏 Data 目录
 #       （xEdit 只从 Data 目录读插件；跑完会删掉副本）；
 #    2. 确保 tools\plugins.txt 里启用它；
 #    3. 无头运行 xEdit（verify_persist.pas）：dump CELL 组树 + 重存一份 SAQ_resaved.esm；
-#    4. 打印 ref\xedit-out\verify_persist.txt（组名 / 每条记录的 FormID / flags）。
+#    4. 打印 ref\xedit-out\verify_persist.txt（组名 / 每条记录的 FormID / flags / EDID）。
 #
-#  判据（第 29 轮已通过一次）：
-#    * 11 条 REFR 都在 `Cell Persistent Children of <cell>` 组里；
-#    * FormID 是 00xxxxxx（属于 Starfield.esm 空间的 **override**，不是新记录）；
+#  判据（第 30 轮）：
+#    * `marker hits = 11 (expect 11)` —— 11 条 SAQ_BoardMarker_ 记录都被 xEdit 读到；
+#    * 它们都在 `Cell Persistent Children of <cell>` 组里（组名里能看到 cell 的 EDID）；
+#    * FormID 是**本文件自己的空间**（非 00xxxxxx override）；记录头带 flags 0x400；
 #    * 重存的 SAQ_resaved.esm 里 11 条记录仍在（xEdit 读懂 = 结构合法）。
+#
+#  （第 29 轮的 override 验证已作废 —— 那条路线被实机否定，见 create_board_markers.py。）
 #
 #  用法：& ".\tools\run-verify-persist.ps1"        # 约 4~5 分钟
 # ============================================================================

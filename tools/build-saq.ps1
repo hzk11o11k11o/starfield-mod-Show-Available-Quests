@@ -58,11 +58,8 @@ if (-not $SkipTable) {
     & python (Join-Path $root 'tools\esm\gen_quest_table.py') | Write-Host
     if ($LASTEXITCODE -ne 0) { throw "gen_quest_table.py 失败（exit $LASTEXITCODE）" }
     Ok 'plugin\src\SAQ_QuestTable.h'
-    # ★ 第 27 轮：无限任务入口（任务板）条目表（扫 Starfield.esm 的世界引用，约 1~2 分钟）
-    Step '1/6' '生成入口条目表（gen_entry_table.py：任务板引用）'
-    & python (Join-Path $root 'tools\esm\gen_entry_table.py') | Write-Host
-    if ($LASTEXITCODE -ne 0) { throw "gen_entry_table.py 失败（exit $LASTEXITCODE）" }
-    Ok 'plugin\src\SAQ_EntryTable.h'
+    # ★ 第 30 轮：入口条目表（任务板）移到 ESM 段**之后**生成（见 2.5 步）——
+    #   它的「引导目标候选链」依赖 create_board_markers.py 的产物 ref\board_markers.json。
 } else { Step '1/6' '跳过静态表生成' }
 
 # --- 2. ESM ------------------------------------------------------------------
@@ -86,22 +83,48 @@ if ($RebuildEsm) {
     }
     Ok "复用 $esmStable"
 }
-# ★ 第 29 轮：先清掉上一次构建留下的 CELL override 组（若有）——
+# ★ 第 30 轮：先清掉上一次构建留下的 CELL 组（第 29 轮的无效 override + 旧 marker）——
 #   patch_saq_esm.py 是线性重建，不认识嵌套组（文件里留着它会被拒绝运行）。
-& python (Join-Path $root 'tools\esm\persist_entry_refs.py') --clean | Write-Host
-if ($LASTEXITCODE -ne 0) { throw "persist_entry_refs.py --clean 失败（exit $LASTEXITCODE）" }
+& python (Join-Path $root 'tools\esm\create_board_markers.py') --clean | Write-Host
+if ($LASTEXITCODE -ne 0) { throw "create_board_markers.py --clean 失败（exit $LASTEXITCODE）" }
 
 # ★ 无论走哪条路，都要把「引导别名 + 引导目标」补进去（xEdit 重新生成会把它冲掉）。
 #   幂等，可反复运行；结构与自校验见 tools/esm/patch_saq_esm.py。
 & python (Join-Path $root 'tools\esm\patch_saq_esm.py') | Write-Host
+if ($LASTEXITCODE -ne 0) { throw "patch_saq_esm.py 失败（exit $LASTEXITCODE）" }
 
-# ★ 第 29 轮：把 11 条非常驻任务板引用 override 成**常驻引用**
-#   （玩家反馈「我在亚特兰蒂斯城也不能导航」+「不该存在太远就不能导航」——
-#    常驻引用在任何位置都被引擎加载，脚本 Game.GetForm 永远取得到）。
+# ★ 第 30 轮：给 11 条非常驻任务板新建**常驻 XMarker 引用**（精确落点、任何位置可导航）。
+#   第 29 轮的「override 成常驻」已被实机 + 数据双重否定（override 不改变引用的加载分类，
+#   官方 70 条同类 override 原记录本来就是常驻）—— 详见 tools/esm/create_board_markers.py。
 #   ★ 顺序：必须在 patch_saq_esm.py **之后**（那个工具是线性重建，不认识嵌套组）。
-#   写法（抄官方 SFBGS003/SFBGS008 的 override 形态）与自校验见 persist_entry_refs.py。
-& python (Join-Path $root 'tools\esm\persist_entry_refs.py') | Write-Host
-if ($LASTEXITCODE -ne 0) { throw "persist_entry_refs.py 失败（exit $LASTEXITCODE）" }
+& python (Join-Path $root 'tools\esm\create_board_markers.py') | Write-Host
+if ($LASTEXITCODE -ne 0) { throw "create_board_markers.py 失败（exit $LASTEXITCODE）" }
+
+# --- 2.5 入口条目表（任务板 + 引导目标候选链）---------------------------------
+# ★ 第 30 轮：gen_entry_table.py 依赖 ESM 段的产物 ref\board_markers.json（新建 marker 的
+#   记录号）与 ref\entry_persistent_scan.json（同 cell 常驻兜底候选）⇒ 必须在 ESM 之后跑。
+$entryHeader = Join-Path $root 'plugin\src\SAQ_EntryTable.h'
+$markersJson = Join-Path $root 'ref\board_markers.json'
+$scanJson    = Join-Path $root 'ref\entry_persistent_scan.json'
+$needEntryTable = $true
+if ($SkipTable -and (Test-Path $entryHeader) -and (Test-Path $markersJson)) {
+    if ((Get-Item $entryHeader).LastWriteTime -ge (Get-Item $markersJson).LastWriteTime) {
+        $needEntryTable = $false
+    }
+}
+if ($needEntryTable) {
+    if (-not (Test-Path $scanJson)) {
+        Step '2.5/6' '侦查任务板 cell 里的原生常驻引用（scan_entry_persistent.py，首次，约 1~2 分钟）'
+        & python (Join-Path $root 'tools\esm\scan_entry_persistent.py') | Write-Host
+        if ($LASTEXITCODE -ne 0) { throw "scan_entry_persistent.py 失败（exit $LASTEXITCODE）" }
+    }
+    Step '2.5/6' '生成入口条目表（gen_entry_table.py：任务板 + 引导目标候选链，约 1~2 分钟）'
+    & python (Join-Path $root 'tools\esm\gen_entry_table.py') | Write-Host
+    if ($LASTEXITCODE -ne 0) { throw "gen_entry_table.py 失败（exit $LASTEXITCODE）" }
+    Ok 'plugin\src\SAQ_EntryTable.h'
+} else {
+    Step '2.5/6' '入口条目表已是最新（跳过）'
+}
 
 # --- 3. Papyrus --------------------------------------------------------------
 Step '3/6' '编译 Papyrus 脚本'

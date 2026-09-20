@@ -33,6 +33,51 @@ from esm_probe import (  # noqa: E402
     DEFAULT_ESM, REF_SIGS, iter_records_with_context, record_base_form, record_edid,
 )
 
+# ★★ 第 30 轮：入口的引导目标改成**候选链**（背景见 docs/05 第九节 / docs/99 第 30 轮）——
+#
+#   ① 新建的**常驻 XMarker**（tools/esm/create_board_markers.py：记录号 0x900~0x90A，
+#      位置 = 任务板坐标）—— 常驻引用在任何位置都取得到 ⇒ 精确落点、首选；
+#   ② 任务板引用自身 —— 原生常驻的（阿基拉城）总是可用；非常驻的只有 cell 加载时可用；
+#   ③ 同 cell 里离板最近的**原生常驻引用**（表里的 fallback1/2）—— 位置差 1~20 m，兜底。
+#
+#   运行期由 DLL 依次 `LookupByID` 取第一个命中的（见 SAQ.cpp::AppendEntryRows）。
+#
+# ★ 为什么要「新建」而不是 override（第 29 轮的教训）：override 只替换记录数据、
+#   **不改变引用的加载分类**（官方 SFBGS003/008 的同类 override 70/70 条原记录本来就是
+#   常驻 = 零先例）。新建记录从第一次加载就归入 CellPersistent 组 ⇒ 引擎按常驻处理。
+BOARD_MARKERS_JSON = Path("ref/board_markers.json")
+ENTRY_SCAN_JSON = Path("ref/entry_persistent_scan.json")
+XMARKER_BASES = {0x3B, 0x34}      # XMarker / XMarkerHeading（纯位置标记，位置最稳定）
+FALLBACK_MAX_DIST = 25.0          # 兜底候选的最大距离（同房间级；再远就不是「这块板」了）
+
+
+def load_markers() -> dict[int, int]:
+    """refLocal -> markerLocal（0x900+i；文件缺失时返回空 = 没有 ①）。"""
+    if not BOARD_MARKERS_JSON.exists():
+        print(f"!! 缺少 {BOARD_MARKERS_JSON}（先跑 tools/esm/create_board_markers.py）"
+              f"—— 入口引导将退化为「板自身 + 常驻兜底」")
+        return {}
+    data = json.loads(BOARD_MARKERS_JSON.read_text(encoding="utf-8"))
+    return {m["refLocal"]: m["markerLocal"] for m in data.get("markers", [])}
+
+
+def load_fallbacks() -> dict[str, list[int]]:
+    """cell EDID -> [最近的常驻引用（≤2 个，XMarker 系优先、距离近优先）]。"""
+    if not ENTRY_SCAN_JSON.exists():
+        print(f"!! 缺少 {ENTRY_SCAN_JSON}（先跑 tools/esm/scan_entry_persistent.py）—— 没有③兜底候选")
+        return {}
+    data = json.loads(ENTRY_SCAN_JSON.read_text(encoding="utf-8"))
+    out: dict[str, list[int]] = {}
+    for cell in data.get("cells", {}).values():
+        cands = []
+        for t in cell.get("nearest", []):
+            if not t.get("formid") or t.get("dist", 999.0) > FALLBACK_MAX_DIST:
+                continue
+            cands.append((0 if t.get("base") in XMARKER_BASES else 1, t["dist"], t["formid"]))
+        cands.sort()
+        out[cell.get("edid", "")] = [c[2] for c in cands[:2]]
+    return out
+
 # 任务板的 14 个基础对象（esm_probe list ACTI --grep board 的结果）；
 # 白名单只收录其中「激活的、每个地点一块」的实例，这里仍然全列出来做 base 校验。
 BOARD_BASES = {
@@ -104,6 +149,9 @@ def main() -> int:
         if base in BOARD_BASES:
             found[formid] = (base, flags, cell, world)
 
+    markers = load_markers()
+    fallbacks = load_fallbacks()
+
     rows = []
     problems = []
     for refr, cell_edid, en, zh in ENTRIES:
@@ -115,6 +163,7 @@ def main() -> int:
         actual_cell = cells.get(cell, "")
         if actual_cell != cell_edid:
             problems.append(f"REFR {refr:08X} 所在 cell 是 {actual_cell!r}，白名单写的是 {cell_edid!r}")
+        fb = fallbacks.get(actual_cell, [])
         rows.append({
             "refLocal": refr,
             "refHex": f"0x{refr:08X}",
@@ -122,6 +171,9 @@ def main() -> int:
             "persistent": bool(flags & 0x400),
             "base": BOARD_BASES[base],
             "cell": actual_cell,
+            "markerLocal": markers.get(refr, 0),          # ① 新建常驻 XMarker（首选）
+            "fallback1": fb[0] if len(fb) > 0 else 0,     # ③ 同 cell 原生常驻引用（兜底）
+            "fallback2": fb[1] if len(fb) > 1 else 0,
             "nameEn": en,
             "nameZh": zh,
         })
@@ -133,10 +185,16 @@ def main() -> int:
         return 1
 
     n_pers = sum(1 for r in rows if r["persistent"])
-    print(f"入口条目：{len(rows)} 条（常驻引用 {n_pers} / 非常驻 {len(rows) - n_pers}）")
+    n_marker = sum(1 for r in rows if r["markerLocal"])
+    n_fb = sum(1 for r in rows if r["fallback1"])
+    print(f"入口条目：{len(rows)} 条（原生常驻 {n_pers} / 非常驻 {len(rows) - n_pers}；"
+          f"新建 marker {n_marker} 条；常驻兜底 {n_fb} 条）")
     for r in rows:
         flag = "P" if r["persistent"] else "-"
-        print(f"  [{flag}] {r['refHex']} {r['cell']:<32s} {r['nameZh']}")
+        mk = f"marker=0x{r['markerLocal']:03X}" if r["markerLocal"] else "marker=--- "
+        fb = (f"兜底=0x{r['fallback1']:06X}/0x{r['fallback2']:06X}" if r["fallback1"]
+              else "兜底=---")
+        print(f"  [{flag}] {r['refHex']} {mk} {fb} {r['cell']:<32s} {r['nameZh']}")
 
     # ---- 头文件 ----
     lines = []
@@ -146,15 +204,21 @@ def main() -> int:
     lines.append("// 「无限任务入口」条目（任务板）：AGENTS.md 需求 —— 无限生成任务本身不显示，")
     lines.append("// 但「接取入口」（任务板）作为一条数据显示在列表里，点了就引导到它的位置。")
     lines.append("//")
-    lines.append("// 字段说明：")
-    lines.append("//   refLocal   任务板 ACTIVATOR（MissionBoardConsole*）在世界里的放置引用（REFR）记录号。")
-    lines.append("//              ★ 它同时是界面条目的 uID（运行期 FormID）：与任务的 FormID 空间不冲突，")
-    lines.append("//                且「引导目标 = 它自己」（DLL 收到该 uID 的引导请求时直接写这个引用）。")
+    lines.append("//")
+    lines.append("// 字段说明（★ 第 30 轮起，引导目标是**候选链**：DLL 依次 LookupByID 取第一个命中的）——")
+    lines.append("//   refLocal   任务板 ACTIVATOR 的放置引用记录号 —— 同时是界面条目的 uID（运行期 FormID）。")
     lines.append("//   master     所属 master 下标（kQuestMasters[]；目前全部在 Starfield.esm）。")
-    lines.append("//   persistent REFR 是否常驻引用 —— **引导能不能生效的关键**：")
-    lines.append("//              非常驻引用在所在 cell 未加载时脚本 Game.GetForm 取不到（状态 2）。")
-    lines.append("//              实机验证哪块板能引导就看这一列（见 docs/99 第 27 轮）。")
+    lines.append("//   persistent 任务板引用自身是否**原生常驻**（12 条里只有阿基拉城是）。")
+    lines.append("//   markerLocal ① 本插件（ESM 记录号 0x900+i）新建的**常驻 XMarker**，位置 = 任务板坐标：")
+    lines.append("//              常驻引用在 cell 未加载时依然存在 ⇒ 任何位置都取得到 ⇒ 首选引导目标。")
+    lines.append("//              运行期 FormID = (本插件加载序号 << 24) | markerLocal —— 前缀取")
+    lines.append("//              Guide 通道的 ch.prefix（SAQ_Guide.cpp 已认领的值）。")
+    lines.append("//   fallback1/2 ③ 同 cell 里离板最近的**原生常驻引用**（XMarker 系优先、≤25 m）——")
+    lines.append("//              位置差 1~20 m，作为「新建 marker 万一不被引擎接受」的兜底。")
     lines.append("//   nameZh/En  列表里显示的名字（中英都推，AS3 按游戏语言挑）。")
+    lines.append("//")
+    lines.append("// 实机排查看 DLL 日志的「入口目标来源：marker N / 原板 N / 兜底 N / 不可用 N」与")
+    lines.append("// 「入口候选诊断：…」（SAQ.cpp::AppendEntryRows）。")
     lines.append("")
     lines.append("#include <cstdint>")
     lines.append("")
@@ -165,6 +229,9 @@ def main() -> int:
     lines.append("\t\tstd::uint32_t refLocal;")
     lines.append("\t\tstd::uint8_t  master;")
     lines.append("\t\tbool          persistent;")
+    lines.append("\t\tstd::uint32_t markerLocal;   // ① 新建常驻 XMarker（0 = 没有）")
+    lines.append("\t\tstd::uint32_t fallback1;     // ③ 同 cell 原生常驻引用（0 = 没有）")
+    lines.append("\t\tstd::uint32_t fallback2;")
     lines.append("\t\tconst char*   nameEn;")
     lines.append("\t\tconst char*   nameZh;")
     lines.append("\t};")
@@ -174,6 +241,7 @@ def main() -> int:
         p = "true " if r["persistent"] else "false"
         lines.append(
             f'\t\t{{ {r["refLocal"]:#010x}u, {r["master"]}u, {p}, '
+            f'{r["markerLocal"]:#010x}u, {r["fallback1"]:#010x}u, {r["fallback2"]:#010x}u, '
             f'"{c_escape(r["nameEn"])}", "{c_escape(r["nameZh"])}" }},'
         )
     lines.append("\t};")

@@ -20,6 +20,10 @@
   第 28 轮：入口可用性判定（LookupByID）+ 入口专用提示文案
   第 29 轮：11 条任务板引用 override 成**常驻引用**（ESM 的 CellPersistent 组 + flags 0x400，
            任何位置都能导航）；「太远」文案退场（换中性兜底）
+  第 30 轮：★ 入口引导目标改成**候选链**（ESM 新建 11 条常驻 XMarker marker +
+           同 cell 常驻兜底；DLL 依次 LookupByID 取第一个命中的 + 诊断日志）——
+           第 29 轮的 override 路线已被实机 + 数据双重否定（override 不改变引用的加载分类，
+           官方 70 条同类 override 的原记录本来就全是常驻）
 
 用法：python tools/ui/verify_saq_build.py
 """
@@ -53,36 +57,71 @@ def check(name: str, blob: bytes, needle: bytes) -> bool:
 REF_SIGS = (b"REFR", b"ACHR", b"PGRE", b"PMIS", b"PARW", b"PBAR", b"PHZD")
 
 
-def check_esm_persist(path: pathlib.Path, expect: set[int], label: str) -> bool:
-    """第 29 轮：expect 里的 REFR 必须已 override 成常驻（CellPersistent 组 + flags 0x400）。
+def check_esm_markers(path: pathlib.Path, expect_refs: set[int], label: str) -> bool:
+    """★ 第 30 轮：expect_refs 里的任务板必须各有一条**新建的常驻 XMarker marker**。
 
-    这是「任何位置都能导航」的**数据侧保证** —— 只查字节特征证明不了这个，
-    必须真正按组结构解析（顺带做组边界自检：结构被写坏时立刻能看出来）。
+    第 29 轮的 override 路线已被实机 + 数据双重否定（override 只替换记录数据、不改变引用的
+    加载分类；官方 70 条同类 override 原记录本来就全是常驻）—— 现在改成本插件空间（记录号
+    0x900+i）的**新记录**（tools/esm/create_board_markers.py）：
+
+      * EDID = `SAQ_BoardMarker_<板记录号>`、base = XMarker(0x3B)（无模型、纯位置标记）
+      * flags = 0x400、组链 = … > CellChildren > CellPersistent
+      * 记录头 FormID 的空间索引 = 本文件 MAST 数量（自身空间；写错会落进别的 master 空间）
+
+    这是「任何位置都能导航」的**数据侧保证** —— 必须真正按组结构解析
+    （顺带做组边界自检：结构被写坏时立刻能看出来）。
     """
     buf = path.read_bytes()
-    found: dict[int, tuple[int, tuple]] = {}
+    head_size = struct.unpack_from("<I", buf, 4)[0]
+    n_mast = 0
+    p, end = 24, 24 + head_size
+    while p + 6 <= end:
+        sig = buf[p:p + 4]
+        ln = struct.unpack_from("<H", buf, p + 4)[0]
+        if sig == b"MAST":
+            n_mast += 1
+        p += 6 + ln
+
+    found: dict[int, tuple] = {}
     problems: list[str] = []
 
-    def walk(p: int, end: int, chain: tuple) -> None:
-        while p + 24 <= end:
+    def walk(p: int, end_: int, chain: tuple) -> None:
+        while p + 24 <= end_:
             if buf[p:p + 4] == b"GRUP":
                 sub = struct.unpack_from("<I", buf, p + 4)[0]
-                if sub < 24 or p + sub > end:
+                if sub < 24 or p + sub > end_:
                     problems.append(f"GRUP 越界 @0x{p:X}")
                     return
                 gt = struct.unpack_from("<i", buf, p + 12)[0]
-                walk(p + 24, p + sub, chain + (gt,))
+                lb = bytes(buf[p + 8:p + 12])
+                walk(p + 24, p + sub, chain + ((gt, lb),))
                 p += sub
                 continue
             size = struct.unpack_from("<I", buf, p + 4)[0]
             flags = struct.unpack_from("<I", buf, p + 8)[0]
             fid = struct.unpack_from("<I", buf, p + 12)[0]
-            if bytes(buf[p:p + 4]) in REF_SIGS and (fid & 0xFFFFFF) in expect:
-                found[fid & 0xFFFFFF] = (flags, chain)
+            if bytes(buf[p:p + 4]) in REF_SIGS:
+                payload = buf[p + 24:p + 24 + size]
+                edid = None
+                base = None
+                q = 0
+                while q + 6 <= len(payload):
+                    s = payload[q:q + 4]
+                    n = struct.unpack_from("<H", payload, q + 4)[0]
+                    if s == b"EDID":
+                        edid = payload[q + 6:q + 6 + n].split(b"\x00")[0].decode("latin1")
+                    if s == b"NAME":
+                        base = struct.unpack_from("<I", payload, q + 6)[0]
+                    q += 6 + n
+                if edid and edid.startswith("SAQ_BoardMarker_"):
+                    try:
+                        ref_low = int(edid.rsplit("_", 1)[1], 16)
+                    except ValueError:
+                        ref_low = -1
+                    found[ref_low] = (flags, chain, fid, base)
             p += 24 + size
 
-    head = struct.unpack_from("<I", buf, 4)[0]
-    pos = 24 + head
+    pos = 24 + head_size
     while pos + 24 <= len(buf):
         if buf[pos:pos + 4] != b"GRUP":
             problems.append(f"顶层 @0x{pos:X} 不是 GRUP")
@@ -95,17 +134,31 @@ def check_esm_persist(path: pathlib.Path, expect: set[int], label: str) -> bool:
         pos += gsize
 
     hit = 0
-    for low in expect:
+    for low in sorted(expect_refs):
         got = found.get(low)
-        if got and (got[0] & 0x400) and got[1] and got[1][-1] == 8:
-            hit += 1
+        if got is None:
+            problems.append(f"0x{low:06X} 没有 SAQ_BoardMarker_ 记录")
+            continue
+        flags, chain, fid, base = got
+        why = []
+        if not (flags & 0x400):
+            why.append(f"flags=0x{flags:X} 缺 0x400")
+        if not chain or [g for g, _ in chain][-4:] != [2, 3, 6, 8]:
+            why.append(f"组链={[g for g, _ in chain]}")
+        if (fid >> 24) != n_mast:
+            why.append(f"空间索引={fid >> 24}≠{n_mast}(MAST 数)")
+        if base != 0x3B:
+            why.append(f"base=0x{base:08X}≠XMarker(0x3B)")
+        if why:
+            problems.append(f"0x{low:06X}：" + "；".join(why))
         else:
-            problems.append(f"0x{low:06X} 未常驻化（flags/组链={got}）")
-    ok = hit == len(expect) and not problems
+            hit += 1
+    ok = hit == len(expect_refs) and not problems
     print(("OK  " if ok else "MISS") +
-          f" ESM({label}) · 常驻化 override {hit}/{len(expect)} 条（CellPersistent + 0x400）")
-    for p in problems:
-        print(f"       - {p}")
+          f" ESM({label}) · 新建常驻 marker {hit}/{len(expect_refs)} 条"
+          f"（XMarker + CellPersistent + 0x400）")
+    for p_ in problems:
+        print(f"       - {p_}")
     return ok
 
 
@@ -200,10 +253,11 @@ def main() -> int:
             # ★ 第 28 轮修正：中文名用游戏官中译名（"任务板 · 陋室" = The Lodge）
             "入口条目数据": "任务板 · 陋室".encode(),
             "引导确认降噪文案": "关菜单后自动确认".encode(),
-            # 第 28 轮：入口可用性的运行时判定（LookupByID；与脚本 Game.GetForm 同源）
-            "入口统计列": "入口={}(可导航 {})".encode(),
-            "入口太远不写通道": "的任务板引用当前取不到".encode(),
-            # 第 29 轮：常驻化 override 的诊断（不可导航名单 —— 正常应恒为空）
+            # ★ 第 30 轮：入口引导目标的**候选链**（marker → 原板 → 常驻兜底）+ 统计/诊断
+            "入口统计列(候选链)": "入口={}(可导航 {}｜marker {} 原板 {} 兜底 {} 不可用 {})".encode(),
+            "入口无可用目标不写通道": "当前没有可用的引导目标".encode(),
+            "入口候选诊断": "入口候选诊断".encode(),
+            # 不可导航名单（正常应恒为空；第 28/29 轮的兜底诊断，第 30 轮起带候选命中详情）
             "入口不可导航名单": "入口不可导航: ".encode(),
         }.items():
             all_ok &= check(f"DLL · {name}", blob, needle)
@@ -218,6 +272,10 @@ def main() -> int:
         # 反向检查：第 19 轮把「确认超时」整体换成「引导未生效」收尾，旧文案不应再出现
         gone = "引导结果确认超时：".encode() not in blob
         print(("OK  " if gone else "MISS") + " DLL · 旧确认超时文案已替换(反向检查)")
+        all_ok &= gone
+        # 反向检查：第 30 轮把「任务板引用取不到」换成候选链判定，旧文案不应再出现
+        gone = "的任务板引用当前取不到".encode() not in blob
+        print(("OK  " if gone else "MISS") + " DLL · 旧入口取不到文案已替换(反向检查)")
         all_ok &= gone
         # ★ 第 17 轮的核心判据：DLC 的两个 + 基础游戏一共 4 个数据源名都编进了 DLL
         for master in (b"Starfield.esm", b"ShatteredSpace.esm", b"SFBGS050.esm", b"SFBGS00D.esm"):
@@ -247,9 +305,10 @@ def main() -> int:
         all_ok = False
 
     # ★ 第 20 轮：ESM 里的测试开关 GLOB（控制台 `set SAQ_TestMode to N` 的落点）
-    # ★ 第 29 轮：同时检查 11 条任务板引用的常驻化 override（数据侧解析，不只是特征串）
+    # ★ 第 30 轮：同时按组结构解析「11 条任务板的新建常驻 XMarker marker」（数据侧保证，
+    #   不只是特征串）—— 第 29 轮的 override 路线已被实机否定，见 check_esm_markers。
     entries = json.loads((ROOT / "ref/entry_targets.json").read_text(encoding="utf-8"))
-    expect_persist = {e["refLocal"] for e in entries if not e["persistent"]}
+    expect_markers = {e["refLocal"] for e in entries if e.get("markerLocal")}
     for label, path in (("工作区", ROOT / "esm/SAQ_ShowAvailableQuests.esm"),
                         ("MO2 部署", MO2_MOD / "SAQ_ShowAvailableQuests.esm")):
         if path.exists():
@@ -257,7 +316,7 @@ def main() -> int:
             all_ok &= check(f"ESM({label}) · 测试开关 GLOB", blob, b"SAQ_TestMode")
             # ★ 第 21 轮：引导目标高位 GLOB（+ VMAD 属性绑定）
             all_ok &= check(f"ESM({label}) · 引导目标高位 GLOB", blob, b"SAQ_GuidePrefix")
-            all_ok &= check_esm_persist(path, expect_persist, label)
+            all_ok &= check_esm_markers(path, expect_markers, label)
         else:
             print(f"MISS 缺少 {path}")
             all_ok = False

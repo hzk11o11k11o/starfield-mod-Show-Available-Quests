@@ -1,5 +1,16 @@
 #!/usr/bin/env python3
-r"""persist_entry_refs.py - 把「非常驻」的任务板入口引用 override 成**常驻引用**（第 29 轮）。
+r"""persist_entry_refs.py - 【第 30 轮起已停用：override 路线被实机否定】
+
+★ 停用说明：本工具把 11 条非常驻任务板引用 **override** 进 `CellPersistent` 组 + flags 0x400，
+  想让它们「常驻化」。2026-09-20 12:45 会话实机证明**无效**（`入口=12(可导航 2)`，10 条取不到）；
+  数据侧也证明「非常驻 → 常驻」的 override 在本机**零先例**（官方 SFBGS003/008 的 70 条
+  同类 override，原记录本来就全是常驻）。⇒ 现由 `tools/esm/create_board_markers.py`
+  （**新建**常驻 XMarker）取代；本文件保留作历史记录 + `--clean` 备用（build-saq.ps1 已不再调用）。
+  完整复盘见 docs/99 一·补十五。
+
+（下面是第 29 轮的原始说明，保留供追溯。）
+
+persist_entry_refs.py - 把「非常驻」的任务板入口引用 override 成**常驻引用**（第 29 轮）。
 
 ## 要解决的问题
 

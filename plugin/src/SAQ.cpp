@@ -46,6 +46,7 @@
 
 #include <Windows.h>
 
+#include <array>
 #include <atomic>
 #include <cstdint>
 #include <cstring>
@@ -116,11 +117,16 @@ namespace SAQ
 			std::size_t testFiltered{};       // ★ 第 20 轮：被控制台测试模式（SAQ_TestMode）过滤掉的
 			std::size_t entries{};            // ★ 第 27 轮：这次加入的「无限任务入口」（任务板）条数
 			std::size_t entryNavigable{};     // ★ 第 28 轮：其中「引用当前可加载、能导航」的条数
+			// ★ 第 30 轮：能导航的入口里，引导目标是「候选链」的哪一档
+			//   （marker = 新建常驻 XMarker / board = 任务板引用自身 / fallback = 同 cell 常驻兜底）
+			std::size_t entryByMarker{};
+			std::size_t entryByBoard{};
+			std::size_t entryByFallback{};
 			std::size_t skippedMaster{};      // 所属 master 没加载（DLC 没装/没启用）而跳过的
 			bool        filterApplied{};      // 这次到底有没有按运行时状态过滤
 			std::string samples;              // 被剔掉的前几条（名字 + 状态）
 			std::string vtableSamples;        // 未识别虚表的样本（诊断）
-			std::string entryUnavailable;     // ★ 第 29 轮：取不到引用的入口名单（override 没生效的证据）
+			std::string entryUnavailable;     // ★ 第 29/30 轮：不可导航入口的名单 + 候选命中诊断
 		};
 
 		// 推送重试状态（只在主线程读写，不需要锁）。
@@ -394,44 +400,106 @@ namespace SAQ
 			return { 0, "默认" };
 		}
 
-		// ★ 第 27 轮：「无限任务入口」（任务板）条目 —— uID = 引导目标 = 世界引用的运行期 FormID。
+		// ==================================================================
+		// ★★ 第 30 轮：入口条目的**引导目标候选链**
+		//
+		// 背景（第 29 轮实测 FAIL）：把非常驻引用 override 成「常驻」不生效 ——
+		// override 只替换记录数据、**不改变引用的加载分类**（官方 SFBGS003/008 的 70 条
+		// 同类 override，原记录本来就全是常驻 = 零先例；见 check_persist_precedent.py）。
+		// 实机日志（12:45 会话）：
+		//     入口=12(可导航 2) 入口不可导航: 任务板 · 新亚特兰蒂斯城[0x0021001E] …（10 条）
+		//
+		// 现在改成**候选链**（数据由 tools/esm/gen_entry_table.py 生成，见 SAQ_EntryTable.h）：
+		//   ① markerLocal：本插件新建的**常驻 XMarker**（ESM 记录号 0x900+i，位置 = 任务板
+		//      坐标；tools/esm/create_board_markers.py）—— 常驻引用在 cell 未加载时依然存在
+		//      （实证：原生常驻的阿基拉城板在玩家位于赛多尼亚时一直可导航）⇒ 首选；
+		//   ② 任务板引用自身 —— 原生常驻的总是可用；非常驻只有 cell 加载时可用；
+		//   ③ fallback1/2：同 cell 里离板最近的原生常驻引用（位置差 1~20 m）—— 兜底。
+		//
+		// 这里用与脚本**同一个引擎查询**（`LookupByID`，Papyrus 的 Game.GetForm 也是它）
+		// 依次取第一个命中的。日志 `入口=12(可导航 N｜marker a 原板 b 兜底 c 不可用 d)`：
+		//   a=11 ⇒ 新建常驻引用被引擎接受（理想）；若 b/c 为主，看「入口候选诊断」行定位。
+		// ==================================================================
+		enum class EntryGuideSource : std::uint8_t { none, marker, board, fallback };
+		struct EntryGuideState
+		{
+			std::uint32_t    target{};   // 选中的引导目标（0 = 不可导航）
+			EntryGuideSource source{ EntryGuideSource::none };
+			std::string      diag;       // 每个候选的命中情况（日志用）
+		};
+		std::array<EntryGuideState, kEntryTableSize> g_entryGuide{};
+
+		// ★ 第 27 轮：「无限任务入口」（任务板）条目 —— uID = 界面标识 = 任务板引用的运行期 FormID。
 		//
 		// 需求（AGENTS.md）：无限生成任务本身不显示，但「接取入口」（任务板）作为一条
 		// 数据出现在列表里，点了就引导到那块任务板。入口不是 quest，所以不走
 		// 「已完成 / 已接取」那套运行时过滤。
-		//
-		// ★ 第 28 轮（实测后修正）：入口能不能导航 = **任务板引用现在能不能取到**。
-		//   12 条入口里 11 条是**非持久引用**（只有阿基拉城常驻），玩家离得远时所在
-		//   cell 未加载 ⇒ 脚本 `Game.GetForm` 取不到（状态 2）⇒ 引导注定失败，而旧蓝点
-		//   还留在上一条任务上（界面先说「已设为引导」）—— 实测 11:40 会话就是这个现象。
-		//   这里用与脚本**同一个引擎查询**（`LookupByID`，Papyrus 的 Game.GetForm 也是它）
-		//   提前判定：取不到就按「无导航目标」显示（界面置灰 + 文案说明「离得太远」），
-		//   玩家靠近（cell 加载）后再开菜单即可导航。
 		void AppendEntryRows(std::vector<QuestEntry>& a_out, RuntimeFilterStats& a_stats)
 		{
+			// ① 的运行期 FormID = (本插件加载序号 << 24) | markerLocal；序号取 Guide 通道
+			//   认领出来的前缀（SAQ_Guide.cpp 的「魔数 7777」探测，日志 `ESM 通道：前缀=0x0F`）。
+			const auto ch = Guide::EnsureChannel();
+			const std::uint32_t markerPrefix = (ch.resolved && ch.prefix <= 0xFF) ? (ch.prefix << 24) : 0;
+			std::string diagAbnormal;  // 没走①（走②③/不可用）的条目诊断 —— 正常应完全为空
+
 			for (std::size_t i = 0; i < kEntryTableSize; ++i) {
 				const auto& e = kEntryTable[i];
-				const auto id = Masters::MakeFormID(e.master, e.refLocal);
-				if (id == 0) {
+				const auto boardID = Masters::MakeFormID(e.master, e.refLocal);
+				if (boardID == 0) {
 					continue;  // 所属 master 没加载（入口目前全在基础游戏，理论上不会发生）
 				}
+				EntryGuideState st;
+				const auto tryCand = [&](std::uint32_t a_id, EntryGuideSource a_src, const char* a_tag) {
+					if (a_id == 0) {
+						st.diag += std::format("{}[无] ", a_tag);
+						return;
+					}
+					if (st.target != 0) {
+						return;  // 已选中，剩下的候选不必再查（省一次 LookupByID）
+					}
+					const bool hit = RE::TESForm::LookupByID(static_cast<RE::TESFormID>(a_id)) != nullptr;
+					st.diag += std::format("{}[{}] ", a_tag, hit ? "命中" : "未命中");
+					if (hit) {
+						st.target = a_id;
+						st.source = a_src;
+					}
+				};
+				tryCand(e.markerLocal ? (markerPrefix | e.markerLocal) : 0,
+					EntryGuideSource::marker, "marker");
+				tryCand(boardID, EntryGuideSource::board, "原板");
+				tryCand(e.fallback1 ? Masters::MakeFormID(0, e.fallback1) : 0,
+					EntryGuideSource::fallback, "兜底1");
+				tryCand(e.fallback2 ? Masters::MakeFormID(0, e.fallback2) : 0,
+					EntryGuideSource::fallback, "兜底2");
+				g_entryGuide[i] = st;
+
 				QuestEntry entry;
-				entry.formID = id;
+				entry.formID = boardID;
 				entry.type = kEntryQuestType;  // AS3：入口条目（子项/描述换文案）
-				entry.hasGuideTarget = (RE::TESForm::LookupByID(static_cast<RE::TESFormID>(id)) != nullptr);
+				entry.hasGuideTarget = (st.target != 0);
 				entry.nameZh = e.nameZh;
 				entry.nameEn = e.nameEn;
-				// ★ 第 29 轮：这些引用已在 ESM 里 override 成**常驻引用**（CellPersistent + 0x400）
-				//   ⇒ 任何位置都取得到、都能导航。这里为 false = override 没生效（ESM 没加载
-				//   / 被别的插件覆盖掉）——把名单记进日志，「可导航 12」这条判据失败时一眼看出是谁。
-				if (!entry.hasGuideTarget) {
-					a_stats.entryUnavailable += std::format("{}[0x{:08X}] ", e.nameZh, id);
+				if (entry.hasGuideTarget) {
+					++a_stats.entryNavigable;
+					switch (st.source) {
+					case EntryGuideSource::marker:   ++a_stats.entryByMarker;   break;
+					case EntryGuideSource::board:    ++a_stats.entryByBoard;    break;
+					case EntryGuideSource::fallback: ++a_stats.entryByFallback; break;
+					default: break;
+					}
+					if (st.source != EntryGuideSource::marker) {
+						diagAbnormal += std::format("{}[0x{:08X} {}] ", e.nameZh, boardID, st.diag);
+					}
+				} else {
+					// 所有候选都取不到（连兜底常驻引用都取不到）——留完整诊断，便于判断
+					// 「常驻引用是否真的与 cell 加载无关」这个引擎行为问题。
+					a_stats.entryUnavailable += std::format("{}[0x{:08X} {}] ", e.nameZh, boardID, st.diag);
 				}
 				a_out.push_back(std::move(entry));
 				++a_stats.entries;
-				if (entry.hasGuideTarget) {
-					++a_stats.entryNavigable;
-				}
+			}
+			if (!diagAbnormal.empty()) {
+				REX::INFO("入口候选诊断（这些条目没走新建的常驻 marker）：{}", diagAbnormal);
 			}
 		}
 
@@ -603,13 +671,17 @@ namespace SAQ
 		std::string FormatRuntimeStats(const RuntimeFilterStats& a_stats)
 		{
 			std::string out = std::format(
-				"运行时状态：引擎存在={} 虚表识别={} 未识别={} 已开始={} 已完成={} 追踪中={} 隐藏={} 测试过滤={} 跳过(master未加载)={} 入口={}(可导航 {}) 过滤={}",
+				"运行时状态：引擎存在={} 虚表识别={} 未识别={} 已开始={} 已完成={} 追踪中={} 隐藏={} 测试过滤={} 跳过(master未加载)={} 入口={}(可导航 {}｜marker {} 原板 {} 兜底 {} 不可用 {}) 过滤={}",
 				a_stats.live, a_stats.recognized, a_stats.unrecognized,
 				a_stats.started, a_stats.completed, a_stats.tracked, a_stats.hidden,
 				a_stats.testFiltered,
 				a_stats.skippedMaster,
 				a_stats.entries,        // ★ 第 27 轮：任务板入口条目数
 				a_stats.entryNavigable, // ★ 第 28 轮：其中引用当前可取（能导航）的条数
+				// ★ 第 30 轮：能导航的里边，引导目标来自候选链的哪一档
+				//   （marker = 新建常驻 XMarker，理想值 = 全部；见 AppendEntryRows）
+				a_stats.entryByMarker, a_stats.entryByBoard, a_stats.entryByFallback,
+				a_stats.entries - a_stats.entryNavigable,
 				a_stats.filterApplied ? "生效" : "跳过(识别率<80%)");
 			if (!a_stats.samples.empty()) {
 				// 完整名单（第 11 轮起不再只记前几条）：玩家反馈「某条任务没显示」时，
@@ -825,16 +897,47 @@ namespace SAQ
 			return nullptr;
 		}
 
-		// ★ 第 27 轮：入口条目（任务板）反查 —— 条目的 uID 就是世界引用的运行期 FormID。
-		const StaticEntryInfo* FindEntryByFormID(std::uint32_t a_formID)
+		// ★ 第 30 轮：入口下标（按界面 uID 找；找不到 ⇒ kEntryTableSize）。
+		std::size_t FindEntryIndexByFormID(std::uint32_t a_formID)
 		{
 			for (std::size_t i = 0; i < kEntryTableSize; ++i) {
 				const auto& e = kEntryTable[i];
 				if (Masters::MakeFormID(e.master, e.refLocal) == a_formID) {
-					return &e;
+					return i;
 				}
 			}
-			return nullptr;
+			return kEntryTableSize;
+		}
+
+		// ★ 第 27 轮：入口条目（任务板）反查 —— 条目的 uID 就是任务板引用的运行期 FormID。
+		const StaticEntryInfo* FindEntryByFormID(std::uint32_t a_formID)
+		{
+			const auto i = FindEntryIndexByFormID(a_formID);
+			return i < kEntryTableSize ? &kEntryTable[i] : nullptr;
+		}
+
+		// ★ 第 30 轮：按「引导目标候选」反查入口 —— 「认领已有引导」用（见 AdoptExistingGuide）。
+		//   候选 = 新建常驻 marker（前缀来自 Guide 通道）或同 cell 常驻兜底引用。
+		std::size_t FindEntryIndexByGuideCandidate(std::uint32_t a_id)
+		{
+			if (a_id == 0) {
+				return kEntryTableSize;
+			}
+			const auto ch = Guide::EnsureChannel();
+			const std::uint32_t markerPrefix = (ch.resolved && ch.prefix <= 0xFF) ? (ch.prefix << 24) : 0;
+			for (std::size_t i = 0; i < kEntryTableSize; ++i) {
+				const auto& e = kEntryTable[i];
+				if (e.markerLocal && markerPrefix && (markerPrefix | e.markerLocal) == a_id) {
+					return i;
+				}
+				if (e.fallback1 && Masters::MakeFormID(0, e.fallback1) == a_id) {
+					return i;
+				}
+				if (e.fallback2 && Masters::MakeFormID(0, e.fallback2) == a_id) {
+					return i;
+				}
+			}
+			return kEntryTableSize;
 		}
 
 		// 引导相关日志的显示名（任务 / 入口条目 / 未知）—— 日志里永远给人看得懂的名字。
@@ -1037,15 +1140,23 @@ namespace SAQ
 				displayName = entry->nameZh;
 				whereZh = entry->whereZh;
 			} else {
-				guideRefID = a_formID;  // 入口条目：任务板引用自身
+				// ★ 第 30 轮：用候选链选出来的目标（开菜单收集时算好，见 AppendEntryRows）。
+				//   收集 → 点击之间加载状态可能变化 ⇒ 写通道前复检一次（理由同第 28 轮：
+				//   避免「通道里塞进一个脚本注定取不到的目标、旧蓝点还留着」的混乱）。
+				const auto idx = FindEntryIndexByFormID(a_formID);
+				guideRefID = (idx < kEntryTableSize) ? g_entryGuide[idx].target : 0;
 				displayName = gap->nameZh;
-				// ★ 第 28 轮：写通道前复检一次「引用现在能不能取到」（开菜单到点击之间可能已变化）。
-				//   取不到 ⇒ 不写通道，直接按结果码 1 回滚界面（理由见 AppendEntryRows 的说明）——
-				//   避免「通道里塞进一个脚本注定取不到的目标、旧蓝点还留着」的混乱（实测 11:40）。
-				if (RE::TESForm::LookupByID(static_cast<RE::TESFormID>(guideRefID)) == nullptr) {
-					REX::INFO("引导请求：{}（0x{:08X}）的任务板引用当前取不到（离得太远 / cell 未加载）"
-							  "—— 按「暂时无法导航」处理，不写通道",
+				if (guideRefID == 0) {
+					REX::INFO("引导请求：{}（0x{:08X}）当前没有可用的引导目标"
+							  "（marker / 任务板 / 常驻兜底 全取不到）—— 按「暂时无法导航」处理，不写通道",
 						displayName, a_formID);
+					NotifyGuideReply(a_seq, g_guide.questFormID, 1);
+					return;
+				}
+				if (RE::TESForm::LookupByID(static_cast<RE::TESFormID>(guideRefID)) == nullptr) {
+					REX::INFO("引导请求：{}（0x{:08X}）的引导目标 0x{:08X} 此刻取不到"
+							  "（开菜单之后加载状态变了）—— 按「暂时无法导航」处理，不写通道",
+						displayName, a_formID, guideRefID);
 					NotifyGuideReply(a_seq, g_guide.questFormID, 1);
 					return;
 				}
@@ -1188,16 +1299,28 @@ namespace SAQ
 			}
 			const auto* entry = FindQuestByGuideRef(targetID);
 			if (!entry) {
-				// ★ 第 27 轮：也可能是「无限任务入口」（任务板）—— 目标 = 条目 uID = 引用自身。
-				if (const auto* gap = FindEntryByFormID(targetID)) {
-					g_guide.questFormID = targetID;
+				// ★ 第 27 轮：也可能是「无限任务入口」（任务板）—— 旧会话的目标 = 条目 uID（板自身）。
+				// ★ 第 30 轮：新会话的目标是候选链选中的那一个（新建常驻 marker / 同 cell 兜底），
+				//   按候选反查回它所属的入口条目（FindEntryIndexByGuideCandidate）。
+				const auto* gap = FindEntryByFormID(targetID);
+				std::size_t gapIdx = kEntryTableSize;
+				if (!gap) {
+					gapIdx = FindEntryIndexByGuideCandidate(targetID);
+					if (gapIdx < kEntryTableSize) {
+						gap = &kEntryTable[gapIdx];
+					}
+				}
+				if (gap) {
+					// 条目的「界面 uID」= 任务板引用自身的运行期 FormID（不是 marker/兜底引用的）。
+					const auto uid = Masters::MakeFormID(gap->master, gap->refLocal);
+					g_guide.questFormID = uid;
 					g_guide.guideRef = targetID;
-					REX::INFO("认领已有引导（任务板入口）：{}（0x{:08X}）｜脚本状态={:.0f}"
+					REX::INFO("认领已有引导（任务板入口）：{}（0x{:08X}）引导目标=0x{:08X}｜脚本状态={:.0f}"
 							  "（上一次会话/读档留下的，界面会同步成「正在引导」）",
-						gap->nameZh, targetID, ch.guideState);
+						gap->nameZh, uid, targetID, ch.guideState);
 					return;
 				}
-				REX::WARN("ESM 通道里有引导目标 0x{:08X}，但静态表里没有哪条任务的引导目标是它"
+				REX::WARN("ESM 通道里有引导目标 0x{:08X}，但静态表里没有哪条任务/入口的引导目标是它"
 						  "（另一个存档留下的？）—— 已按「没有引导」处理，下次点引导会覆盖它",
 					targetID);
 				return;
