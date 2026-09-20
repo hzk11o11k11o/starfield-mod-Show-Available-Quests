@@ -542,7 +542,10 @@ package
                         "uID":parseInt(_loc7_[0]),
                         "iType":parseInt(_loc7_[1]),
                         "sNameZh":_loc7_[2],
-                        "sNameEn":_loc7_.length >= 4 ? _loc7_[3] : _loc7_[2]
+                        "sNameEn":_loc7_.length >= 4 ? _loc7_[3] : _loc7_[2],
+                        // ★ 第 23 轮：第 5 列 = 有没有引导目标（"1"/"0"）。
+                        //   旧载荷缺这列时按 true（保持旧行为：点了由 DLL 判定）。
+                        "bSaqHasTarget":_loc7_.length >= 5 ? _loc7_[4] == "1" : true
                      });
                   }
                }
@@ -595,7 +598,9 @@ package
             "iRemainingTime":-1,
             // ★ 第 14 轮：子项也带 SAQ 标记 —— 让 SaqIsOurEntry() 对主标题与子项**都**成立，
             //   交互才能与原版对齐（原版：点子项 = 追踪切换；点主标题 = 展开/收起）。
-            "bSaqAvailable":true
+            "bSaqAvailable":true,
+            // ★ 第 23 轮：子项也带上「能不能导航」——选中子项时按钮/拦截判据一致。
+            "bSaqHasTarget":param1.bSaqHasTarget != false
          };
       }
       
@@ -603,8 +608,16 @@ package
       // 键名从当前控制映射动态取（与底部按钮栏同一来源：键盘 = R「设定航线」，手柄 = 手柄 X 键）。
       // ★ 第 15 轮修正：不要写死键名 —— 事件名 "XButton" 是**手柄 X 按钮**，键盘下它映射到 R，
       //   写死「X 键」会让提示指向一个游戏里不存在的交互。
-      private function SaqDescriptionText() : String
+      private function SaqDescriptionText(param1:Boolean) : String
       {
+         // ★ 第 23 轮：没有引导目标的任务（261 条里 52 条）——列表照常显示，但**无法导航**。
+         //   把原因直接写进描述，玩家不用点一下才知道（此前「点了瞬间回滚」看不出原因）。
+         if(param1 != true)
+         {
+            return this.SaqUseChinese()
+               ? "这条任务当前可以接取，但还没有导航目标 —— 暂时无法引导到接取地点（任务本身照常显示）。"
+               : "This quest is available, but it has no navigation target yet - it cannot guide you to the pickup location.";
+         }
          var _loc1_:String = "";
          try
          {
@@ -636,7 +649,7 @@ package
             "iType":SaqSafeType(param1.iType),
             "iFaction":FactionUtils.FACTION_NONE,
             "sName":this.SaqUseChinese() ? param1.sNameZh : param1.sNameEn,
-            "sDescription":this.SaqDescriptionText(),
+            "sDescription":this.SaqDescriptionText(param1.bSaqHasTarget != false),
             // 引导中的那条保持「追踪中」的视觉（左侧竖条）—— 列表重建（SaqRefresh）后不丢状态。
             "bActive":this.SaqGuideQuest != 0 && param1.uID == this.SaqGuideQuest,
             "bComplete":false,
@@ -653,7 +666,9 @@ package
             // ★ 可见性标记（MissionsList.EntryFilterCompare_Impl 里唯一认它的判据）：
             //   iType 保留原始任务类型给图标/类型文本用，**不能**再靠 iType 决定
             //   是否出现在「可接任务」tab（那是上一轮列表空的根因）。
-            "bSaqAvailable":true
+            "bSaqAvailable":true,
+            // ★ 第 23 轮：能不能导航（SET COURSE 按钮置灰 / 点击拦截都用它）
+            "bSaqHasTarget":param1.bSaqHasTarget != false
          };
       }
       
@@ -948,6 +963,15 @@ package
       {
          if(!SaqIsOurEntry(param1))
          {
+            return false;
+         }
+         // ★ 第 23 轮：没有导航目标的条目**不发请求** —— 否则界面会「亮起 → 收到结果码 1
+         //   → 瞬间回滚」，玩家看到的是「选中后被秒取消」（实测反馈：以为坏了）。
+         //   这里直接不动状态、给一声 OFF 音；原因已经写在右侧描述里。
+         if(param1.bSaqHasTarget != true)
+         {
+            GlobalFunc.PlayMenuSound(MISSION_TRACKING_TOGGLE_OFF_SOUND);
+            this.SaqGuideNote = "该任务暂无导航目标:" + this.SaqQuestName(param1);
             return false;
          }
          var _loc2_:Number = this.SaqGuideQuest == param1.uID ? 0 : param1.uID;
@@ -1329,7 +1353,8 @@ package
                // 「可接任务」条目：原版没有它的位置数据（Y 显示在地图上不给用），
                // SET COURSE（键盘 R / 手柄 X）改用我们自己的引导 —— 见 OnPlotCourseEvent。
                this.ShowOnMapButton.Enabled = false;
-               this.PlotToLocationButton.Enabled = true;
+               // ★ 第 23 轮：没有导航目标的条目 → SET COURSE 置灰（点了也没用，别让玩家困惑）。
+               this.PlotToLocationButton.Enabled = _loc1_.bSaqHasTarget != false;
             }
             if(_loc2_ || _loc1_.bIsMiscObjective === true)
             {

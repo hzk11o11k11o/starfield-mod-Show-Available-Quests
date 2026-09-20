@@ -24,8 +24,12 @@ namespace SAQ
 	// 比 C++ 去读 INI 可靠 —— 实测本机 INI 里根本没有 sLanguage）。
 	struct QuestEntry
 	{
-		std::uint32_t formID{};   // FormID（Starfield.esm 的 master 区段）
+		std::uint32_t formID{};   // FormID（运行期值：master 前缀 | 记录号）
 		std::int32_t  type{};     // AS3：QuestUtils.AVAILABLE_QUEST_TYPE = 6
+		// ★ 第 23 轮：这条任务有没有「引导目标」（静态表的 guideRefLocal）。
+		//   界面据此把「能不能导航」变成看得见的信息：无目标的条目点击时不发请求
+		//   （避免「亮起→瞬间回滚」的闪烁）、描述里写明原因、SET COURSE 按钮置灰。
+		bool          hasGuideTarget{};
 		std::string   nameZh;     // 中文显示名（UTF-8）
 		std::string   nameEn;     // 英文显示名（UTF-8）
 	};

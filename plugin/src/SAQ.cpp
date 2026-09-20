@@ -464,6 +464,8 @@ namespace SAQ
 				QuestEntry entry;
 				entry.formID = row.formID;
 				entry.type = kAvailableQuestType;  // 统一放到我们的 tab
+				// ★ 第 23 轮：把「有没有引导目标」也推给界面（能不能导航要看得见）
+				entry.hasGuideTarget = info.guideRefLocal != 0;
 				entry.nameZh = info.nameZh;        // 中英都带上，AS3 侧按游戏语言挑
 				entry.nameEn = info.nameEn;
 				a_out.push_back(std::move(entry));

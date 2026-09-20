@@ -53,6 +53,9 @@ def main() -> int:
         # 第 19 轮：确认超时/脚本未响应时的界面回滚文案 + 被过滤名单（drop=）
         "引导未生效文案": "引导未生效:脚本未响应".encode(),
         "被过滤名单 drop=": b" drop[",
+        # 第 23 轮：无导航目标的条目在界面上「看得见」（描述 + 点击拦截 + 按钮置灰）
+        "无导航目标描述": "还没有导航目标".encode(),
+        "点击拦截提示": "该任务暂无导航目标".encode(),
     }
     swf_paths = [
         ROOT / "ui/missionmenu/build/missionmenu.swf",

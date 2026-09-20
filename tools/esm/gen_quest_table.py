@@ -162,12 +162,16 @@ def sanitize_name(s: str) -> str:
 
 
 def build_payload(rows: list[dict], title_zh: str = "可接任务", title_en: str = "Available") -> str:
-    """与 C++ 侧 BuildPayloadUtf8 完全同格式的载荷（AS3 内嵌回退用）。"""
+    """与 C++ 侧 BuildPayloadUtf8 完全同格式的载荷（AS3 内嵌回退用）。
+
+    ★ 第 23 轮：最后一列是「有没有引导目标」（1/0）——界面据此决定这条条目能不能导航。
+    """
     lines = ["SAQ1", f"T\t{title_zh}\t{title_en}"]
     for r in rows:
         fid = r["formid"] if isinstance(r["formid"], int) else int(r["formid"], 16)
+        has_target = "1" if int(r.get("guide_ref", 0)) else "0"
         lines.append(
-            f'Q\t{fid}\t{r["itype"]}\t{sanitize_name(r["name_zh"])}\t{sanitize_name(r["name_en"])}'
+            f'Q\t{fid}\t{r["itype"]}\t{sanitize_name(r["name_zh"])}\t{sanitize_name(r["name_en"])}\t{has_target}'
         )
     return "\n".join(lines) + "\n"
 

@@ -908,7 +908,8 @@ namespace SAQ::UI
 		// 协议与 SWF 内嵌的回退数据完全一致）：
 		//     SAQ1
 		//     T\t可接任务\tAvailable
-		//     Q\t<FormID>\t<type>\t<中文名>\t<英文名>
+		//     Q\t<FormID>\t<type>\t<中文名>\t<英文名>\t<有无引导目标>
+		//   （第 23 轮追加最后一列 "1"/"0"；旧版 AS3 会忽略多余列，向后兼容）
 		//
 		// ★ 标题和名字都带**中英两份**，由 AS3 侧按游戏语言挑：C++ 侧拿不到可靠的语言
 		//   （实测本机 INI 里根本没有 sLanguage，游戏是中文但读到的是空/英文），
@@ -938,10 +939,12 @@ namespace SAQ::UI
 				s += zh;
 				s += "\t";
 				s += en;
+				s += "\t";
+				s += q.hasGuideTarget ? "1" : "0";  // ★ 第 23 轮：能不能导航（界面据此置灰/说明）
 				s += "\n";
-			}
-			return s;
-		}
+				}
+				return s;
+				}
 
 		std::wstring Utf8ToWide(std::string_view a_utf8)
 		{
