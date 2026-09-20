@@ -168,6 +168,13 @@ package
 
       private var SaqGuideQuest:Number = 0;
 
+      // ★ 第 37 轮：这一次引导请求是不是「设定航线（R）」发出的 ——
+      //   true 时 DLL 会把 GuideState 置 5（脚本应用引导后打开星图），
+      //   并且由 DLL 关掉任务菜单（Papyrus 定时器在菜单开着时不走，见 docs/05 第十一节）。
+      //   来自 Enter（点「前往接取地点」子项）的请求为 false：只要蓝点/路径线，不要星图。
+      //   ★ 它随请求一起经 `SAQ_PeekGuide` 的第三段传给 DLL（`<序号>|<任务FormID>|<1/0>`）。
+      private var SaqGuideWantMap:Boolean = false;
+
       // 最近一次引导动作（进报告，日志里能看出玩家点了什么）
       private var SaqGuideNote:String = "-";
 
@@ -933,6 +940,9 @@ package
             + " visible=" + (this.visible ? "1" : "0");
          _loc8_ += " last=" + this.SaqTabProbe + " ourTab=" + this.SaqOurTabProbe + " ourTabMax=" + this.SaqOurTabMaxList;
          _loc8_ += " guide=" + this.SaqGuideSeq + "|" + this.SaqGuideQuest + "|" + this.SaqGuideNote;
+         // ★ 第 37 轮：本次请求要不要打开星图（R = 1 / Enter = 0）—— 与 `SAQ_PeekGuide`
+         //   的第三段同一个值，日志里一眼能看出「这次是设定航线还是只开始引导」。
+         _loc8_ += " map=" + (this.SaqGuideWantMap ? "1" : "0");
          // ★ 第 36 轮：代理任务 FormID（0x… = 已知，`0` = 载荷没带 P 行 ⇒ 星图流程降级）
          _loc8_ += " proxy=0x" + Number(this.SaqProxyQuestID).toString(16);
          // 玩家任务日志名单（第 11 轮，诊断用）：QuestData 的「FormID:名字」，最多 12 条。
@@ -1012,6 +1022,7 @@ package
                var _loc3_:Number = this.SaqGuideQuest;
                this.SaqGuideSeq = this.SaqGuideSeq + 1;
                this.SaqGuideQuest = 0;
+               this.SaqGuideWantMap = false;   // 第 37 轮：取消方向永远不带星图请求
                this.SaqGuideNote = "已接取，自动取消引导";
                this.SaqApplyTrackedMarker(_loc3_, 0);
                return;
@@ -1021,7 +1032,9 @@ package
       }
       
       // 切换引导：同一条再按一次 = 取消（返回 true 表示现在是「已设为引导」）。
-      private function SaqToggleGuide(param1:Object) : Boolean
+      // ★ 第 37 轮：param2 = 这一次请求是否要**打开星图**（只有「设定航线（R）」传 true；
+      //   点「前往接取地点」子项 / 自动取消都传 false）。取消引导时永远是 false。
+      private function SaqToggleGuide(param1:Object, param2:Boolean = false) : Boolean
       {
          if(!SaqIsOurEntry(param1))
          {
@@ -1032,6 +1045,7 @@ package
          //   这里直接不动状态、给一声 OFF 音；原因已经写在右侧描述里。
          if(param1.bSaqHasTarget != true)
          {
+            this.SaqGuideWantMap = false;   // 第 37 轮：没发请求 ⇒ 也不会有星图
             GlobalFunc.PlayMenuSound(MISSION_TRACKING_TOGGLE_OFF_SOUND);
             // ★ 第 28 轮：入口条目（任务板）与任务的「不可导航」原因不同 —— 提示分开写。
             // ★ 第 29 轮：常驻化 override 之后这是兜底分支（引用理论上总取得到），
@@ -1050,6 +1064,8 @@ package
          var _loc3_:Number = this.SaqGuideQuest;
          this.SaqGuideSeq = this.SaqGuideSeq + 1;
          this.SaqGuideQuest = _loc2_;
+         // ★ 第 37 轮：只有「新设定」+「来自设定航线（R）」才带星图请求（取消时一律不带）。
+         this.SaqGuideWantMap = param2 && _loc2_ != 0;
          if(_loc2_ != 0)
          {
             GlobalFunc.PlayMenuSound(MISSION_TRACKING_TOGGLE_ON_SOUND);
@@ -1074,9 +1090,19 @@ package
       //  引擎取该任务的目标位置 → 目标不在当前星球就**打开星图**、聚焦到那颗星球，
       //  并询问玩家是否导航；在同一星球上则直接设置本地航线。
       //
-      //  我们的可接任务在引擎侧不存在（还没接取），直接把它的 uID 丢进去只会静默失败。
-      //  但**代理任务**（SAQ_MainQuest）是真实任务：它的目标别名此刻绑着「接取地点」
-      //  引用（脚本 ForceRefTo），所以用它的 FormID 走同一条流程，效果与原版一致。
+      //  第 36 轮的设想：把**代理任务**（SAQ_MainQuest，真实任务、目标别名绑着接取地点）
+      //  的 FormID 丢进同一条流程，效果就与原版一致。
+      //
+      //  ★ 第 37 轮实测更正：**这条 dispatch 在引擎里没有任何处理** —— 离线复核证明
+      //   `BSTGlobalEvent::EventSource<MissionMenu_PlotToLocation>` 在整个 exe 里除了
+      //   它自己的静态初始化之外没有任何引用（= 没有 C++ sink；同族的
+      //   MissionMenu_ShowItemLocation / DataMenu_PlotToLocation 也一样）。所以这里
+      //   照抄原版是死路，星图改由 **DLL + Papyrus 脚本**实现（见 SAQ.cpp 的
+      //   RequestStarMapOpen / SAQ_Main.psc 的 OpenStarMapFor，docs/05 第十一节）：
+      //     DLL 把 GuideState 置 5 并用 UI 消息关掉任务菜单 → 脚本在「菜单关闭」事件里
+      //     应用引导并调用 Game.ShowGalaxyStarMapMenuAndPlotToLocation(地点)。
+      //   本函数保留下来：① 与未来版本对齐（若某个版本真注册了 sink，这里立刻有用）；
+      //   ② `星图:已请求(代理任务 0x…)` 这行 note 是日志里的链路证据。
       //
       //  代理任务的运行期 FormID 只有 C++ 侧知道（插件加载前缀是运行期的），由载荷的
       //  `P\t<FormID>` 行推来（见 SAQ_UI.cpp::BuildPayloadUtf8 / SaqParsePayload）。
@@ -1137,11 +1163,14 @@ package
          }
       }
       
-      // C++ 侧入口（无参）："<序号>|<任务FormID>"。序号 0 = 还没有请求；
+      // C++ 侧入口（无参）："<序号>|<任务FormID>|<是否要星图>"。序号 0 = 还没有请求；
       // 序号变化才算一次新请求（C++ 侧据此去重）。
+      // ★ 第 37 轮：第三段是新增的（1 = 玩家按的是「设定航线（R）」，0 = Enter / 其它）——
+      //   C++ 侧据此决定「要不要关掉任务菜单让脚本打开星图」。旧 SWF 只给两段时
+      //   C++ 侧按 0 处理（= 只要蓝点，不打开星图），行为与第 36 轮之前完全一致。
       public function SAQ_PeekGuide() : String
       {
-         return this.SaqGuideSeq + "|" + this.SaqGuideQuest;
+         return this.SaqGuideSeq + "|" + this.SaqGuideQuest + "|" + (this.SaqGuideWantMap ? 1 : 0);
       }
       
       // 按 uID 找一条可接任务的显示名（引导相关文案用；找不到给 "?"）。
@@ -1204,6 +1233,9 @@ package
          else
          {
             // 被拒绝：回滚到「实际值」，给失败反馈（OFF 音 = 与原版「取消追踪」同款提示）
+            // ★ 第 37 轮：拒绝 ⇒ 星图也不会开（DLL 只在成功路径上关菜单、写状态 5），
+            //   把本地的星图标记一并清掉，免得日志/后续请求带错意图。
+            this.SaqGuideWantMap = false;
             GlobalFunc.PlayMenuSound(MISSION_TRACKING_TOGGLE_OFF_SOUND);
             if(_loc5_ == 1)
             {
@@ -1595,7 +1627,8 @@ package
             //
             //   只在「新设定」时发（同一条再按一次 = 取消引导，那时不该再弹星图）。
             var _loc1_:Number = this.SaqGuideQuest;
-            var _loc2_:Boolean = this.SaqToggleGuide(this.MissionsList_mc.selectedEntry);
+            // ★ 第 37 轮：R = 「设定航线」——把自己引导 + **打开星图**（第二参数）。
+            var _loc2_:Boolean = this.SaqToggleGuide(this.MissionsList_mc.selectedEntry, true);
             if(_loc2_ && _loc1_ != this.MissionsList_mc.selectedEntry.uID)
             {
                this.SaqPlotToLocationViaEngine();

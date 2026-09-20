@@ -32,6 +32,14 @@
   第 35 轮：★ 进度门槛（「游戏进度还不能让玩家接到 ⇒ 不显示」）——
            DLL 求值/统计/名单文案 + 开关（ini [Filter] ProgressCond）+
            静态表数据侧（StaticCondGate / kQuestCondCount / 被检查任务记录号）
+  第 36 轮：SET COURSE（R）尝试走原版 `MissionMenu_PlotToLocation` 流程
+           （SWF 的「星图:已请求(代理任务 0x…)」note 是链路证据）
+  第 37 轮：★ SET COURSE 的星图真正落地 —— 第 36 轮那条 dispatch 被证明**引擎无 sink**
+           （离线复核，见 docs/05 第十一节）；改成「DLL 写 GuideState=5 + 用 UI 消息
+           (kHide) 关掉任务菜单 → 脚本在菜单关闭事件里调用引擎原生的
+           Game.ShowGalaxyStarMapMenuAndPlotToLocation(地点)」。
+           本脚本检查：DLL 的三条星图日志 + 状态 5 文案 + 原生函数名（DLL/PEX）+ PEX 的
+           OpenStarMapFor 痕迹
 
 用法：python tools/ui/verify_saq_build.py
 """
@@ -251,6 +259,11 @@ def main() -> int:
         "入口不可用描述(中)": "这个位置此刻取不到".encode(),
         "入口不可用描述(英)": b"the location is not available at the moment",
         "入口不可用提示": "暂时无法导航:".encode(),
+        # 第 36 轮：SET COURSE 的「原版流程」请求（第 37 轮证明引擎无 sink，
+        # 但这条 note 仍是链路证据：证明 AS3 侧确实发过请求）
+        "星图请求 note": "星图:已请求(代理任务 0x".encode(),
+        # ★ 第 37 轮：报告里的星图标记（R = 1 / Enter = 0），与 peek 第三段同源
+        "星图标记(map=)": b" map=",
     }
     swf_paths = [
         ROOT / "ui/missionmenu/build/missionmenu.swf",
@@ -340,6 +353,14 @@ def main() -> int:
             "进度门槛开关(ini)": "ProgressCond".encode(),
             "进度门槛切片越界保护": "门槛切片越界".encode(),
             "IsStageDone 不可用提示": "IsStageDone 不可用".encode(),
+            # ★★ 第 37 轮：SET COURSE 的星图 —— 关任务菜单 + 结果探测 + 状态 5
+            "星图请求(关菜单)": "星图：已请求关闭任务菜单".encode(),
+            "星图结果(已打开)": "星图：已打开（MapMenu 在屏幕上）".encode(),
+            "星图结果(没打开)": "星图：没有打开（MapMenu 不在屏幕上）".encode(),
+            "星图结果(菜单没关掉)": "星图：任务菜单没被关掉".encode(),
+            "状态5写入文案": "5（星图请求）".encode(),
+            "星图原生函数名": b"ShowGalaxyStarMapMenuAndPlotToLocation",
+            "星图菜单名": b"MapMenu",
         }.items():
             all_ok &= check(f"DLL · {name}", blob, needle)
         # 反向检查：第 31 轮把候选链顺序换掉，第 30 轮的「marker 优先」诊断文案不应再出现
@@ -389,6 +410,9 @@ def main() -> int:
         all_ok &= check("PEX · 菜单事件 Trace", blob, "[SAQ] 菜单打开".encode())
         # 第 21 轮：引导目标高位属性（与 ESM VMAD 绑定对应）
         all_ok &= check("PEX · 引导目标高位属性", blob, b"GuidePrefix")
+        # ★ 第 37 轮：SET COURSE 打开星图（OpenStarMapFor 的 Trace + 引擎原生函数名）
+        all_ok &= check("PEX · 星图请求 Trace", blob, "星图请求".encode())
+        all_ok &= check("PEX · 原生星图函数调用", blob, b"ShowGalaxyStarMapMenuAndPlotToLocation")
     else:
         print(f"MISS 缺少 PEX {pex}")
         all_ok = False

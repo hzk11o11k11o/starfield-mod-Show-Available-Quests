@@ -34,9 +34,11 @@
      （游戏需已装好 SFSE）
 
 四、使用
-  打开任务菜单（TAB）→ 切换到「可接任务」标签页 → 选中一条任务 →
-  按引导键（如 SET COURSE）即可导航。再按一次取消引导。
-  被引导的任务一旦接取，引导会自动取消。
+  打开任务菜单（TAB）→ 切换到「可接任务」标签页 → 选中一条任务，然后二选一：
+    · 展开子项「前往接取地点」（Enter）= 开始引导（HUD 蓝点 + 扫描仪路径线）；
+    · 按 SET COURSE（键盘 R / 手柄 X）= 引导 + 自动打开星图并把航线画到接取地点
+      （与原版任务按 R 的表现一致；此时会先自动关闭任务菜单）。
+  再按一次同一条 = 取消引导。被引导的任务一旦接取，引导会自动取消。
   列表末尾还有「任务板 · XX」入口条目（无限任务 / 悬赏的接取点），用法相同。
   提示：引导在关闭任务菜单后生效（与原版一致，HUD 蓝点要关菜单才可见）。
 
@@ -50,8 +52,8 @@
   · 无限生成任务本身不显示，但其接取入口（12 处任务板）会作为独立条目列出；
     无论你在哪都能一键导航过去——远处先给大致方位，走到那块板所在的区域后
     蓝点会自动落到板上（读档/重启后也会自动校正）。
-  · 「游戏进度还没到时应当不显示」目前只按「已完成」判断，尚未按任务
-    前置条件过滤。
+  · 「游戏进度还没到时应当不显示」目前覆盖任务记录里「引用别的任务」的
+    前置条件（7 条任务 / 9 条门槛）；对话条件与位置/遭遇类条件暂未覆盖。
   · 本 mod 会覆盖 Interface\missionmenu.swf 与 missionmenu_lrg.swf：
     与其它修改任务菜单 UI 的 mod 同时使用时，需要做补丁（patch）。
 
@@ -103,9 +105,14 @@
 
 4. Usage
   Open the mission menu (TAB) -> switch to the "Available Quests" tab ->
-  select a quest -> press the guidance button (e.g. SET COURSE) to
-  navigate. Press again to cancel. Guidance is cancelled automatically
-  once you accept the quest.
+  select a quest, then either:
+    - expand the "Go to the pickup location" sub-entry (Enter) to start
+      the guidance (HUD marker + scanner route line); or
+    - press SET COURSE (R / X) to start the guidance AND open the star map
+      with the route plotted to the pickup location (same as a vanilla
+      quest does; the mission menu closes automatically first).
+  Press again on the same entry to cancel. Guidance is cancelled
+  automatically once you accept the quest.
   The list also ends with "Mission Board - XX" entries (pickup points of
   radiant quests) - same usage.
   Note: guidance applies after you close the mission menu (same as
@@ -124,8 +131,9 @@
     navigated to from anywhere - far away you get the approximate direction,
     and once you reach the board's area the marker snaps onto the board
     itself (it also self-corrects after a save reload or restart).
-  · "Not shown when your progress is not far enough" is currently based
-    only on the completed state, not on quest preconditions.
+  · "Not shown when your progress is not far enough" currently covers
+    record-level preconditions that reference another quest (7 quests /
+    9 gates); dialogue and location/encounter conditions are not covered yet.
   · This mod overrides Interface\missionmenu.swf and
     missionmenu_lrg.swf: patches are needed if you use another mod that
     modifies the mission menu UI.

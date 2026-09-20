@@ -38,13 +38,22 @@ Scriptname SAQ_Main extends Quest
 ;  VMAD 里的「别名属性」要写对 Object/Alias 联合体的字节格式，容易出错；
 ;  Quest.GetAlias(int) 原生函数直接按 id 取，零风险。
 ;
-;  ## SAQ_GuideState 的取值（DLL 侧读它来判断脚本做完没有）
+;  ## SAQ_GuideState 的取值（DLL 写 0/5，脚本写 1/2/3/4）
 ;
 ;    0 = 待处理（DLL 每次下新目标都会置 0）
 ;    1 = 已应用（ForceRefTo + 显示目标 + 设为追踪）
 ;    2 = 目标引用取不到（Game.GetForm 返回 None —— FormID 不对 / 表单没加载）
 ;    3 = 已清除（DLL 传 0：取消引导）
 ;    4 = 别名不存在（ESM 没打补丁 / 别名 id 变了）
+;    5 = ★ 第 37 轮：待处理 + **应用完打开星图**（玩家在「可接任务」里按了
+;        「设定航线（R）」）。DLL 用引擎的 UI 消息（kHide）把任务菜单关掉，
+;        本脚本随即在「菜单关闭」事件里跑：① 照常应用引导；② 取引导目标的
+;        地点（GetCurrentLocation / GetEditorLocation），调用引擎原生的
+;          Game.ShowGalaxyStarMapMenuAndPlotToLocation(地点)
+;        打开星图并把航线画到那里（= 原版 SET COURSE 的同款能力）。
+;        为什么必须这么绕：任务菜单开着时 Papyrus 定时器不走（第 27 轮实测定案），
+;        脚本只能在菜单关闭时跑；而 DLL 直接调 Papyrus 原生函数要伪造 VM 栈帧，
+;        风险远大于收益（详见 docs/05 第十一节）。
 ;
 ;  ## SAQ_Notify = 7777 + 菜单打开次数
 ;
@@ -71,6 +80,9 @@ GlobalVariable Property GuideState Auto
 ; 脚本 -> DLL：身份锚点 + 菜单打开计数（见上面说明）
 GlobalVariable Property NotifyFlag Auto
 
+; ★ 第 37 轮：星图请求的「待打开目标」（菜单关闭事件里记下，延后 0.5 秒执行）
+ObjectReference StarMapPendingRef = None
+
 ; 本任务里引导目标用的别名 id 与目标索引（与 patch_saq_esm.py 保持一致）
 ; ★ Starfield 的 Papyrus 4.7 里没有 AutoConst 这个 flag（实测报 "Unknown user flag autoconst"），
 ;   常量属性要用 AutoReadOnly。
@@ -83,6 +95,12 @@ float Property NotifyMagic = 7777.0 AutoReadOnly
 ; 轮询间隔与定时器 id
 float Property PollInterval = 0.5 AutoReadOnly
 int Property PollTimerID = 1 AutoReadOnly
+
+; ★ 第 37 轮：星图请求的延时与定时器 id（见 OpenStarMapFor 的说明）。
+;   为什么不在「菜单关闭」事件里直接调：那一刻菜单还在销毁流程里，
+;   延后 0.5 秒（菜单关掉后游戏已恢复运行 ⇒ 定时器会走）更稳。
+float Property StarMapDelay = 0.5 AutoReadOnly
+int Property StarMapTimerID = 2 AutoReadOnly
 
 Event OnInit()
 	Debug.Trace("[SAQ] SAQ_Main OnInit —— 注册菜单事件 + 启动引导轮询")
@@ -107,6 +125,13 @@ Event OnInit()
 EndEvent
 
 Event OnTimer(int aiTimerID)
+	; ★ 第 37 轮：星图请求的延后执行（先把待办取出来再调，避免重入时重复打开）
+	If aiTimerID == StarMapTimerID
+		ObjectReference pendingTarget = StarMapPendingRef
+		StarMapPendingRef = None
+		OpenStarMapFor(pendingTarget)
+		Return
+	EndIf
 	; 重新排下一拍（Starfield 的定时器是一次性的）
 	StartTimer(PollInterval, PollTimerID)
 	ApplyGuide()
@@ -148,8 +173,12 @@ Function ApplyGuide()
 		Debug.Trace("[SAQ] 引导失败：GLOB 属性没绑上（GuideTargetRef/GuideState 为空）")
 		Return
 	EndIf
-	If GuideState.GetValue() != 0.0
-		; 没有新的请求（0 才是待处理；1/2/3/4 都表示上一轮已经处理完）
+	float pendingState = GuideState.GetValue()
+	; ★ 第 37 轮：5 = 待处理 + 应用后打开星图（玩家按了「设定航线」）。
+	;   0 = 普通待处理（脚本自己下发的重发/动态更新/自愈都走这个值）。
+	Bool starMapWanted = (pendingState == 5.0)
+	If !starMapWanted && pendingState != 0.0
+		; 没有新的请求（1/2/3/4 都表示上一轮已经处理完）
 		Return
 	EndIf
 
@@ -191,4 +220,49 @@ Function ApplyGuide()
 	SetActive(True)
 	GuideState.SetValue(1)
 	Debug.Trace("[SAQ] 引导已应用：" + target)
+
+	; ★ 第 37 轮：玩家按了「设定航线（R）」—— 应用完引导后打开星图并把航线画到
+	;   接取地点（引擎原生函数，只负责「打开 + 定位 / 设航线」，引导本身不受影响）。
+	;   这里**延后 0.5 秒**执行：本函数多半是在「任务菜单关闭」事件里被调用的，
+	;   那一刻菜单还在销毁流程里，直接开另一个菜单容易被引擎吞掉（见 OpenStarMapFor）。
+	If starMapWanted
+		StarMapPendingRef = target
+		StartTimer(StarMapDelay, StarMapTimerID)
+		Debug.Trace("[SAQ] 星图请求：" + StarMapDelay + " 秒后打开（目标 " + target + "）")
+	EndIf
+EndFunction
+
+; ============================================================================
+;  ★ 第 37 轮：SET COURSE（键盘 R / 手柄 X）的「星图」这一半
+;
+;  玩家按 R 时 DLL 会：① 写引导目标 + 把 GuideState 置 5（= 要打开星图）；
+;  ② 用引擎的 UI 消息（kHide）关掉任务菜单 —— 本脚本才能在「菜单关闭」事件里跑到。
+;  本函数由**延时定时器**（StarMapTimerID，0.5 秒）调用，不在关闭事件里直接调。
+;
+;  为什么必须是**引擎原生函数**（而不是第 36 轮那条「照抄原版」的 AS3 dispatch）：
+;  离线复核证明 `MissionMenu_PlotToLocation` 这个事件在整个 exe 里**没有任何 C++ sink**
+;  （详见 docs/05 第十一节）⇒ 只能调引擎真正实现了的能力：
+;    Game.ShowGalaxyStarMapMenuAndPlotToLocation(Location)
+;  = 打开星图 + 把航线画到那个地点（原版 SET COURSE 的同款行为）。
+;
+;  取「接取地点」的办法（按可靠性排序）：
+;    ① akTarget.GetCurrentLocation()  —— 引用所在位置（引用已加载时最准）；
+;    ② akTarget.GetEditorLocation()   —— 数据里的放置位置（引用没加载时仍然有值）；
+;  两者都拿不到就不调引擎函数（避免拿 None 去调、弹一条「Location passed was null.」）。
+; ============================================================================
+Function OpenStarMapFor(ObjectReference akTarget)
+	If akTarget == None
+		Debug.Trace("[SAQ] 星图请求：引导目标引用为空，跳过")
+		Return
+	EndIf
+	Location loc = akTarget.GetCurrentLocation()
+	If loc == None
+		loc = akTarget.GetEditorLocation()
+	EndIf
+	If loc == None
+		Debug.Trace("[SAQ] 星图请求失败：取不到目标地点（" + akTarget + "）")
+		Return
+	EndIf
+	Debug.Trace("[SAQ] 星图请求：打开星图并设定航线 → " + akTarget + " @ " + loc)
+	Game.ShowGalaxyStarMapMenuAndPlotToLocation(loc)
 EndFunction

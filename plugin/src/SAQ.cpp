@@ -44,6 +44,9 @@
 #include "RE/T/TESDataHandler.h"
 #include "RE/T/TESForm.h"
 #include "RE/U/UI.h"
+// ★ 第 37 轮：SET COURSE（R）要打开星图 —— 用引擎自己的 UI 消息队列关掉任务菜单
+//   （kHide），脚本才能在下一次「菜单关闭」事件里调用 Papyrus 原生函数打开星图。
+#include "RE/U/UIMessageQueue.h"
 
 #include <Windows.h>
 
@@ -100,6 +103,8 @@ namespace SAQ
 		static_assert(kIdUsable(RE::ID::INISettingCollection::Singleton));  // 读 sLanguage:General
 		static_assert(kIdUsable(RE::ID::BSStringPool::GetEntry));        // BSFixedString 构造
 		static_assert(kIdUsable(RE::ID::BSStringPool::Entry::Release));  // BSFixedString 析构
+		static_assert(kIdUsable(RE::ID::UIMessageQueue::Singleton));     // ★ 第 37 轮：UI 消息队列（关任务菜单）
+		static_assert(kIdUsable(RE::ID::UIMessageQueue::AddMessage));    // ★ 第 37 轮：kHide 关菜单
 
 		std::atomic_bool g_installed{ false };
 		std::atomic_bool g_firstMenuLogged{ false };
@@ -1307,9 +1312,99 @@ namespace SAQ
 			}
 		}
 
+		// ★★ 第 37 轮：「设定航线（R）」的**星图**这一半。
+		//
+		// 玩家反馈：可接任务里按 R 只有「选中条目」的效果；原版任务按 R 会打开星图、
+		// 展示目标所在星球并询问是否导航。第 36 轮试着把**代理任务**交给原版的
+		// `MissionMenu_PlotToLocation` 流程（AS3 dispatch），实测**引擎没有任何反应**——
+		// 离线复核给出了原因（见 docs/05 第十一节）：
+		//   `BSTGlobalEvent::EventSource<MissionMenu_PlotToLocation>` 这个事件源在整个
+		//   exe 里**只有它自己的静态初始化**引用它（`ref/MissionMenu` 探针：单例
+		//   0x5F31A30 的 5 处引用全在初始化函数里），也就是说**没有任何 C++ sink**
+		//   —— dispatch 出去的事件没人处理（MissionMenu_ShowItemLocation /
+		//   MissionMenu_ToggleTrackingQuest / DataMenu_PlotToLocation 三个事件同样如此）。
+		//   ⇒ 这条「照抄原版」的路走不通，只能我们自己调用引擎的原生能力。
+		//
+		// 引擎原生 API（Papyrus，`Data\Scripts\Source\Base\Game.psc`）：
+		//   `Game.ShowGalaxyStarMapMenuAndPlotToLocation(Location aLocation)`
+		//   —— 打开星图 + 把航线画到那个地点（原版 SET COURSE 的同款能力）。
+		//
+		// 为什么必须由**脚本**来调（DLL 不能直接调）：
+		//   * 这是一条 Papyrus 原生函数，从 DLL 直接调要么自己伪造 VM 栈帧（风险高），
+		//     要么走 VM 的 DispatchStaticCall（星图相关的参数/句柄构造同样没实证）；
+		//   * Papyrus 侧只要一行：`Game.ShowGalaxyStarMapMenuAndPlotToLocation(loc)`，
+		//     而且引导目标引用本来就在脚本手里（别名 ForceRefTo 的那一个）。
+		//
+		// 为什么由 DLL **关菜单**来触发（而不是等玩家自己关）：
+		//   第 27 轮实测定案：任务菜单开着时 Papyrus 定时器不走 ⇒ 脚本只能在
+		//   「菜单关闭」事件里跑（引导也是那一刻应用的）。玩家按 R 之后必须立刻离开
+		//   菜单，脚本才有机会打开星图 —— 所以这里用引擎自己的 UI 消息
+		//   （kHide）把任务菜单关掉，脚本随即在关闭事件里：
+		//     ① 应用引导（蓝点/路径线，原有链路）；
+		//     ② 看到 SAQ_GuideState == 5 ⇒ 调上面的原生函数打开星图。
+		//   体验上等价于原版：按 R ⇒ 星图出现并画好航线。
+		//
+		// 判据（下一轮日志）：`星图：已请求关闭任务菜单` → 脚本 `[SAQ] 星图请求：<地点>`
+		//   → 本文件的 `星图：已打开（MapMenu 在屏幕上）`（或没打开的 WARN）。
+		struct StarMapProbe
+		{
+			bool          pending{};   // 已发出「关菜单 + 开星图」请求，等验证
+			std::uint64_t dueMs{};     // 验证时间点
+			std::uint32_t questID{};   // 请求时的引导任务（日志用）
+		};
+		StarMapProbe g_starMap;
+
+		constexpr std::uint64_t kStarMapProbeMs = 2500;  // 关菜单 → 脚本跑完 → 星图出现的时间
+
+		// 关掉任务菜单（让脚本能在关闭事件里打开星图）。调用方保证通道已经写好状态 5。
+		void RequestStarMapOpen(std::uint32_t a_questID)
+		{
+			auto* queue = RE::UIMessageQueue::GetSingleton();
+			if (!queue) {
+				REX::WARN("星图：UI 消息队列取不到（UIMessageQueue 单例为空）—— 本次不发（引导本身不受影响）");
+				return;
+			}
+			// 菜单名与 UIMessageQueue 的地址库 ID 都是 commonlibsf 里已有的（ID::UIMessageQueue::*）
+			queue->AddMessage(RE::BSFixedString{ kMenuName }, RE::UI_MESSAGE_TYPE::kHide);
+			g_starMap.pending = true;
+			g_starMap.dueMs = NowMs() + kStarMapProbeMs;
+			g_starMap.questID = a_questID;
+			REX::INFO("星图：已请求关闭任务菜单（脚本会在菜单关闭时调用 "
+					  "Game.ShowGalaxyStarMapMenuAndPlotToLocation）｜引导任务={}（0x{:08X}）",
+				DisplayNameOf(a_questID), a_questID);
+		}
+
+		// 菜单关着时每帧调用（内部按 pending/dueMs 自我短路，没请求时零开销）：
+		// 到点后查一次 MapMenu 是否真的在屏幕上，把「R 键链路到底通没通」写进日志。
+		void CheckStarMapOpened()
+		{
+			if (!g_starMap.pending || NowMs() < g_starMap.dueMs) {
+				return;
+			}
+			g_starMap.pending = false;
+			auto* ui = RE::UI::GetSingleton();
+			if (!ui) {
+				return;
+			}
+			// 任务菜单还开着 ⇒ 我们那条 kHide 没生效（引擎/别的插件挡住了），脚本不可能跑。
+			if (ui->IsMenuOpen(MenuName())) {
+				REX::WARN("星图：任务菜单没被关掉（kHide 无效）—— 脚本跑不到，星图不会打开；"
+						  "请看 docs/05 第十一节");
+				return;
+			}
+			if (ui->IsMenuOpen("MapMenu")) {
+				REX::INFO("星图：已打开（MapMenu 在屏幕上）—— SET COURSE 链路完整");
+			} else {
+				REX::WARN("星图：没有打开（MapMenu 不在屏幕上）—— 脚本可能没跑到 / 取不到目标地点"
+						  "（看 Papyrus 日志里 `[SAQ] 星图请求` 那一行）");
+			}
+		}
+
 		// 应用一次引导请求，并把结果回写给界面。a_formID = 0 表示取消引导。
 		// 结果码（与 AS3 的约定）：0=成功 / 1=没有引导目标 / 2=写通道失败 / 3=静态表里没有
-		void ApplyGuideRequest(std::uint32_t a_formID, int a_seq)
+		// ★ 第 37 轮：a_wantMap = 玩家这次按的是「设定航线（R）」（AS3 在 peek 第三段传来）
+		//   —— 成功时除了设引导，还要关掉任务菜单让脚本打开星图（见 RequestStarMapOpen）。
+		void ApplyGuideRequest(std::uint32_t a_formID, int a_seq, bool a_wantMap)
 		{
 			if (a_formID == 0) {
 				g_guide.verifyAtMs = 0;  // 取消：没有「结果」要确认
@@ -1377,17 +1472,23 @@ namespace SAQ
 				}
 			}
 			std::string detail;
-			if (!Guide::SetGuideTarget(guideRefID, detail)) {
+			// ★ 第 37 轮：按了「设定航线（R）」的请求 —— 状态写 5，脚本应用引导后打开星图；
+			//   Enter（只开始引导）走 0，行为与历史一致。
+			if (!Guide::SetGuideTarget(guideRefID, detail, /*a_starMap=*/a_wantMap)) {
 				REX::WARN("引导请求：{}（0x{:08X}）写 ESM 通道失败｜{}", displayName, a_formID, detail);
 				NotifyGuideReply(a_seq, g_guide.questFormID, 2);
 				return;
 			}
 			g_guide.questFormID = a_formID;
 			g_guide.guideRef = guideRefID;
-			REX::INFO("引导请求：{}（0x{:08X}）→ 引用 0x{:08X}（{}）｜{}",
-				displayName, a_formID, guideRefID, whereZh, detail);
+			REX::INFO("引导请求：{}（0x{:08X}）→ 引用 0x{:08X}（{}）｜{}｜星图={}",
+				displayName, a_formID, guideRefID, whereZh, detail,
+				a_wantMap ? "是（设定航线）" : "否");
 			NotifyGuideReply(a_seq, a_formID, 0);
 			ScheduleGuideVerify(a_seq);
+			if (a_wantMap) {
+				RequestStarMapOpen(a_formID);  // ★ 第 37 轮：关掉任务菜单，让脚本打开星图
+			}
 		}
 
 		// ★ 第 19 轮：一次引导请求「确定没能生效」时的收尾（确认超时 / 脚本状态 4）。
@@ -1497,9 +1598,12 @@ namespace SAQ
 			//   历史：第 26 轮修掉「菜单开着 11 秒就判失败」（玩家挑条目久一点 = 假失败 +
 			//   真失效：星海派对 / 回收行动 / 失踪的地球人三次实测）；第 27 轮更进一步 ——
 			//   菜单开着时连状态都不读（脚本不可能响应，读了只是噪声）。
+			// ★ 第 37 轮：状态 5（待处理 + 星图请求）与 0 同属「脚本还没跑」，走到这里
+			//   同样按超时窗口收尾 —— 只是把值写进文案，免得看成未知状态。
 			if (++g_guide.verifyTries >= kGuideVerifyMaxTries) {
 				AbortUnverifiedGuide(std::format("脚本状态一直是 {:.0f}"
-					"（0 待处理 / 2 取不到 / 3 已清除 —— 看 Papyrus 日志里 SAQ_Main 有没有在跑）",
+					"（0 待处理 / 2 取不到 / 3 已清除 / 5 星图请求待处理 —— 看 Papyrus 日志里"
+					" SAQ_Main 有没有在跑）",
 					ch.guideState), aMenuOpen);
 				return;
 			}
@@ -1616,11 +1720,20 @@ namespace SAQ
 			if (bar == std::string::npos) {
 				return;
 			}
+			// ★ 第 37 轮：第三段 = 要不要打开星图（1 = 玩家按的是「设定航线（R）」，
+			//   0 / 缺省 = Enter 子项等普通引导）。旧 SWF 只给两段 ⇒ 按 0 处理，
+			//   行为与第 36 轮之前完全一致（只设引导，不动菜单）。
+			std::string_view rest = std::string_view{ peek }.substr(bar + 1);
+			bool             wantMap = false;
+			if (const auto bar2 = rest.find('|'); bar2 != std::string_view::npos) {
+				wantMap = rest.substr(bar2 + 1).find('1') != std::string_view::npos;
+				rest = rest.substr(0, bar2);
+			}
 			int seq = 0;
 			unsigned long fid = 0;
 			try {
 				seq = std::stoi(peek.substr(0, bar));
-				fid = std::stoul(peek.substr(bar + 1));
+				fid = std::stoul(std::string{ rest });
 			} catch (...) {
 				REX::WARN("引导请求：解析失败 {}", peek);
 				return;
@@ -1629,7 +1742,7 @@ namespace SAQ
 				return;
 			}
 			g_guide.lastSeq = seq;
-			ApplyGuideRequest(static_cast<std::uint32_t>(fid), seq);
+			ApplyGuideRequest(static_cast<std::uint32_t>(fid), seq, wantMap);
 		}
 
 		// 菜单打开时的收尾：被引导的任务如果已经「被引擎开始」（玩家接到了），
@@ -1956,6 +2069,10 @@ namespace SAQ
 			//    函数内部用 verifyAtMs==0 自我短路，没请求时零开销。）
 			//   ★ 第 19 轮：把 open 传进去 —— 超时/失败时要回写界面（菜单开着才做）。
 			PollGuideVerify(open);
+
+			// ★ 第 37 轮：SET COURSE 的星图这一半 —— 到点后查一次 MapMenu 在不在屏幕上，
+			//   把「R 键链路通没通」写进日志（内部按 pending/dueMs 自我短路）。
+			CheckStarMapOpened();
 
 			// ★ 第 19 轮：脚本活性探测（菜单打开 1.5 秒后复读通知值，见 CheckScriptLiveness）。
 			//   内部按「是否武装 + 到点没有」自我短路，菜单关着/没请求时零开销。

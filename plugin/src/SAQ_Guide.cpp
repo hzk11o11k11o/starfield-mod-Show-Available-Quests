@@ -131,8 +131,16 @@ namespace SAQ::Guide
 		return out;
 	}
 
-	bool SetGuideTarget(std::uint32_t a_formID, std::string& a_detail)
+	bool SetGuideTarget(std::uint32_t a_formID, std::string& a_detail, bool a_starMap)
 	{
+		// ★ 第 37 轮：「设定航线（R）」= 除了设引导，还要打开星图。
+		//   状态的约定（与 SAQ_Main.psc 一致，见 docs/05 第十一节）：
+		//     0 = 待处理（脚本应用引导即可）
+		//     5 = 待处理 + 应用后打开星图（只有玩家按 R 的那条路会写这个值）
+		//   取消引导（a_formID == 0）永远写 0 —— 玩家要的是「撤掉引导」，不是要航线。
+		const float kStarMapRequest = 5.0f;
+		const float requested = (a_starMap && a_formID != 0) ? kStarMapRequest : 0.0f;
+		const char* requestedNote = requested == kStarMapRequest ? "5（星图请求）" : "0";
 		if (!g_resolved) {
 			EnsureChannel();
 		}
@@ -176,10 +184,11 @@ namespace SAQ::Guide
 			}
 			target->value = static_cast<float>(a_formID & 0xFFFFFFu);
 			prefixGlob->value = static_cast<float>((a_formID >> 24) & 0xFFu);
-			state->value = 0.0f;
+			state->value = requested;
 			a_detail = std::format(
-				"写入 SAQ_GuideTargetRef=0x{:06X} + SAQ_GuidePrefix={}（完整 0x{:08X}）并把 SAQ_GuideState 清 0",
-				a_formID & 0xFFFFFFu, (a_formID >> 24) & 0xFFu, a_formID);
+				"写入 SAQ_GuideTargetRef=0x{:06X} + SAQ_GuidePrefix={}（完整 0x{:08X}）"
+				"并把 SAQ_GuideState 置 {}",
+				a_formID & 0xFFFFFFu, (a_formID >> 24) & 0xFFu, a_formID, requestedNote);
 			return true;
 		}
 		if (target->value < 0.0f || target->value > 4278190080.0f) {  // 完整 FormID 上限 0xFEFFFFFF
@@ -188,9 +197,9 @@ namespace SAQ::Guide
 			return false;
 		}
 		target->value = static_cast<float>(a_formID);
-		state->value = 0.0f;  // 0 = 待处理：脚本轮询到就会应用/清除
-		a_detail = std::format("写入 SAQ_GuideTargetRef={}（0x{:X}）并把 SAQ_GuideState 清 0",
-			a_formID, a_formID);
+		state->value = requested;  // 待处理：脚本轮询到就会应用/清除（5 = 还要打开星图）
+		a_detail = std::format("写入 SAQ_GuideTargetRef={}（0x{:X}）并把 SAQ_GuideState 置 {}",
+			a_formID, a_formID, requestedNote);
 		return true;
 	}
 

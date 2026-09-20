@@ -48,14 +48,14 @@ Starfield 从不告诉你去哪接任务，全靠自己撞见。这个 mod 在�
 用 MO2「从压缩包安装」，启用后确认 SAQ_ShowAvailableQuests.esm 已在插件列表勾选。手动安装：解压后把文件放进 Starfield\Data\（详见包内 README.txt）。
 
 [b]使用[/b]
-任务菜单（TAB）→ 「可接任务」→ 选中条目 → 按引导键（如 SET COURSE）。再按一次取消。
+任务菜单（TAB）→ 「可接任务」→ 选中条目 → 展开子项「前往接取地点」（Enter）= 开始引导（HUD 蓝点 + 扫描仪路径线）；按 SET COURSE（键盘 R / 手柄 X）= 引导 + **自动打开星图并把航线画到接取地点**（与按原版任务一样）。再按一次同一条 = 取消引导。
 
 [b]已知限制[/b]
 [list]
 [*] 261 条任务中有 52 条暂无导航目标：界面会如实提示，不会假装能引导
 [*] 无限生成任务本身不显示，但其接取入口（12 处任务板）作为独立条目列出；任何位置都能一键导航过去——在远处先给你一个大致方位，等你走到那块任务板所在的区域，蓝点会自动落到任务板上（不会停在几米外；读档或重启游戏后也会自动校正）
 [*] 引导在关闭任务菜单后生效（与原版一致：HUD 蓝点本来就要关菜单才可见）
-[*] 「进度没到就不显示」目前只按「已完成」判断，尚未按任务前置条件过滤
+[*] 「进度没到就不显示」目前覆盖**任务记录级条件**里「引用别的任务」的那一类（7 条任务 / 9 条门槛，例如「要先完成 A 才能接到 B」）；对话条件与位置/遭遇类条件暂未覆盖
 [*] 会覆盖任务菜单的 UI 文件（missionmenu.swf / missionmenu_lrg.swf），与其它改任务菜单的 mod 需要打补丁
 [/list]
 
@@ -78,6 +78,7 @@ Starfield never tells you where to pick up quests — you just have to stumble i
 [*] Lists all available non-main quests in one place
 [*] Includes the pickup points of radiant quests: 12 mission boards (New Atlantis / Akila City / Neon / Cydonia / Hopetown / New Homestead / staryards / The Key...), one click to navigate
 [*] Native guidance: quest marker + scanner route line to the quest giver
+[*] SET COURSE (R / X) goes one step further: it also opens the star map with the route plotted to the pickup location, exactly like a vanilla quest
 [*] Already-completed quests and quests already in your log are hidden
 [*] Quests with no navigation target are clearly flagged (button greyed out) — no dead ends
 [*] Guidance is cancelled automatically once you accept the quest
@@ -96,14 +97,14 @@ Starfield never tells you where to pick up quests — you just have to stumble i
 Install the archive with MO2 ("Install from archive"), then make sure SAQ_ShowAvailableQuests.esm is ticked. Manual install: copy the files into Starfield\Data\ (see README.txt in the archive).
 
 [b]Usage[/b]
-Mission menu (TAB) -> "Available Quests" -> select an entry -> press the guidance button (e.g. SET COURSE). Press again to cancel.
+Mission menu (TAB) -> "Available Quests" -> select an entry -> expand the "Go to the pickup location" sub-entry (Enter) to start the guidance (HUD marker + scanner route line); press SET COURSE (R / X) to start the guidance **and** open the star map with the route plotted to the pickup location (just like a vanilla quest). Press again on the same entry to cancel.
 
 [b]Known limitations[/b]
 [list]
 [*] 52 of 261 quests currently have no navigation target; the UI says so honestly
 [*] Radiant quests themselves are not listed, but their pickup points (12 mission boards) are listed as entries; every entry can be navigated to from anywhere — far away you get the approximate direction, and once you reach the board's area the marker automatically snaps onto the board itself (no more stopping a few metres short; it also self-corrects after a save reload or restart)
 [*] Guidance applies after you close the mission menu (same as vanilla: the HUD marker only appears outside menus)
-[*] "Hidden when your progress isn't far enough" is currently based only on the completed state, not on quest preconditions
+[*] "Hidden when your progress isn't far enough" currently covers record-level quest preconditions that reference another quest (7 quests / 9 gates, e.g. "you must finish A before B shows up"); dialogue conditions and location/encounter based conditions are not covered yet
 [*] Overrides the mission menu UI (missionmenu.swf / missionmenu_lrg.swf): patching needed with other mission-menu mods
 [/list]
 
