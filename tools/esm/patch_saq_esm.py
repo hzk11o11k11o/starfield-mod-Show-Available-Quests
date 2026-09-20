@@ -45,9 +45,19 @@ Menu/Task），所以走最稳的路：**ESM 里加一条 GLOB**，玩家用游�
 * **已存在就不动**（保留玩家当前设置的值；重新构建不会把测试模式清掉）；
 * 新增时顺带把 TES4 HEDR 的 numRecords +1、nextObjectID 提到 ≥ 0x805。
 
+## ★ 第 49 轮：测试命令通道 GLOB（引擎内 harness）
+
+引擎内自动测试要「造任意进度」，而 docs/04 定案 Papyrus 原生函数不能直接调（要造 VM 栈帧），
+所以写侧动作交给 Papyrus 脚本、DLL 只下命令 —— 通道仍是 GLOB（0x806~0x80D，见 TEST_GLOBS）。
+★ 与 0x804/0x805 一样，**记录号只允许追加**（存档按 FormID 记录脚本实例）。
+
+文件自第 33 轮起含**嵌套组**（CELL 空壳 > Cell Children > … > REFR），这时整文件线性重建会把
+层级拍平 ⇒ 自动切到「**GLOB 外科追加**」：只重写顶层 GLOB 组，其余顶层块按 size 原样搬运。
+
 用法：
     python tools/esm/patch_saq_esm.py                     # 原地补 esm/SAQ_ShowAvailableQuests.esm
     python tools/esm/patch_saq_esm.py --check             # 只解析并打印当前记录结构
+    python tools/esm/patch_saq_esm.py --globs-only        # 强制只追加 GLOB（不重建 QUST）
 """
 from __future__ import annotations
 
@@ -96,11 +106,40 @@ TEST_MODE_FORMID = 0x804
 GUIDE_PREFIX_EDID = "SAQ_GuidePrefix"
 GUIDE_PREFIX_FORMID = 0x805
 
+# ★★ 第 49 轮（引擎内 harness）：测试命令通道。
+#
+# 动机：引擎内自动测试需要「造出任意游戏进度」（接取/推到某阶段/完成/回滚/传送），
+# 而 docs/04 已定案 —— Papyrus 原生函数的调用约定是 rcx=VM / rdx=栈帧 / r8=self，
+# **不能直接调**（要伪造 VM 栈帧）。所以写侧动作全部放回 Papyrus 语言级 API
+# （Quest.Reset/Start/SetStage/CompleteQuest、Game.GetPlayer().MoveTo），
+# DLL 只负责「下命令 + 收回执」，通道仍用最稳的 GLOB（与引导通道同一套协议）。
+#
+# 协议（与 spk 脚本 SAQ_Main.psc 的 ProcessTestCommand 一一对应）：
+#   DLL ：ArgA/ArgB/ArgC → Cmd → Seq（**Seq 最后写 = 提交点**）
+#   脚本：Seq != LastSeq ⇒ 读 Cmd+Args → 执行 → 写 Result → 写 Ack=Seq
+#   DLL ：轮询 Ack == Seq（超时 ⇒ 该用例 SKIP，不 FAIL）
+#
+# 为什么脚本不需要新增 VMAD 属性：脚本可以用 **自己任务的 FormID 前缀**
+# （GetFormID() >> 24）算出这些记录的完整 FormID，再 Game.GetForm() 动态取 ——
+# 于是 ESM 侧只需要「追加 8 条 GLOB」，不碰 VMAD，风险最小。
+#
+# ★ 记录号只允许**追加**（存档按 FormID 记录脚本实例，旧记录号不能动）。
+TEST_GLOBS = (
+    ("SAQ_TestSeq", 0x806, "测试命令序号（DLL 写 = 提交点；脚本 Ack 回同一序号）"),
+    ("SAQ_TestCmd", 0x807, "测试命令操作码（1=Ping 2=Reset 3=Start 4=SetStage 5=Complete 6=Teleport）"),
+    ("SAQ_TestArgA", 0x808, "参数：FormID 低 24 位（拆半协议同第 21 轮）"),
+    ("SAQ_TestArgB", 0x809, "参数：FormID 高 8 位"),
+    ("SAQ_TestArgC", 0x80A, "参数：数值（stage 等）"),
+    ("SAQ_TestAck", 0x80B, "脚本回写：已执行到的序号"),
+    ("SAQ_TestResult", 0x80C, "脚本回写：结果码（0=成功 1=表单取不到 2=类型不对 3=异常 4=不支持）"),
+    ("SAQ_TestHarness", 0x80D, "总开关（1=harness 启用；0/缺失时脚本零行为、DLL 不写命令）"),
+)
+
 # 需要保证存在的 GLOB：(EDID, 记录号, 说明)
 EXTRA_GLOBS = (
     (TEST_MODE_EDID, TEST_MODE_FORMID, "测试过滤开关（ini / 控制台，见 docs/05 第八节）"),
     (GUIDE_PREFIX_EDID, GUIDE_PREFIX_FORMID, "引导目标 FormID 高位（float 精度问题，见 docs/05）"),
-)
+) + TEST_GLOBS
 
 # 记录里「目标 / 别名」相关的子记录（重建时先全部删掉）
 ALIAS_SUBS = {b"ALST", b"ALLS", b"ALID", b"ALFG", b"ALED", b"VTCK", b"ALFA", b"ALRT",
@@ -365,6 +404,86 @@ def rebuild_file(buf: bytes, target_formid: int, new_payload: bytes,
     return result
 
 
+def find_top_level(buf: bytes):
+    """yield (kind, off, size_total, raw)：TES4 + 每个**顶层** GRUP（按组 size 走，不递归）。
+
+    ★ 第 49 轮：为什么需要它 —— 第 33 轮起本文件里有了**嵌套组**（CELL 空壳 >
+    Cell Children > Cell Persistent Children > REFR），整文件线性重建会把层级拍平
+    （静默破坏）。而「往顶层 GLOB 组末尾追加记录」根本不需要理解嵌套结构：
+    按顶层 size 把每个顶层块原样搬运、只重写 GLOB 组即可。
+
+    副作用是顺便校验了顶层结构：走完必须**正好**到文件尾（有残留就报错）。
+    """
+    head_size = struct.unpack_from("<I", buf, 4)[0]
+    end = 24 + head_size
+    if end > len(buf):
+        raise SystemExit(f"TES4 头 size={head_size} 越过文件尾")
+    yield ("TES4", 0, end, buf[0:end])
+    pos = end
+    while pos < len(buf):
+        if buf[pos:pos + 4] != b"GRUP":
+            raise SystemExit(f"顶层 @0x{pos:X} 不是 GRUP（{buf[pos:pos + 4]!r}）—— 文件结构意外")
+        gsize = struct.unpack_from("<I", buf, pos + 4)[0]
+        if gsize < 24 or pos + gsize > len(buf):
+            raise SystemExit(f"顶层 GRUP @0x{pos:X} 的 size={gsize} 越过文件尾")
+        yield ("GRUP", pos, gsize, buf[pos:pos + gsize])
+        pos += gsize
+    if pos != len(buf):
+        raise SystemExit(f"顶层组走完停在 0x{pos:X}，文件尾是 0x{len(buf):X}（有残留字节）")
+
+
+def append_globs_surgical(buf: bytes, glob_extras: list[tuple[int, bytes]]) -> bytes:
+    """只重写顶层 GLOB 组（在末尾追加新记录），其余顶层块原样搬运（支持嵌套组）。
+
+    记录头以组内第一条记录为模板（flags/时间戳/FormVersion 全继承），只改 size 与
+    FormID 低位 —— 与 rebuild_file 的 glob_extras 用同一套做法（不靠猜字段）。
+    """
+    out = bytearray()
+    done = False
+    for kind, _off, _size, raw in find_top_level(buf):
+        if kind != "GRUP" or done or raw[8:12] != b"GLOB":
+            out += raw
+            continue
+
+        body = raw[24:]
+        tmpl_hdr: bytes | None = None
+        p = 0
+        while p + 24 <= len(body):
+            if body[p:p + 4] == b"GRUP":
+                raise SystemExit("GLOB 组里出现了嵌套组 —— 不该发生，拒绝写入")
+            rsize = struct.unpack_from("<I", body, p + 4)[0]
+            if p + 24 + rsize > len(body):
+                raise SystemExit(f"GLOB 组里的记录 @0x{p:X}（{rsize} B）越过组尾")
+            if tmpl_hdr is None:
+                tmpl_hdr = body[p:p + 24]
+            p += 24 + rsize
+        if p != len(body):
+            raise SystemExit(f"GLOB 组里有残留字节（走到 0x{p:X}，组体 {len(body)} B）")
+        if tmpl_hdr is None:
+            raise SystemExit("GLOB 组是空的 —— 没有可用的记录头模板")
+
+        new_body = bytearray(body)
+        for low, payload in glob_extras:
+            h = bytearray(tmpl_hdr)
+            struct.pack_into("<I", h, 4, len(payload))
+            cur = struct.unpack_from("<I", h, 12)[0]
+            struct.pack_into("<I", h, 12, (cur & 0xFF000000) | low)
+            new_body += h
+            new_body += payload
+
+        hdr = bytearray(raw[:24])
+        struct.pack_into("<I", hdr, 4, 24 + len(new_body))
+        out += hdr
+        out += new_body
+        done = True
+
+    if not done:
+        raise SystemExit("文件里没有顶层 GLOB 组")
+    result = bytearray(out)
+    bump_tes4_hedr(result, len(glob_extras), max(low for low, _ in glob_extras) + 1)
+    return bytes(result)
+
+
 def check_group_bounds(buf: bytes) -> None:
     """自校验：每条记录都必须正好填满自己所属的 GRUP。"""
     pos = 24 + struct.unpack_from("<I", buf, 4)[0]
@@ -386,9 +505,19 @@ def check_group_bounds(buf: bytes) -> None:
 
 
 def main() -> int:
+    # ★ 第 49 轮：控制台是 GBK 时，打印「非 GBK 字符」（组标签里的原始字节、箭头符号等）
+    #   会抛 UnicodeEncodeError 把整个工具打断（踩过一次，文件已写成功但流程报错）。
+    #   这里只是「打印兜底」——不影响任何写入逻辑。
+    try:
+        sys.stdout.reconfigure(errors="replace")
+    except Exception:
+        pass
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--esm", default=DEFAULT_ESM)
     ap.add_argument("--check", action="store_true", help="只打印结构，不修改")
+    ap.add_argument("--globs-only", dest="globs_only", action="store_true",
+                    help="只做 GLOB 外科追加（不重建 QUST）；文件里有嵌套组时自动切到这个模式")
     a = ap.parse_args()
     path = Path(a.esm)
     if not path.exists():
@@ -402,13 +531,7 @@ def main() -> int:
     if flags & 0x80:
         print("警告：TES4 头里 Localized 位被置起来了 —— 内联文本会失效（先确认为什么）")
 
-    # ★ 第 29 轮防呆：本工具不认识嵌套组（CELL override 组）—— 遇到就拒绝运行，
-    #   否则线性重建会把层级拍平、静默破坏文件。
-    if has_nested_groups(buf):
-        print("检测到嵌套组（CELL override 组）—— 本工具不认识嵌套结构，先清掉再跑：")
-        print("    python tools/esm/persist_entry_refs.py --clean")
-        print("（正常构建顺序是 patch → persist，见 build-saq.ps1）")
-        return 1
+    nested = has_nested_groups(buf)
 
     quest_off = None
     quest_formid = 0
@@ -423,9 +546,6 @@ def main() -> int:
         return 1
 
     new_payload, info = build_quest_payload(payload_old)
-    print(f"QUST @0x{quest_off:X} formid={quest_formid:08X}："
-          f"payload {len(payload_old)} -> {len(new_payload)} B"
-          f"（清掉 {len(info['dropped'])} 个子记录）")
 
     # ★ 第 20/21 轮：保证附加 GLOB 存在（已存在则原样保留 —— 玩家设置的值不能被清掉）
     glob_extras: list[tuple[int, bytes]] = []
@@ -436,6 +556,34 @@ def main() -> int:
             glob_extras.append((low, make_glob_payload(edid, 0.0)))
             print(f"GLOB {edid}：将新增（记录号 0x{low:03X}，初值 0）—— {label}")
 
+    # ★ 第 49 轮：文件里已有嵌套组（第 33 轮起的 CELL 空壳 + 常驻 marker）时，
+    #   整文件线性重建会把层级拍平（静默破坏）—— 改走「GLOB 外科追加」：
+    #   只重写顶层 GLOB 组，其余顶层块按 size 原样搬运。
+    if nested or a.globs_only:
+        why = "命令行 --globs-only" if a.globs_only else "检测到嵌套组（CELL 空壳 + 常驻 marker，第 33 轮起）"
+        print(f"{why} -> 只做 GLOB 外科追加（不重建 QUST）。")
+        if new_payload != payload_old:
+            print("警告：QUST 的 payload 与目标内容**不一致**，但外科模式不重建它。")
+            print("      需要重建 QUST 时请走完整流程（会先清掉 CELL 组）：")
+            print("        python tools/esm/persist_entry_refs.py --clean")
+            print("        python tools/esm/patch_saq_esm.py")
+            print("        python tools/esm/create_board_markers.py")
+        else:
+            print("      （QUST payload 与目标一致 —— 这部分本来也无须改动）")
+        if not glob_extras:
+            print("所有 GLOB 都已存在 —— 文件不变。")
+        else:
+            out = append_globs_surgical(buf, glob_extras)
+            path.write_bytes(out)
+            print(f"已写回 {path}（{len(buf)} -> {len(out)} B）")
+        print("\n--- 自校验（重新解析） ---")
+        describe(path)
+        check_glob_records(path, glob_extras)
+        return 0
+
+    print(f"QUST @0x{quest_off:X} formid={quest_formid:08X}："
+          f"payload {len(payload_old)} -> {len(new_payload)} B"
+          f"（清掉 {len(info['dropped'])} 个子记录）")
     out = rebuild_file(buf, quest_formid, new_payload, glob_extras)
     path.write_bytes(out)
     print(f"已写回 {path}（{len(out)} B）")
@@ -443,7 +591,28 @@ def main() -> int:
     # 自校验：重新解析一遍
     print("\n--- 自校验（重新解析） ---")
     describe(path)
+    check_glob_records(path, glob_extras)
     return 0
+
+
+def check_glob_records(path: Path, glob_extras: list[tuple[int, bytes]]) -> None:
+    """自校验：刚刚追加的 GLOB 必须都在，且 FormID 低位与初值正确。"""
+    buf = path.read_bytes()
+    found: dict[int, bytes] = {}
+    for kind, _off, hdr, payload in walk_linear(buf):
+        if kind != "REC" or hdr[0:4] != b"GLOB":
+            continue
+        low = struct.unpack_from("<I", hdr, 12)[0] & 0xFFFFFF
+        found[low] = payload
+    bad: list[str] = []
+    for low, payload in glob_extras:
+        if low not in found:
+            bad.append(f"新增的 0x{low:03X} 没写进去")
+        elif found[low] != payload:
+            bad.append(f"0x{low:03X} 的 payload 与期望不一致")
+    if bad:
+        raise SystemExit("自校验失败（GLOB）：" + "；".join(bad))
+    print(f"     GLOB 自校验通过：{len(glob_extras)} 条新增记录都在" if glob_extras else "     GLOB 无新增（跳过校验）")
 
 
 if __name__ == "__main__":

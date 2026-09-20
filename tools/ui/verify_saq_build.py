@@ -292,6 +292,96 @@ def check_esm_markers(path: pathlib.Path, expect_refs: dict[int, str], label: st
     return ok
 
 
+TEST_GLOBS = (
+    (0x806, "SAQ_TestSeq"),
+    (0x807, "SAQ_TestCmd"),
+    (0x808, "SAQ_TestArgA"),
+    (0x809, "SAQ_TestArgB"),
+    (0x80A, "SAQ_TestArgC"),
+    (0x80B, "SAQ_TestAck"),
+    (0x80C, "SAQ_TestResult"),
+    (0x80D, "SAQ_TestHarness"),
+)
+
+
+def check_esm_test_globs(path: pathlib.Path, label: str, require_zero: bool) -> bool:
+    """★ 第 49 轮：引擎内 harness 的**测试命令通道 GLOB**（0x806~0x80D，共 8 条）。
+
+    为什么在构建校验里查它：这套通道是「DLL 写命令 → Papyrus 执行 → 脚本回执」的唯一
+    落点（写侧动作必须走 Papyrus 语言级 API，见 docs/04 的调用约定结论）。缺一条，
+    harness 就会静默失效（脚本取不到 GLOB 就整个关闭）——正是最该在构建期挡住的那类问题。
+
+    只查三样：记录号 → EDID 对得上、初值 0（工作区副本）、HEDR nextObjectID 已经提上去。
+    **不查**已有记录号（0x801~0x805）：它们必须原地不动（存档按 FormID 记录脚本实例）。
+    """
+    buf = path.read_bytes()
+    head_size = struct.unpack_from("<I", buf, 4)[0]
+
+    # HEDR：numRecords / nextObjectID（追加记录必须同步，否则 xEdit 重存会重编号）
+    next_id = None
+    p, end = 24, 24 + head_size
+    while p + 6 <= end:
+        sig = buf[p:p + 4]
+        n = struct.unpack_from("<H", buf, p + 4)[0]
+        if sig == b"HEDR" and n >= 12:
+            next_id = struct.unpack_from("<I", buf, p + 6 + 8)[0]
+            break
+        p += 6 + n
+
+    found: dict[int, tuple[str, float | None]] = {}
+    pos = 24 + head_size
+    while pos + 24 <= len(buf):
+        if buf[pos:pos + 4] != b"GRUP":
+            break
+        gsize = struct.unpack_from("<I", buf, pos + 4)[0]
+        if gsize < 24 or pos + gsize > len(buf):
+            break
+        if bytes(buf[pos + 8:pos + 12]) == b"GLOB":
+            q = pos + 24
+            while q + 24 <= pos + gsize:
+                if buf[q:q + 4] == b"GRUP":
+                    break
+                size = struct.unpack_from("<I", buf, q + 4)[0]
+                fid = struct.unpack_from("<I", buf, q + 12)[0]
+                payload = buf[q + 24:q + 24 + size]
+                edid, value = "", None
+                r = 0
+                while r + 6 <= len(payload):
+                    s = payload[r:r + 4]
+                    m = struct.unpack_from("<H", payload, r + 4)[0]
+                    if s == b"EDID":
+                        edid = payload[r + 6:r + 6 + m].split(b"\x00")[0].decode("latin1")
+                    elif s == b"FLTV" and m == 4:
+                        value = struct.unpack_from("<f", payload, r + 6)[0]
+                    r += 6 + m
+                found[fid & 0xFFFFFF] = (edid, value)
+                q += 24 + size
+        pos += gsize
+
+    problems: list[str] = []
+    hit = 0
+    for low, edid in TEST_GLOBS:
+        if low not in found:
+            problems.append(f"缺记录 0x{low:03X}（{edid}）")
+            continue
+        hit += 1
+        got_edid, got_val = found[low]
+        if got_edid != edid:
+            problems.append(f"0x{low:03X} 的 EDID 是 {got_edid!r}，期望 {edid!r}")
+        elif require_zero and got_val != 0.0:
+            problems.append(f"0x{low:03X} 的初值是 {got_val}，期望 0")
+    if next_id is not None and next_id < 0x80E:
+        problems.append(f"HEDR nextObjectID=0x{next_id:X}，应 >= 0x80E（追加 8 条记录后没同步）")
+
+    ok = not problems
+    print(("OK  " if ok else "MISS") +
+          f" ESM({label}) · 测试命令通道 GLOB {hit}/{len(TEST_GLOBS)} 条"
+          f"（0x806~0x80D，追加不占用旧记录号）")
+    for p_ in problems:
+        print(f"       - {p_}")
+    return ok
+
+
 def main() -> int:
     all_ok = True
 
@@ -856,6 +946,9 @@ def main() -> int:
             all_ok &= check(f"ESM({label}) · 测试开关 GLOB", blob, b"SAQ_TestMode")
             # ★ 第 21 轮：引导目标高位 GLOB（+ VMAD 属性绑定）
             all_ok &= check(f"ESM({label}) · 引导目标高位 GLOB", blob, b"SAQ_GuidePrefix")
+            # ★ 第 49 轮：测试命令通道 GLOB（0x806~0x80D）。MO2 副本的值会被 harness
+            #   在运行期改（运行中的 mod 用那份），所以只有工作区副本要求初值 0。
+            all_ok &= check_esm_test_globs(path, label, require_zero=(label == "工作区"))
             all_ok &= check_esm_markers(path, expect_markers, label)
         else:
             print(f"MISS 缺少 {path}")
