@@ -371,6 +371,14 @@ EndFunction
 ;     ② 引用自己的当前/编辑地点（第 37~39 轮的行为，DLL 状态 6 = 重试时换它）；
 ;     ③ 父地点链里第一个带行星的地点（DLL 状态 7 = 再换它）。
 ;   三个候选各带一次，日志里「采用地点=…」这一行就是「这一轮传了什么」的硬证据。
+;
+;  ★★ 第 45 轮补丁（实机日志复查：「朱诺的计谋」星图里没有目标位置）：
+;   地点链里**一个行星都没有**时（目标在飞船内部 / 引擎动态创建的内部地点，实例 =
+;   MS03JunoShip_CreatedInteriorLocationDungeon），星图节点表里根本没有这种位置
+;   （引擎只登记星系/星球层）——打开星图只会停在默认焦点（玩家当前位置）。
+;   此时**不打开星图**，改发一条 HUD 通知如实说明（避免「星图里没有目标」看起来像坏了）；
+;   世界里的任务标记/扫描仪路径线不受影响（跟随它即可）。
+;   DLL 侧配套：`星图诊断` 全层节点=0 时不重试、超时文案改成「按预期未打开」。
 ; ============================================================================
 Function OpenStarMapFor(ObjectReference akTarget, int aiMode)
 	If akTarget == None
@@ -429,6 +437,21 @@ Function OpenStarMapFor(ObjectReference akTarget, int aiMode)
 		Else
 			used = 6
 		EndIf
+	EndIf
+
+	; ★★ 第 45 轮补丁（实机日志复查：任务「朱诺的计谋」星图里没有目标位置）：
+	;   目标的地点在飞船内部 / 引擎**动态创建**的内部地点时（实例：
+	;   MS03JunoShip_CreatedInteriorLocationDungeon），它不在星图节点表里
+	;   （引擎只登记星系/星球层）——行星=None、父地点链里也没有行星。
+	;   此时 ShowGalaxyStarMapMenuAndPlotToLocation 只会把星图按**默认焦点**
+	;   （玩家当前位置）打开：玩家看到「星图里没有目标」，像坏了。
+	;   按 AGENTS.md「不可引导要提示玩家」的精神：这里**不打开星图**，改发一条
+	;   HUD 通知如实说明（世界里的任务标记/扫描仪路径线不受影响，跟随它即可）。
+	;   （DLL 侧同款判定：`星图诊断` 全层节点=0 时不重试、超时文案改「按预期未打开」。）
+	If body == None
+		Debug.Trace("[SAQ] 星图请求：目标地点不在星图上（行星=None、父地点链无行星；位置可能在飞船内部/动态创建的内部地点）—— 不打开星图，改发 HUD 提示")
+		Debug.Notification("该目标不在星图上（飞船内/太空），请跟随任务标记 / Target not on the star map")
+		Return
 	EndIf
 
 	Debug.Trace("[SAQ] 星图请求：打开星图并设定航线 → " + FormText(akTarget) + " @ " + FormText(loc) + "（ID=" + FormIDText(loc) + "，行星=" + FormText(body) + "，行星地点=" + FormText(bodyLoc) + "，父地点候选=" + FormText(parentWithPlanet) + "，候选号=" + used + "，采用地点=" + FormText(plotLoc) + "（ID=" + FormIDText(plotLoc) + "））")

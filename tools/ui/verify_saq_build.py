@@ -495,6 +495,11 @@ def main() -> int:
             "候选全不可得日志": "个候选此刻都取不到".encode(),
             "请求日志带候选注记": "候选 [".encode(),
             "认领日志带候选下标": "（候选 [".encode(),
+            # ★★ 第 45 轮补丁（实机日志复查：「朱诺的计谋」星图里没有目标位置）：
+            #   目标在飞船内部/动态创建的内部地点时星图节点解析**全层 = 0** ⇒ 脚本不开
+            #   星图、改发 HUD 提示；DLL 侧不重试、超时文案改「按预期未打开」。
+            "星图诊断全层未命中": "地点链全层节点=0".encode(),
+            "星图按预期未打开": "星图：按预期未打开".encode(),
         }.items():
             all_ok &= check(f"DLL · {name}", blob, needle)
         # 反向检查：第 31 轮把候选链顺序换掉，第 30 轮的「marker 优先」诊断文案不应再出现
@@ -577,6 +582,10 @@ def main() -> int:
         all_ok &= check("PEX · 星图节拍待办", blob, b"StarMapPendingTicks")
         all_ok &= check("PEX · 星图待办处理函数", blob, b"ProcessStarMapPending")
         all_ok &= check("PEX · 星图节拍文案", blob, "下一个轮询节拍".encode())
+        # ★★ 第 45 轮补丁：星图无法定位（目标在飞船内/动态内部地点）⇒ 不打开星图 +
+        #   发一条 HUD 通知如实说明（中英双语，脚本侧判定「地点链无行星」）。
+        all_ok &= check("PEX · 不在星图上的早退 Trace", blob, "目标地点不在星图上".encode())
+        all_ok &= check("PEX · 不在星图上的通知", blob, b"not on the star map")
         # 反向检查：第 40 轮把「地点自己没有行星，改用父地点」并入候选链诊断，旧串不应再出现
         gone = "地点自己没有行星，改用父地点".encode() not in blob
         print(("OK  " if gone else "MISS") + " PEX · 旧父地点兜底文案已替换(反向检查)")

@@ -1583,6 +1583,38 @@ namespace SAQ
 				buf[0], buf[1], buf[0] ? "" : "（未命中：星图不会定位到这个地点）");
 		}
 
+		// ★★ 第 45 轮补丁：这一层地点能不能解析出星图节点（三态）——
+		//   kUnknown = 判不了（地点为空 / 节点解析器特征不符 / 调用异常）⇒ 不参与判定；
+		//   kMiss    = 解析成功但节点 = 0（星图不会定位到这个地点）；
+		//   kHit     = 节点非 0（星图能定位）。
+		//   用途：LogStarMapDiagnosis 统计「地点链全层都 Miss」= 目标不在星图上。
+		enum class NodeProbe : std::uint8_t { kUnknown, kMiss, kHit };
+
+		NodeProbe StarMapNodeProbe(void* a_loc)
+		{
+			if (!a_loc) {
+				return NodeProbe::kUnknown;
+			}
+			static void* s_fn = ProbeResolveNodeFn();
+			if (!s_fn) {
+				return NodeProbe::kUnknown;
+			}
+			std::uint32_t buf[2]{};
+			if (!PODResolveNode(s_fn, buf, a_loc)) {
+				return NodeProbe::kUnknown;
+			}
+			return buf[0] ? NodeProbe::kHit : NodeProbe::kMiss;
+		}
+
+		// ★★ 第 45 轮补丁：`星图诊断` 的结论 —— 地点链（含父链）**全层节点都 = 0**，
+		//   即「目标位置不在星图上」（飞船内部 / 引擎动态创建的内部地点，实测例：
+		//   `MS03JunoShip_CreatedInteriorLocationDungeon`——「朱诺的计谋」的目标）。
+		//   脚本此时**不打开星图**、改发 HUD 提示（脚本侧补丁，见 SAQ_Main.psc 的
+		//   OpenStarMapFor）⇒ CheckStarMapOpened 据此**不重试**、超时文案改成如实的
+		//   「按预期未打开」（否则会打一条误导的 WARN + 让脚本重复发通知）。
+		//   每次诊断重算（LogStarMapDiagnosis 开头清零）。
+		bool g_starMapDiagAllMiss{};
+
 		// ★ 第 40 轮：星图诊断（每次按 R 记一次）——把「引导引用所在的地点链」逐层解析。
 		//   引擎认哪一层 = 星图该用哪一层（脚本会把「行星自己的地点」优先传给原生函数）。
 		void LogStarMapDiagnosis(const char* a_why)
@@ -1591,6 +1623,7 @@ namespace SAQ
 			if (refID == 0) {
 				return;
 			}
+			g_starMapDiagAllMiss = false;  // ★ 第 45 轮补丁：每次诊断重算
 			auto* form = RE::TESForm::LookupByID(refID);
 			auto* refr = form ? form->As<RE::TESObjectREFR>() : nullptr;
 			if (!refr) {
@@ -1608,11 +1641,16 @@ namespace SAQ
 					return;
 				}
 			}
+			bool anyHit = false;    // 有任意一层能解析出节点（星图能定位）
+			bool anyKnown = false;  // 有任意一层的节点解析是「可用且成功」的（能下判定）
 			for (int depth = 0; depth <= 3; ++depth) {
 				std::uint32_t fid = 0;
 				if (!PODFormID(loc, fid)) {
 					break;
 				}
+				const auto probe = StarMapNodeProbe(loc);
+				anyKnown = anyKnown || probe != NodeProbe::kUnknown;
+				anyHit = anyHit || probe == NodeProbe::kHit;
 				REX::INFO("星图诊断（{}）：地点链[{}]{}＝0x{:08X}｜{}", a_why, depth,
 					depth == 0 ? kind : "父地点", fid, StarMapNodeOf(loc));
 				void* parent = nullptr;
@@ -1620,6 +1658,14 @@ namespace SAQ
 					break;
 				}
 				loc = parent;
+			}
+			// ★ 第 45 轮补丁：全层都显式解析为「未命中」⇒ 目标位置不在星图上。
+			//   （没有一层能下判定（解析器不可用等）时保持 false —— 那是真失败，照旧 WARN。）
+			g_starMapDiagAllMiss = anyKnown && !anyHit;
+			if (g_starMapDiagAllMiss) {
+				REX::INFO("星图诊断（{}）：地点链全层节点=0 —— 目标位置不在星图上"
+						  "（飞船内部/动态创建的内部地点），脚本将改发 HUD 提示（不打开星图）",
+					a_why);
 			}
 			void* playerLoc = nullptr;
 			if (PODPlayerLocation(playerLoc) && playerLoc) {
@@ -1854,7 +1900,10 @@ namespace SAQ
 			}
 			const bool retryDue = g_starMap.appliedAtMs != 0 &&
 				now >= g_starMap.appliedAtMs + kStarMapRetryAfterAppliedMs;
-			if (retryDue && g_starMap.attempts < kStarMapMaxAttempts) {
+			// ★ 第 45 轮补丁：诊断显示「目标不在星图上」（全层节点=0）时**不重试** ——
+			//   脚本不会打开星图（改发 HUD 提示），重试只会让它重复跑一遍
+			//   （玩家看到通知刷多条）。
+			if (retryDue && g_starMap.attempts < kStarMapMaxAttempts && !g_starMapDiagAllMiss) {
 				const auto menus = OpenMenusSummary();
 				if (menus != "无") {
 					g_starMap.retryAtMs = now + 1000;
@@ -1887,10 +1936,18 @@ namespace SAQ
 			}
 			if (now >= g_starMap.deadlineMs) {
 				g_starMap.pending = false;
-				REX::WARN("星图：{:.1f} 秒内没有打开（已尝试 {} 次｜GalaxyStarMapMenu 不在屏幕上｜还开着：{}）"
-						  "—— 看 Papyrus 的 `[SAQ] 星图请求` 两行有没有出现（取不到地点 / 脚本没跑）",
-					static_cast<double>(kStarMapWindowMs) / 1000.0, g_starMap.attempts,
-					OpenMenusSummary());
+				if (g_starMapDiagAllMiss) {
+					// ★ 第 45 轮补丁：**按预期**没打开 —— 目标位置不在星图上（诊断：全层节点=0）。
+					//   脚本不打开星图、改为发一条 HUD 通知（见 SAQ_Main.psc 的 OpenStarMapFor）
+					//   —— 这不是失败，不要用 WARN 误导排查。
+					REX::INFO("星图：按预期未打开（`星图诊断` 全层节点=0：目标位置不在星图上）"
+							  "—— 脚本已改发 HUD 提示（不开无意义的星图），不算失败");
+				} else {
+					REX::WARN("星图：{:.1f} 秒内没有打开（已尝试 {} 次｜GalaxyStarMapMenu 不在屏幕上｜还开着：{}）"
+							  "—— 看 Papyrus 的 `[SAQ] 星图请求` 两行有没有出现（取不到地点 / 脚本没跑）",
+						static_cast<double>(kStarMapWindowMs) / 1000.0, g_starMap.attempts,
+						OpenMenusSummary());
+				}
 			}
 		}
 
