@@ -31,6 +31,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import mmap
 import struct
 import sys
 from collections import Counter
@@ -75,6 +76,66 @@ def parse(buf: bytes):
     return version, arc_type, files
 
 
+class open_ba2:
+    """with open_ba2(path) as (buf, files): —— mmap 打开（其它脚本也能复用）。
+
+    ★ 为什么要 mmap：DLC 的 ba2 有 2~4 GB（ShatteredSpace - Main01.ba2 = 4.2 GB），
+      整体读进内存既慢又危险。列表只需要头部 + 名字区；解包时才碰 payload。
+    """
+
+    def __init__(self, path):
+        self.path = Path(path)
+        self._fh = None
+        self._buf = None
+        self.files: list[dict] = []
+        self.version = self.arc_type = None
+
+    def __enter__(self):
+        self._fh = open(self.path, "rb")
+        self._buf = mmap.mmap(self._fh.fileno(), 0, access=mmap.ACCESS_READ)
+        self.version, self.arc_type, self.files = parse(self._buf)
+        return self
+
+    def __exit__(self, *exc):
+        if self._buf is not None:
+            self._buf.close()
+        if self._fh is not None:
+            self._fh.close()
+        return False
+
+    def find(self, name: str) -> dict | None:
+        low = name.lower()
+        for f in self.files:
+            if f["name"].lower() == low:
+                return f
+        return None
+
+    def read(self, entry: dict) -> bytes:
+        data = bytes(self._buf[entry["offset"]:entry["offset"] + (entry["packed"] or entry["unpacked"])])
+        if entry["packed"] and entry["packed"] != entry["unpacked"]:
+            import zlib
+            data = zlib.decompress(data)
+        return data
+
+    def extract(self, entry: dict, dest_dir) -> Path:
+        dest = Path(dest_dir) / entry["name"]
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(self.read(entry))
+        return dest
+
+
+def extract_entry(archive: "open_ba2", name: str, dest) -> int | None:
+    """按路径名解出一个文件（例：strings/shatteredspace_en.strings）。返回字节数，找不到给 None。"""
+    entry = archive.find(name)
+    if entry is None:
+        return None
+    data = archive.read(entry)
+    dest = Path(dest)
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_bytes(data)
+    return len(data)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("archive")
@@ -83,27 +144,19 @@ def main() -> int:
     a = ap.parse_args()
 
     p = Path(a.archive)
-    buf = p.read_bytes()
-    version, arc_type, files = parse(buf)
-    total = sum(f["unpacked"] for f in files)
-    print(f"{p.name}: BTDX v{version} {arc_type} files={len(files)} unpacked={total}")
-
-    shown = 0
-    for f in files:
-        if a.grep and a.grep.lower() not in f["name"].lower():
-            continue
-        print(f"  {f['unpacked']:>10}  {f['name']}")
-        shown += 1
-        if a.extract:
-            data = buf[f["offset"]:f["offset"] + (f["packed"] or f["unpacked"])]
-            if f["packed"] and f["packed"] != f["unpacked"]:
-                import zlib
-                data = zlib.decompress(data)
-            dest = Path(a.extract) / f["name"]
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_bytes(data)
+    with open_ba2(p) as arc:
+        total = sum(f["unpacked"] for f in arc.files)
+        print(f"{p.name}: BTDX v{arc.version} {arc.arc_type} files={len(arc.files)} unpacked={total}")
+        shown = 0
+        for f in arc.files:
+            if a.grep and a.grep.lower() not in f["name"].lower():
+                continue
+            print(f"  {f['unpacked']:>10}  {f['name']}")
+            shown += 1
+            if a.extract:
+                arc.extract(f, a.extract)
     print(f"shown: {shown}")
-    print("extensions:", dict(Counter(Path(f['name']).suffix.lower() for f in files).most_common()))
+    print("extensions:", dict(Counter(Path(f['name']).suffix.lower() for f in arc.files).most_common()))
     return 0
 
 

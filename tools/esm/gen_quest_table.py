@@ -1,13 +1,21 @@
 #!/usr/bin/env python3
-"""gen_quest_table.py - 生成插件内嵌的静态任务表（FormID -> 中/英文名 + 类型）。
+"""gen_quest_table.py - 生成插件内嵌的静态任务表（master + 记录号 -> 中/英文名 + 类型）。
 
 输入：
-    ref/quests.json                         quest_dump.py 的全量导出（含 FULL 字符串 ID）
-    ref/strings/strings/starfield_en.strings
-    ref/strings/strings/starfield_zhhans.strings
+    ref/quests_all.json                     quest_dump.py 的多 master 导出（Starfield.esm + 各 DLC）
+    ref/strings/strings/<master>_en.strings        每个 master 一份字符串表（名字里带 FULL 的字符串 ID）
+    ref/strings/strings/<master>_zhhans.strings    master 名小写去掉扩展名，与游戏内 strings 文件同名
 输出：
-    plugin/src/SAQ_QuestTable.h             C++ 静态数组
+    plugin/src/SAQ_QuestTable.h             C++ 静态数组（多 master）
     ref/quest_table_debug.json              同样的数据（便于人工核对）
+
+★ 多 master（第 17 轮，DLC 支持）：
+    每条任务记 **master 名 + 记录号（local）**，不记运行期 FormID —— 运行期 FormID 的
+    高字节是「加载顺序」（MO2/其它插件都会影响），只有 DLL 运行时才知道：
+        FormID = (master 的加载序号 << 24) | local         （普通插件）
+        FormID = 0xFE000000 | (small 序号 << 12) | local   （light/ESL 插件，local 只有 12 位）
+    DLC 的字符串表是**各自一份**（shatteredspace_en.strings / sfbgs050_en.strings），
+    所以取名字要按记录所属的 master 选表 —— 这是 DLC 支持里最容易搞错的一步。
 
 规则：
   * 只保留带 QTYP 的任务（玩家可见任务）
@@ -24,6 +32,7 @@ import argparse
 import json
 import re
 import sys
+from collections import Counter
 from pathlib import Path
 
 ALIAS_RE = re.compile(r"<Alias=([^>]+)>")
@@ -88,8 +97,13 @@ def filter_reason(row: dict, raw_en: str, raw_zh: str) -> str | None:
         return "地标"                 # 地球地标探索（走近即完成，无从「接」）
     if "tutorial" in edid_l or "tutorial" in en_l:
         return "教学"
-    if edid_l.startswith("com_companion"):
+    # 测试内容（第 17 轮，DLC 实测）：`SFBGS00D_CruiseMode_TestSupport`「巡航模式测试支援」。
+    # 用「_test」而不是「test」：后者会误伤 contest 这类正常词。
+    if "_test" in edid_l or edid_l.startswith("test_") or "测试" in zh or "测试" in en:
+        return "测试内容"
+    if edid_l.startswith("com_companion") or edid_l.endswith("_companions"):
         return "同伴系统"             # 同伴管理主任务（玩家不会「接」）
+        # （第 17 轮补 `_companions`：DLC 的 SFTER_Companions「同伴任务处理」是同一类系统任务）
     if "<Alias=" in raw_en or "<Alias=" in raw_zh:
         return "别名模板"             # 名字靠运行时目标拼出来 = 生成任务
     if "dialogue" in edid_l:
@@ -208,9 +222,15 @@ def load_guide_targets(path: Path) -> dict[int, dict]:
     return {int(k): v for k, v in raw.items()}
 
 
+def master_strings_key(master: str) -> str:
+    """master 名 -> 字符串表前缀：ShatteredSpace.esm -> shatteredspace（与游戏内文件名一致）。"""
+    return Path(master).stem.lower()
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--quests", default="ref/quests.json")
+    ap.add_argument("--quests", default="ref/quests_all.json",
+                    help="quest_dump.py 的多 master 导出（老的单文件导出也能用）")
     ap.add_argument("--strings-dir", default="ref/strings/strings")
     ap.add_argument("--guide-targets", default="ref/guide_targets.json")
     ap.add_argument("--out-header", default="plugin/src/SAQ_QuestTable.h")
@@ -225,10 +245,36 @@ def main() -> int:
     from strings_probe import load_strings
 
     base = Path(a.strings_dir)
-    en = load_strings(base / "starfield_en.strings")
-    zh = load_strings(base / "starfield_zhhans.strings")
 
     quests = json.loads(Path(a.quests).read_text(encoding="utf-8"))
+    # 老格式（没有 master 字段）当成全是 Starfield.esm —— 兼容第 17 轮以前的 quests.json
+    for q in quests:
+        q.setdefault("master", "Starfield.esm")
+        mask = 0xFFF if q.get("small") else 0xFFFFFF
+        q["local"] = int(q.get("local", q["formid"])) & mask
+
+    # master 列表：Starfield.esm 永远排 0（表里 master 下标越小越基础），其余按名字排序
+    masters = sorted({q["master"] for q in quests},
+                     key=lambda m: (m.lower() != "starfield.esm", m.lower()))
+    master_idx = {m: i for i, m in enumerate(masters)}
+    print(f"master 列表：{masters}")
+
+    # 每个 master 一份字符串表（★ DLC 的名字就在它自己那份里）
+    strings: dict[str, tuple[dict, dict]] = {}
+    for m in masters:
+        key = master_strings_key(m)
+        en_file = base / f"{key}_en.strings"
+        zh_file = base / f"{key}_zhhans.strings"
+        if not en_file.exists() or not zh_file.exists():
+            print(f"  !! {m}: 缺 {en_file.name} / {zh_file.name} —— 这个 master 的任务会"
+                  f"因「取不到名字」被当成内部任务全部过滤掉")
+            print(f"     （用 python tools\\re\\ba2list.py \"<DLC - Main.ba2>\" "
+                  f"--grep {key}_en.strings --extract ref\\strings 抽取）")
+            strings[m] = ({}, {})
+            continue
+        strings[m] = (load_strings(en_file), load_strings(zh_file))
+        print(f"  {m}: 字符串表 {key}_*.strings（en {len(strings[m][0])} / zh {len(strings[m][1])} 条）")
+
     rows = []
     skipped_no_type = 0
     skipped_main = 0
@@ -246,6 +292,7 @@ def main() -> int:
         if itype == 1 and not a.include_main:
             skipped_main += 1
             continue
+        en, zh = strings.get(q["master"], ({}, {}))
         full = q.get("full")
         raw_en = en.get(full, "") if full else ""
         raw_zh = zh.get(full, "") if full else ""
@@ -257,7 +304,10 @@ def main() -> int:
         if not name_zh:
             name_zh = name_en
         row = {
-            "formid": q["formid"],
+            "formid": q["formid"],      # 文件里的原始 FormID（带该文件自己的 master 前缀）
+            "master": q["master"],      # 记录来自哪个插件
+            "local": q["local"],        # 记录号（运行期 = (加载序号 << 24) | local）
+            "small": bool(q.get("small")),
             "edid": edid,
             "itype": itype,
             "qtype": QTYPE_NAMES.get(qtyp, ""),
@@ -276,28 +326,41 @@ def main() -> int:
                 continue
         rows.append(row)
 
-    rows.sort(key=lambda r: r["formid"])
+    # 排序：master 下标升序（基础游戏在前 —— 列表里同名的以基础游戏为准），再按记录号
+    rows.sort(key=lambda r: (master_idx[r["master"]], r["local"]))
 
-    # 引导目标（第 10 轮）：每条任务在世界里的一个「去哪里接」引用。
+    # 引导目标（第 10 轮；第 17 轮加 master）：每条任务在世界里的一个「去哪里接」引用。
     # 没有引导目标的任务照样进表（列表照常显示，只是不能引导）。
     guides = load_guide_targets(Path(a.guide_targets))
+    master_by_lower = {m.lower(): i for i, m in enumerate(masters)}
     n_guide = 0
+    unknown_guide_master: set[str] = set()
     for r in rows:
         g = guides.get(r["formid"])
+        gm = (g or {}).get("refrMaster") or r["master"]
+        if g and g.get("refr") and gm.lower() not in master_by_lower:
+            unknown_guide_master.add(gm)
+            g = None
         if g and g.get("refr"):
-            r["guide_ref"] = int(g["refr"])
+            r["guide_ref"] = int(g["refr"]) & (0xFFF if g.get("refrSmall") else 0xFFFFFF)
+            r["guide_master"] = master_by_lower[gm.lower()]
             r["guide_kind"] = g.get("kind", "")
             r["guide_where_en"] = (g.get("whereEn") or "").strip()
             r["guide_where_zh"] = (g.get("whereZh") or "").strip()
             n_guide += 1
         else:
             r["guide_ref"] = 0
+            r["guide_master"] = 0
             r["guide_kind"] = ""
             r["guide_where_en"] = ""
             r["guide_where_zh"] = ""
+    if unknown_guide_master:
+        print(f"  !! 引导目标引用了表里没有的 master（先加进任务表）：{sorted(unknown_guide_master)}")
 
     print(f"table rows: {len(rows)}（无类型 {skipped_no_type}，主线 {skipped_main}）；"
           f"其中带引导目标 {n_guide} 条（{n_guide * 100 // max(len(rows), 1)}%）")
+    per_master = Counter(r["master"] for r in rows)
+    print("按 master：" + " ".join(f"{m}={per_master[m]}" for m in masters))
     kind_count: dict[str, int] = {}
     for r in rows:
         if r["guide_kind"]:
@@ -314,18 +377,30 @@ def main() -> int:
     lines.append("#pragma once")
     lines.append("")
     lines.append("// 本文件由 tools/esm/gen_quest_table.py 自动生成，请勿手改。")
-    lines.append("// 数据来源：Starfield.esm 的 QUST 记录 + starfield_en/zhhans.strings")
+    lines.append("// 数据来源：Starfield.esm + 各官方 DLC 的 QUST 记录 + 每个 master 自己的 strings 表")
+    lines.append("//   " + "、".join(f"{m}（{per_master[m]} 条）" for m in masters))
     lines.append("//")
     lines.append("// itype 与 AS3 侧 Shared.QuestUtils 的枚举一致：")
     lines.append("//   0=Activities 1=Main 2=Factions 3=Misc 4=Mission")
+    lines.append("//")
+    lines.append("// ★ 多 master（DLC）：表里存的是「master 下标 + 记录号(local)」，不是运行期 FormID ——")
+    lines.append("//   高字节是加载顺序，只有运行时才知道（见 SAQ.cpp 的 MasterResolver）。")
     lines.append("")
     lines.append("#include <cstdint>")
     lines.append("")
     lines.append("namespace SAQ")
     lines.append("{")
+    lines.append("\t// 数据源插件名（DLL 按名字在 TESDataHandler.files 里查加载序号）")
+    lines.append("\tinline constexpr const char* kQuestMasters[] = {")
+    for m in masters:
+        lines.append(f'\t\t"{c_escape(m)}",')
+    lines.append("\t};")
+    lines.append(f"\tinline constexpr std::size_t kQuestMasterCount = {len(masters)};")
+    lines.append("")
     lines.append("\tstruct StaticQuestInfo")
     lines.append("\t{")
-    lines.append("\t\tstd::uint32_t formID;")
+    lines.append("\t\tstd::uint32_t localFormID;  // 记录号（已去掉文件内的 master 前缀）")
+    lines.append("\t\tstd::uint8_t  master;       // kQuestMasters[] 下标（记录来自哪个插件）")
     lines.append("\t\tstd::uint8_t  type;")
     lines.append("\t\t// QUST DNAM 头 4 字节（uint32，小端）—— 目前**只用于运行时诊断日志**：")
     lines.append("\t\t// 拿它和「引擎已开始的那几条」对一下，看哪一位才是「引擎自动启动」。")
@@ -336,7 +411,9 @@ def main() -> int:
     lines.append("\t\t// （任务发布者 NPC 的放置引用 / 任务自己的落脚点 / 地点地图标记）。")
     lines.append("\t\t// 0 = 这条任务没有可用的引导目标（列表照常显示，只是引导不可用）。")
     lines.append("\t\t// 生成器：tools/esm/gen_guide_targets.py（来源与排序规则见该文件头注释）。")
-    lines.append("\t\tstd::uint32_t guideRef;")
+    lines.append("\t\t// ★ 引用也可能属于别的 master（DLC 任务引用基础游戏的 NPC），所以带下标。")
+    lines.append("\t\tstd::uint32_t guideRefLocal;")
+    lines.append("\t\tstd::uint8_t  guideRefMaster;")
     lines.append("\t\tconst char*   whereEn;  // 目标所在地（城市/飞船），日志与 UI 提示用")
     lines.append("\t\tconst char*   whereZh;")
     lines.append("\t\tconst char*   nameEn;")
@@ -345,10 +422,10 @@ def main() -> int:
     lines.append("")
     lines.append(f"\tinline constexpr StaticQuestInfo kQuestTable[] = {{")
     for r in rows:
-        fid = r["formid"] if isinstance(r["formid"], int) else int(r["formid"], 16)
         flags = int(r.get("dnam_flags", 0))
         lines.append(
-            f'\t\t{{ 0x{fid:08X}u, {r["itype"]}u, 0x{flags:08X}u, 0x{int(r["guide_ref"]):08X}u,'
+            f'\t\t{{ 0x{int(r["local"]):08X}u, {master_idx[r["master"]]}u, {r["itype"]}u,'
+            f' 0x{flags:08X}u, 0x{int(r["guide_ref"]):08X}u, {int(r["guide_master"])}u,'
             f' "{c_escape(r["guide_where_en"])}", "{c_escape(r["guide_where_zh"])}",'
             f' "{c_escape(r["name_en"])}", "{c_escape(r["name_zh"])}" }},'
         )
@@ -366,14 +443,22 @@ def main() -> int:
     print(f"wrote {a.out_json}")
 
     # AS3 内嵌回退数据（C++ 推送失败时 SWF 自己也能显示列表）
+    #
+    # ★ 只放基础游戏的条目：内嵌载荷要写**运行期 FormID**，而 DLC 的 FormID 高字节
+    #   取决于加载顺序（离线算不出来）。放进来的话「点一下它去引导」会拿错 FormID。
+    #   代价只是：C++ 推送失败的那 0.3~0.8 秒里列表里看不到 DLC 条目（可接受的降级）。
     as3_path = Path(a.out_as3)
-    n = write_as3_fragment(rows, as3_path)
-    print(f"wrote {as3_path}（载荷 {n} 字符 / {as3_path.stat().st_size} B）")
+    base_rows = [r for r in rows if r["master"] == "Starfield.esm"]
+    n = write_as3_fragment(base_rows, as3_path)
+    print(f"wrote {as3_path}（内嵌回退只含 Starfield.esm 的 {len(base_rows)} 条；"
+          f"载荷 {n} 字符 / {as3_path.stat().st_size} B）")
 
-    # 抽样打印
+    # 抽样打印（每个 master 各来几条，便于人工核对 DLC 的名字对不对）
     print("\n样本：")
-    for r in rows[:5]:
-        print(f"  0x{r['formid']} [{r['qtype']}] zh={r['name_zh']} / en={r['name_en']}")
+    for m in masters:
+        ms = [r for r in rows if r["master"] == m]
+        for r in ms[:4]:
+            print(f"  {m} 0x{r['local']:06X} [{r['qtype']:10s}] zh={r['name_zh']} / en={r['name_en']}")
     return 0
 
 

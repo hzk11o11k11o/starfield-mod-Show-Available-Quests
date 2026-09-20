@@ -6,6 +6,7 @@
 
 检查的特征（随版本演进补充；旧特征缺失代表功能被回退，不要删）：
   第 16 轮：SAQ_GuideReply / SAQ_SyncGuideState / 引导失败文案 / 各类新日志
+  第 17 轮：SaqAutoCancelIfAccepted（已接取自动取消引导）/ 多 master 的日志与字段
 
 用法：python tools/ui/verify_saq_build.py
 """
@@ -42,6 +43,8 @@ def main() -> int:
         "SAQ_SyncGuideState 函数名": b"SAQ_SyncGuideState",
         "无引导目标文案": "该任务暂无引导目标".encode(),
         "通道失败文案": "引导通道写入失败".encode(),
+        # 第 17 轮：被引导的任务一旦被玩家接取，界面自己发一条取消请求
+        "已接取自动取消引导": "已接取，自动取消引导".encode(),
     }
     swf_paths = [
         ROOT / "ui/missionmenu/build/missionmenu.swf",
@@ -66,8 +69,20 @@ def main() -> int:
             "引导状态同步": "引导状态已同步界面".encode(),
             "菜单尚未就绪": "菜单尚未就绪".encode(),
             "引导重新下发": "引导重新下发".encode(),
+            # 第 17 轮：多 master（DLC）+ 引导结果确认 + 认领已有引导
+            "master 数据源日志": "数据源：".encode(),
+            "master 未加载跳过": "未加载（跳过其任务）".encode(),
+            "引导结果确认": "引导已生效".encode(),
+            "认领已有引导": "认领已有引导".encode(),
         }.items():
             all_ok &= check(f"DLL · {name}", blob, needle)
+        # ★ 第 17 轮的核心判据：DLC 的两个 + 基础游戏一共 4 个数据源名都编进了 DLL
+        for master in (b"Starfield.esm", b"ShatteredSpace.esm", b"SFBGS050.esm", b"SFBGS00D.esm"):
+            all_ok &= check(f"DLL · 数据源 {master.decode()}", blob, master)
+        # 反向检查：第 17 轮删掉的 DNAM 诊断行不应再出现
+        gone = "DNAM 位分布".encode() not in blob
+        print(("OK  " if gone else "MISS") + " DLL · DNAM 诊断已移除(反向检查)")
+        all_ok &= gone
         # 反向检查：第 16 轮删掉的无用自检不应再出现
         gone = "formArrays[类型=数量]".encode() not in blob
         print(("OK  " if gone else "MISS") + " DLL · 旧自检已移除(反向检查)")

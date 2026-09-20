@@ -657,6 +657,7 @@ package
          }
          this.RawAvailableQuests = _loc2_;
          this.AvailableQuests = this.FilterKnownQuests(_loc2_);
+         this.SaqAutoCancelIfAccepted();
          this.SaqApplyTabTitle();
          if(this.MissionsList_mc != null)
          {
@@ -888,6 +889,37 @@ package
          }
          var _loc2_:Object = this.FindQuestEntryByID(this.AvailableQuests, param1.uID);
          return _loc2_ != null ? _loc2_.sName : param1.sName;
+      }
+      
+      // ★ 第 17 轮：被引导的任务一旦进了玩家任务日志（= 玩家已经接到它了），引导自己消失。
+      //
+      //   为什么需要：引导是「借」代理任务（SAQ_MainQuest）画出来的 —— 玩家真的接到任务后，
+      //   代理任务还挂着「追踪中」，于是 ① HUD 上继续指着那个地点（已经没用了）；
+      //   ② 玩家任务日志里一直躺着一条名叫「可接任务」的代理任务。
+      //   判据只用**玩家任务日志**（QuestData 里有这个 uID）——这是「已接取」的权威数据
+      //   （第 11 轮的结论：TESQuest 的 started 位不算数，见 docs/99 第十一节）。
+      //   动作 = 序号 +1、目标清 0（和玩家自己按「取消」走同一条路，DLL 侧无需新协议）。
+      private function SaqAutoCancelIfAccepted() : void
+      {
+         if(this.SaqGuideQuest == 0 || this.QuestData == null)
+         {
+            return;
+         }
+         var _loc1_:int = 0;
+         while(_loc1_ < this.QuestData.length)
+         {
+            var _loc2_:Object = this.QuestData[_loc1_];
+            if(_loc2_ != null && Number(_loc2_.uID) == this.SaqGuideQuest)
+            {
+               var _loc3_:Number = this.SaqGuideQuest;
+               this.SaqGuideSeq = this.SaqGuideSeq + 1;
+               this.SaqGuideQuest = 0;
+               this.SaqGuideNote = "已接取，自动取消引导";
+               this.SaqApplyTrackedMarker(_loc3_, 0);
+               return;
+            }
+            _loc1_++;
+         }
       }
       
       // 切换引导：同一条再按一次 = 取消（返回 true 表示现在是「已设为引导」）。

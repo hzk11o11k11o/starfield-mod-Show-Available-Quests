@@ -57,12 +57,43 @@ def get_record_payload(buf: bytes, rec_off: int):
     return buf[payload_off:payload_off + size]
 
 
-def walk_quests(buf: bytes):
-    """遍历所有 GRUP(QUST) 里的记录，yield (formid, flags, payload)。"""
-    pos = 0
-    # 跳到 TES4 记录之后
+def read_tes4(buf: bytes) -> dict:
+    """TES4 头：master 列表 / flags / 文件名（用来算「本插件自己的记录前缀」）。
+
+    ★ 多 master 支持的基础（第 17 轮）：插件里记录的 FormID 前缀 = **本插件在它自己的
+      master 列表里的序号**（不是运行期加载序号）。例：
+        Starfield.esm      masters=[]                      → 自己的记录前缀 0x00
+        ShatteredSpace.esm masters=[starfield.esm]         → 0x01
+        SFBGS050.esm       masters=[starfield.esm, sfbgs00d.esm] → 0x02
+      运行期再把「序号」换成「加载序号」（DLL 侧按 master 名字查 TESDataHandler.files）。
+
+    另：flags 位含义见 commonlibsf `TESFile::Flags`：
+        0x01=kMaster 0x04=kEnabled 0x80=kLocalized 0x100=kSmall 0x200=? 0x400=kMedium 0x800=kBlueprint
+      kSmall（light）插件的 FormID 是 12 位局部号 + 前缀 0xFE，读表时要按位宽区分。
+    """
     if buf[0:4] != b"TES4":
         raise ValueError("not a plugin")
+    head_size = struct.unpack_from("<I", buf, 4)[0]
+    flags = struct.unpack_from("<I", buf, 8)[0]
+    masters: list[str] = []
+    for sig, sp in iter_subrecords(buf, 24, head_size):
+        if sig == b"MAST":
+            masters.append(sp.split(b"\x00")[0].decode("latin1"))
+    return {
+        "flags": flags,
+        "masters": masters,
+        "self_index": len(masters),          # 自己的记录用的前缀
+        "small": bool(flags & 0x100),        # light（ESL 类）
+        "localized": bool(flags & 0x80),
+    }
+
+
+def walk_quests(buf: bytes):
+    """遍历所有 GRUP(QUST) 里的记录，yield (formid, flags, payload)。
+
+    只取 QUST 顶层组里的**直接记录**；嵌套组（type 7/10，即任务的对话/信息子记录）
+    整段跳过 —— 那是 INFO/DIAL，不是任务记录。
+    """
     head_size = struct.unpack_from("<I", buf, 4)[0]
     pos = 24 + head_size
     while pos + 24 <= len(buf):
@@ -93,9 +124,23 @@ def walk_quests(buf: bytes):
         pos += gsize
 
 
-def parse_quest(formid: int, flags: int, payload: bytes) -> dict:
+def parse_quest(formid: int, flags: int, payload: bytes, meta: dict | None = None) -> dict:
+    """meta = read_tes4() 的结果（master 名 / 自己的前缀 / 是否 small）。
+
+    ★ 第 17 轮（多 master）：表里同时记
+        master    记录来自哪个插件（DLL 按名字查加载序号）
+        local     记录号（已经去掉文件内的 master 前缀）——运行期 FormID = (序号<<24)|local
+        small     是否是 light 插件（前缀 0xFE + 12 位局部号）
+      老字段 formid 保留（= 文件里的原始 FormID），便于和 xEdit/日志对照。
+    """
+    meta = meta or {"self_index": 0, "small": False, "file": ""}
+    mask = 0xFFF if meta.get("small") else 0xFFFFFF
     rec = {
         "formid": formid,
+        "master": meta.get("file", "Starfield.esm"),
+        "self_index": meta.get("self_index", 0),
+        "small": bool(meta.get("small")),
+        "local": formid & mask,
         "rec_flags": flags,
         "edid": None,
         "full": None,
@@ -140,18 +185,37 @@ def parse_quest(formid: int, flags: int, payload: bytes) -> dict:
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("esm")
+    ap.add_argument("esm", nargs="+", help="一个或多个 ESM（如 Starfield.esm ShatteredSpace.esm SFBGS050.esm）")
     ap.add_argument("--json", default=None, help="dump all quests as JSON")
     ap.add_argument("--stats", action="store_true", help="print statistics")
     a = ap.parse_args()
 
-    path = Path(a.esm)
-    buf = path.read_bytes()
     quests = []
-    for formid, flags, payload in walk_quests(buf):
-        quests.append(parse_quest(formid, flags, payload))
+    for esm in a.esm:
+        path = Path(esm)
+        buf = path.read_bytes()
+        meta = read_tes4(buf)
+        meta["file"] = path.name
+        n0 = len(quests)
+        for formid, flags, payload in walk_quests(buf):
+            quests.append(parse_quest(formid, flags, payload, meta))
+        extra = ""
+        if meta["flags"] & 0x100:
+            extra += " light(kSmall)"
+        if meta["flags"] & 0x400:
+            extra += " kMedium"
+        if meta["flags"] & 0x800:
+            extra += " kBlueprint"
+        print(f"{path.name}: QUST {len(quests) - n0} 条；"
+              f"master={meta['masters']}；自己的记录前缀=0x{meta['self_index']:02X}{extra}")
 
     print(f"QUST records: {len(quests)}")
+
+    if a.stats:
+        by_master = Counter(q["master"] for q in quests)
+        print("\n--- 按 master ---")
+        for k, v in by_master.most_common():
+            print(f"  {k}: {v}")
 
     if a.stats:
         types = Counter(q["qtyp"] for q in quests)

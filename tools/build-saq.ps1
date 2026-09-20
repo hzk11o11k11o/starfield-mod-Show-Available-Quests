@@ -43,12 +43,20 @@ $papyrusInc  = Join-Path $dataDir 'Scripts\Source\Base'
 function Step($n, $msg) { Write-Host "[$n] $msg" -ForegroundColor Yellow }
 function Ok($msg) { Write-Host "    OK: $msg" -ForegroundColor Green }
 
-# --- 1. 静态表（FormID -> 中/英文名 + 类型 + 引导目标） ----------------------
+# --- 1. 静态表（master + 记录号 -> 中/英文名 + 类型 + 引导目标） ---------------
+# ★ 第 17 轮（DLC 支持）：数据源不再只有 Starfield.esm ——
+#   fetch_sources.py 会把每个 master 的「字符串表 + QUST 导出」都准备好
+#   （ShatteredSpace.esm = 破碎空间 / SFBGS050.esm = 地球舰队 / SFBGS00D.esm = 自由航道更新）。
 if (-not $SkipTable) {
-    Step '1/6' '生成引导目标表（gen_guide_targets.py，扫 Starfield.esm 约 1-2 分钟）'
+    Step '1/6' '准备离线数据（fetch_sources.py：DLC 字符串 + 多 master 任务导出）'
+    & python (Join-Path $root 'tools\esm\fetch_sources.py') | Write-Host
+    if ($LASTEXITCODE -ne 0) { throw "fetch_sources.py 失败（exit $LASTEXITCODE）" }
+    Step '1/6' '生成引导目标表（gen_guide_targets.py，扫全部 master，约 3-6 分钟）'
     & python (Join-Path $root 'tools\esm\gen_guide_targets.py') | Write-Host
+    if ($LASTEXITCODE -ne 0) { throw "gen_guide_targets.py 失败（exit $LASTEXITCODE）" }
     Step '1/6' '生成静态任务表（gen_quest_table.py）'
     & python (Join-Path $root 'tools\esm\gen_quest_table.py') | Write-Host
+    if ($LASTEXITCODE -ne 0) { throw "gen_quest_table.py 失败（exit $LASTEXITCODE）" }
     Ok 'plugin\src\SAQ_QuestTable.h'
 } else { Step '1/6' '跳过静态表生成' }
 
