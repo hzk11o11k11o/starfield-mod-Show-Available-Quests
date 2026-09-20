@@ -179,6 +179,15 @@ if (-not $SkipDeploy) {
     Copy-Item $esmStable (Join-Path $dest $esmName) -Force
     Copy-Item (Join-Path $pexOut '*.pex') (Join-Path $dest 'Scripts') -Force
 
+    # ★ 第 23 轮：预置空的日志文件 —— MO2 的 usvfs 会把「写 mod 目录里已存在的文件」
+    #   重定向回 mod 目录；否则插件新建的日志会落到 overwrite，删 mod 时留下残留
+    #   （玩家要求：日志/配置不放 C 盘、删 mod 不残留）。
+    $logPath = Join-Path $dest 'SFSE\Plugins\SAQ_ShowAvailableQuests.log'
+    if (-not (Test-Path $logPath)) {
+        New-Item -ItemType File -Path $logPath -Force | Out-Null
+        Write-Host '    已预置空日志文件（让 MO2 把日志写入重定向回 mod 目录）'
+    }
+
     $meta = Join-Path $dest 'meta.ini'
     if (-not (Test-Path $meta)) {
         @"
