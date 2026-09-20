@@ -17,6 +17,9 @@ namespace SAQ::Guide
 		constexpr std::uint32_t kFormIDTargetRef = 0x801;   // GLOB SAQ_GuideTargetRef
 		constexpr std::uint32_t kFormIDGuideState = 0x802;  // GLOB SAQ_GuideState
 		constexpr std::uint32_t kFormIDNotify = 0x803;      // GLOB SAQ_Notify
+		// ★ 第 20 轮：控制台测试开关（玩家 `set SAQ_TestMode to N`）。可选记录 ——
+		//   旧 ESM 里没有它，读不到就保持 -1（不过滤），不影响任何既有功能。
+		constexpr std::uint32_t kFormIDTestMode = 0x804;    // GLOB SAQ_TestMode
 
 		// 脚本写的身份锚点：7777 + 菜单打开次数（允许 1000 次）
 		constexpr float kNotifyMagic = 7777.0f;
@@ -88,10 +91,17 @@ namespace SAQ::Guide
 		out.targetRef = target->value;
 		out.guideState = state->value;
 		out.notify = notify->value;
-		out.summary = std::format("前缀=0x{:02X} 目标={:.0f}(0x{:X}) 状态={:.0f} 通知={:.0f}",
+		// ★ 第 20 轮：测试开关（可选 GLOB）——读不到就保持 -1（旧 ESM 兼容，不过滤）
+		if (auto* tm = GlobAt(g_prefix, kFormIDTestMode)) {
+			out.testMode = tm->value;
+		}
+		const std::string testNote = out.testMode >= 0.0f
+			? std::format("{:.0f}", out.testMode)
+			: std::string{ "无(ESM 旧版)" };
+		out.summary = std::format("前缀=0x{:02X} 目标={:.0f}(0x{:X}) 状态={:.0f} 通知={:.0f} 测试={}",
 			g_prefix,
 			out.targetRef, static_cast<std::uint32_t>(out.targetRef),
-			out.guideState, out.notify);
+			out.guideState, out.notify, testNote);
 		return out;
 	}
 

@@ -103,6 +103,7 @@ namespace SAQ
 			std::size_t completed{};          // 已完成
 			std::size_t tracked{};            // 正被玩家追踪
 			std::size_t hidden{};             // 因运行时状态被剔掉的
+			std::size_t testFiltered{};       // ★ 第 20 轮：被控制台测试模式（SAQ_TestMode）过滤掉的
 			std::size_t skippedMaster{};      // 所属 master 没加载（DLC 没装/没启用）而跳过的
 			bool        filterApplied{};      // 这次到底有没有按运行时状态过滤
 			std::string samples;              // 被剔掉的前几条（名字 + 状态）
@@ -260,6 +261,48 @@ namespace SAQ
 			return masters;
 		}
 
+		// ------------------------------------------------------------------
+		// ★ 第 20 轮：控制台测试过滤（GLOB SAQ_TestMode）
+		//
+		// 目的：261 条候选里想验证某一件事（引导/回滚/DLC）时，在列表里滚动找条目
+		// 太费劲。玩家在游戏控制台输入 `set SAQ_TestMode to N`，DLL 每次开菜单读一次：
+		//
+		//   N=0（默认）不过滤（想恢复时 set 回 0）
+		//   N=1 只显示「有引导目标」的（点了能出蓝点，验证引导链路）
+		//   N=2 只显示「没有引导目标」的（验证界面回滚 / 结果码 1）
+		//   N=3 只显示 DLC 条目（验证 DLC 支持）
+		//   N=4 只显示「有引导目标 + 有具名地点」的（最少最好找）
+		//
+		// 只影响「显示哪些」—— 与既有过滤（已完成 / master 未加载 / 玩家日志）是
+		// 「与」的关系，不改变任何既有判定。GLOB 不存在（旧 ESM）⇒ 模式 0。
+		// ------------------------------------------------------------------
+		bool PassesTestFilter(const StaticQuestInfo& a_info, int a_mode)
+		{
+			switch (a_mode) {
+			case 1:
+				return a_info.guideRefLocal != 0;
+			case 2:
+				return a_info.guideRefLocal == 0;
+			case 3:
+				return a_info.master != 0;
+			case 4:
+				return a_info.guideRefLocal != 0 && a_info.whereZh != nullptr && a_info.whereZh[0] != '\0';
+			default:
+				return true;  // 0 / 未知值 = 不过滤
+			}
+		}
+
+		std::string_view TestModeNote(int a_mode)
+		{
+			switch (a_mode) {
+			case 1: return "只显示「有引导目标」的条目";
+			case 2: return "只显示「没有引导目标」的条目（测界面回滚）";
+			case 3: return "只显示 DLC 条目";
+			case 4: return "只显示「有引导目标 + 有具名地点」的条目";
+			default: return "关闭（显示全部）";
+			}
+		}
+
 		// 收集"可接任务"候选 + 按运行时状态过滤。
 		//
 		// 规则：
@@ -270,7 +313,8 @@ namespace SAQ
 		//     结果"quest 总数=0"、列表当然是空的，见 docs/02）
 		//   * 引擎**已完成**的 → 剔掉（统计照原样写进日志）
 		//   * 名称中英都带上，AS3 侧按游戏语言挑
-		void CollectAvailableQuests(std::vector<QuestEntry>& a_out, std::size_t& a_totalQuests, RuntimeFilterStats& a_stats)
+		void CollectAvailableQuests(std::vector<QuestEntry>& a_out, std::size_t& a_totalQuests,
+			RuntimeFilterStats& a_stats, int a_testMode)
 		{
 			// ★ 第 18 轮：这里原来是无条件 `a_stats = {}`，把 BuildRuntimeRows 刚写进去的
 			//   `skippedMaster`（master 未加载而跳过的条数）清零了 —— 第 17 轮实测日志里
@@ -333,6 +377,13 @@ namespace SAQ
 						// 时，靠 FormID 精确核对，而不是靠名字猜）。
 						a_stats.samples += std::format("{}[0x{:08X} {}] ", info.nameZh, row.formID, Describe(state));
 					}
+					continue;
+				}
+
+				// ★ 第 20 轮：控制台测试过滤（`set SAQ_TestMode to N`，见 PassesTestFilter）。
+				//   只影响显示，与上面的运行时过滤是「与」的关系。
+				if (!PassesTestFilter(info, a_testMode)) {
+					++a_stats.testFiltered;
 					continue;
 				}
 
@@ -408,9 +459,10 @@ namespace SAQ
 		std::string FormatRuntimeStats(const RuntimeFilterStats& a_stats)
 		{
 			std::string out = std::format(
-				"运行时状态：引擎存在={} 虚表识别={} 未识别={} 已开始={} 已完成={} 追踪中={} 隐藏={} 跳过(master未加载)={} 过滤={}",
+				"运行时状态：引擎存在={} 虚表识别={} 未识别={} 已开始={} 已完成={} 追踪中={} 隐藏={} 测试过滤={} 跳过(master未加载)={} 过滤={}",
 				a_stats.live, a_stats.recognized, a_stats.unrecognized,
 				a_stats.started, a_stats.completed, a_stats.tracked, a_stats.hidden,
+				a_stats.testFiltered,
 				a_stats.skippedMaster,
 				a_stats.filterApplied ? "生效" : "跳过(识别率<80%)");
 			if (!a_stats.samples.empty()) {
@@ -1066,10 +1118,18 @@ namespace SAQ
 			//   ★ 第 18 轮：解析方式改为「前缀探测」（不再读 TESDataHandler —— 它的结构体
 			//   偏移在本游戏版本上不可信），设计与证据见 SAQ_Masters.h 顶部注释。
 			const auto t0 = NowMs();
+			// ★ 第 20 轮：先读 ESM 通道拿「控制台测试开关」（-1 = 旧 ESM 没这条 GLOB ⇒ 0）
+			const auto testModeRaw = Guide::EnsureChannel().testMode;
+			const int  testMode = testModeRaw >= 0.0f ? static_cast<int>(testModeRaw + 0.5f) : 0;
 			const auto masters = BuildRuntimeRows(g_pending.stats);
-			CollectAvailableQuests(g_pending.quests, g_pending.total, g_pending.stats);
+			CollectAvailableQuests(g_pending.quests, g_pending.total, g_pending.stats, testMode);
 			const auto collectCost = NowMs() - t0;
 			REX::INFO("数据源：{}", masters);
+			if (testMode > 0) {
+				// 测试模式醒目提示（只在开启时打 —— 免得玩家忘了关、以为列表坏了）
+				REX::INFO("测试模式：{}（{}）—— 控制台 `set SAQ_TestMode to 0` 关闭",
+					testMode, TestModeNote(testMode));
+			}
 			REX::INFO("{}", FormatRuntimeStats(g_pending.stats));
 			// 语言这一项只是**日志参考**：实际显示语言由 AS3 侧按引擎推来的任务名判定。
 			// 收集耗时进日志（第 11 轮）：正常应为毫秒级；若出现几百 ms，就是查询本身有问题。

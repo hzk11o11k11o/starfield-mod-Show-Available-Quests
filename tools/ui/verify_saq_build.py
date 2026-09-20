@@ -10,6 +10,8 @@
   第 18 轮：前缀探测（不再读 TESDataHandler::files）/ 新「未加载」文案 / 空推送说明
   第 19 轮：脚本活性探测（DLL 复读通知值 + Papyrus 菜单事件 Trace）/
            引导未生效收尾（结果码 4 回写）/ drop= 被过滤名单 / 报告缓冲 512→2048
+  第 20 轮：控制台测试过滤（set SAQ_TestMode to N）——ESM 里的开关 GLOB +
+           DLL 的过滤开关与日志（测试模式 / 测试过滤统计）
 
 用法：python tools/ui/verify_saq_build.py
 """
@@ -89,6 +91,10 @@ def main() -> int:
             "脚本活性探测": "脚本活性探测".encode(),
             "脚本未响应提示": "没有响应菜单事件".encode(),
             "引导未生效收尾": "引导未生效：".encode(),
+            # 第 20 轮：控制台测试过滤（set SAQ_TestMode to N）
+            "测试模式日志": "测试模式：".encode(),
+            "测试模式说明": "只显示「有引导目标」的条目".encode(),
+            "测试过滤统计": "测试过滤".encode(),
         }.items():
             all_ok &= check(f"DLL · {name}", blob, needle)
         # 反向检查：第 18 轮换掉的旧「未加载」文案不应再出现（新文案不含完整旧串）
@@ -123,6 +129,15 @@ def main() -> int:
     else:
         print(f"MISS 缺少 PEX {pex}")
         all_ok = False
+
+    # ★ 第 20 轮：ESM 里的测试开关 GLOB（控制台 `set SAQ_TestMode to N` 的落点）
+    for label, path in (("工作区", ROOT / "esm/SAQ_ShowAvailableQuests.esm"),
+                        ("MO2 部署", MO2_MOD / "SAQ_ShowAvailableQuests.esm")):
+        if path.exists():
+            all_ok &= check(f"ESM({label}) · 测试开关 GLOB", path.read_bytes(), b"SAQ_TestMode")
+        else:
+            print(f"MISS 缺少 {path}")
+            all_ok = False
 
     print("---")
     print("全部通过" if all_ok else "存在缺失（见上面的 MISS）")

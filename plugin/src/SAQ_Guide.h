@@ -53,6 +53,10 @@ namespace SAQ
 			float         targetRef{};  // SAQ_GuideTargetRef：当前引导目标引用（0 = 无）
 			float         guideState{}; // SAQ_GuideState：脚本处理结果（0 待处理/1 已应用/2 取不到/3 已清除/4 无别名）
 			float         notify{};     // SAQ_Notify：7777 + 菜单打开次数
+			// ★ 第 20 轮：控制台测试开关（SAQ_TestMode，0x804）。玩家在游戏控制台输入
+			//   `set SAQ_TestMode to N` 切换「只显示适合测试的条目」，DLL 每次开菜单读一次。
+			//   -1 = 这条 GLOB 不存在（旧 ESM / 还没跑最新 patch_saq_esm.py）⇒ 不过滤。
+			float         testMode{ -1.0f };
 			std::string   summary;      // 一行日志（认领失败时是诊断信息）
 		};
 

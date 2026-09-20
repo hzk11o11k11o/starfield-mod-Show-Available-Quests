@@ -34,6 +34,17 @@ Starfield.esm 里的真实样板**（证据在 docs/05）：
 每次运行都会先删掉记录里所有目标/别名相关子记录，再重新写一份 ⇒ 反复运行结果一致，
 xEdit 重建 ESM（tools/run-esm-build.ps1）之后重新跑本工具即可。
 
+## 第 20 轮：测试开关 GLOB（SAQ_TestMode）
+
+控制台测试过滤（`set SAQ_TestMode to 1`）需要一个 DLL 能读到、玩家能改的全局变量。
+SFSE 没有「注册控制台命令」的接口（见 SFSE\Interfaces.h：只有 Messaging/Trampoline/
+Menu/Task），所以走最稳的路：**ESM 里加一条 GLOB**，玩家用游戏自带的控制台 `set`
+命令改它，DLL 每次开菜单读一次。
+
+本工具负责保证这条 GLOB 存在（记录号 0x804，初值 0），并且：
+* **已存在就不动**（保留玩家当前设置的值；重新构建不会把测试模式清掉）；
+* 新增时顺带把 TES4 HEDR 的 numRecords +1、nextObjectID 提到 ≥ 0x805。
+
 用法：
     python tools/esm/patch_saq_esm.py                     # 原地补 esm/SAQ_ShowAvailableQuests.esm
     python tools/esm/patch_saq_esm.py --check             # 只解析并打印当前记录结构
@@ -70,6 +81,10 @@ OBJECTIVE_TEXT = "前往接取地点".encode("utf-8") + b"\x00"
 #   （第 11 轮日志实证：qdata 列表里出现「f000800:」——名字为空的那条就是它），
 #   没名字时 HUD 的任务更新提示与任务日志都显示成空白/省略号。
 QUEST_NAME = "可接任务".encode("utf-8") + b"\x00"
+
+# ★ 第 20 轮：控制台测试开关（GLOB）。0x801..0x803 已被三个通道 GLOB 占用。
+TEST_MODE_EDID = "SAQ_TestMode"
+TEST_MODE_FORMID = 0x804
 
 # 记录里「目标 / 别名」相关的子记录（重建时先全部删掉）
 ALIAS_SUBS = {b"ALST", b"ALLS", b"ALID", b"ALFG", b"ALED", b"VTCK", b"ALFA", b"ALRT",
@@ -137,6 +152,46 @@ def build_quest_payload(old_payload: bytes) -> tuple[bytes, dict]:
     return b"".join(head + tail), info
 
 
+def make_glob_payload(edid: str, value: float) -> bytes:
+    """GLOB 记录的 payload：EDID(名字+NUL) + FLTV(float)。格式照抄现有 GLOB 记录。"""
+    return (make_sub(b"EDID", edid.encode("latin1") + b"\x00") +
+            make_sub(b"FLTV", struct.pack("<f", value)))
+
+
+def has_edid(buf: bytes, edid: str) -> bool:
+    """整个文件里有没有这个 EDID 的记录（任何类型）。"""
+    for kind, _off, hdr, payload in walk_linear(buf):
+        if kind != "REC":
+            continue
+        for s, sp in split_subs(payload):
+            if s == b"EDID" and sp.split(b"\x00")[0].decode("latin1") == edid:
+                return True
+    return False
+
+
+def bump_tes4_hedr(head: bytearray, add_records: int, min_next_id: int) -> None:
+    """把 TES4 头里 HEDR 的 numRecords 增加 add_records、nextObjectID 提到至少 min_next_id。
+
+    HEDR payload = version(float 4) + numRecords(uint32) + nextObjectID(uint32)。
+    （xEdit 生成的值：numRecords=6=4 记录+2 MAST，nextObjectID=0x804=最后一个记录号+1。）
+    """
+    size = struct.unpack_from("<I", head, 4)[0]
+    p = 24
+    end = 24 + size
+    while p + 6 <= end:
+        sig = bytes(head[p:p + 4])
+        n = struct.unpack_from("<H", head, p + 4)[0]
+        if sig == b"HEDR" and n >= 12:
+            base = p + 6
+            num = struct.unpack_from("<I", head, base + 4)[0]
+            nxt = struct.unpack_from("<I", head, base + 8)[0]
+            struct.pack_into("<I", head, base + 4, num + add_records)
+            if nxt < min_next_id:
+                struct.pack_into("<I", head, base + 8, min_next_id)
+            return
+        p += 6 + n
+
+
 def walk_linear(buf: bytes):
     """线性遍历（**不依赖 GRUP 的 size**）：yield ('GRUP'|'REC', offset, hdr, payload)。
 
@@ -190,7 +245,12 @@ def describe(path: Path) -> int:
             for s, sp in subs:
                 if s == b"EDID":
                     edid = sp.split(b"\x00")[0].decode("latin1")
-            print(f"    REC {sig.decode('latin1')} @0x{off:X} size={size} EDID={edid}")
+            extra_glob = ""
+            if sig == b"GLOB":
+                for s, sp in subs:
+                    if s == b"FLTV" and len(sp) == 4:
+                        extra_glob = f"  value={struct.unpack('<f', sp)[0]:g}"
+            print(f"    REC {sig.decode('latin1')} @0x{off:X} size={size} EDID={edid}{extra_glob}")
             if sig == b"QUST":
                 for i, (s, sp) in enumerate(subs):
                     extra = ""
@@ -202,20 +262,37 @@ def describe(path: Path) -> int:
     return 0
 
 
-def rebuild_file(buf: bytes, target_formid: int, new_payload: bytes) -> bytes:
+def rebuild_file(buf: bytes, target_formid: int, new_payload: bytes,
+                 glob_extra: tuple[int, bytes] | None = None) -> bytes:
     """整体重新序列化（文件只有几百字节）：只换目标记录的 payload，其余原样搬运。
 
     组 size 是**重算**出来的，不是「原值 + 增量」—— 万一之前有过一次写坏（组 size 与
     记录对不上），增量法会把错误继承下去（踩过一次）。
+
+    glob_extra = (记录号低 24 位, payload)：往 GLOB 组的**末尾**追加一条新记录
+    （第 20 轮的测试开关 GLOB）。记录头以组内第一条记录为模板（flags/时间戳/
+    FormVersion 全继承），只改 size 与 FormID 低位 —— 不靠猜字段。
     """
     head_size = struct.unpack_from("<I", buf, 4)[0]
     out = bytearray(buf[:24 + head_size])
     pending_hdr: bytes | None = None
     pending_records: list[tuple[bytes, bytes]] = []
+    pending_is_glob = False
 
     def flush() -> None:
+        nonlocal pending_hdr, pending_records, pending_is_glob
         if pending_hdr is None:
             return
+        if pending_is_glob and glob_extra is not None:
+            formid_low, extra_payload = glob_extra
+            if not pending_records:
+                raise SystemExit("GLOB 组是空的 —— 没有可用的记录头模板，先跑一次 xEdit 生成")
+            tmpl = bytearray(pending_records[0][0])
+            struct.pack_into("<I", tmpl, 4, len(extra_payload))
+            cur_id = struct.unpack_from("<I", tmpl, 12)[0]
+            struct.pack_into("<I", tmpl, 12, (cur_id & 0xFF000000) | formid_low)
+            pending_records.append((bytes(tmpl), extra_payload))
+            bump_tes4_hedr(out, 1, formid_low + 1)
         gsize = 24 + sum(24 + len(pl) for _, pl in pending_records)
         hdr = bytearray(pending_hdr)
         hdr[4:8] = struct.pack("<I", gsize)
@@ -223,12 +300,16 @@ def rebuild_file(buf: bytes, target_formid: int, new_payload: bytes) -> bytes:
         for rhdr, pl in pending_records:
             out.extend(rhdr)
             out.extend(pl)
+        pending_hdr = None
+        pending_records = []
+        pending_is_glob = False
 
     for kind, _off, hdr, payload in walk_linear(buf):
         if kind == "GRUP":
             flush()
             pending_hdr = hdr
             pending_records = []
+            pending_is_glob = hdr[8:12] == b"GLOB"
             continue
         rhdr = bytearray(hdr)
         pl = payload
@@ -297,7 +378,16 @@ def main() -> int:
           f"payload {len(payload_old)} -> {len(new_payload)} B"
           f"（清掉 {len(info['dropped'])} 个子记录）")
 
-    out = rebuild_file(buf, quest_formid, new_payload)
+    # ★ 第 20 轮：保证测试开关 GLOB 存在（已存在则原样保留 —— 玩家设置的值不能被清掉）
+    glob_extra = None
+    if has_edid(buf, TEST_MODE_EDID):
+        print(f"GLOB {TEST_MODE_EDID}：已存在（保留当前值）")
+    else:
+        glob_extra = (TEST_MODE_FORMID, make_glob_payload(TEST_MODE_EDID, 0.0))
+        print(f"GLOB {TEST_MODE_EDID}：将新增（记录号 0x{TEST_MODE_FORMID:03X}，初值 0）"
+              f"—— 控制台 `set {TEST_MODE_EDID} to N` 切换测试过滤，见 docs/05")
+
+    out = rebuild_file(buf, quest_formid, new_payload, glob_extra)
     path.write_bytes(out)
     print(f"已写回 {path}（{len(out)} B）")
 
