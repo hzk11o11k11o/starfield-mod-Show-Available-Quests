@@ -56,18 +56,30 @@ BOARD_BASES = {
 #
 # 名字规矩：中文「任务板 · <地点>」/ 英文 "Mission Board - <Place>"
 #   —— 与任务条目的命名区分开（玩家一眼看出这是「入口」而不是一条任务）。
+#
+# ★★ 中文名必须用**游戏官方译名**（第 28 轮踩坑：曾把 The Lodge 写成「星座小屋」，
+#     玩家在列表里按「陋室」找不到）。核对方法（用项目内的 strings 表直接查）：
+#       python -c "import sys;sys.path.insert(0,'tools/esm');from pathlib import Path;
+#                  from strings_probe import load_strings as L;
+#                  en=L(Path('ref/strings/strings/starfield_en.strings'));
+#                  zh=L(Path('ref/strings/strings/starfield_zhhans.strings'));
+#                  print([(v,zh.get(k)) for k,v in en.items() if isinstance(v,str) and 'The Lodge'==v])"
+#     已核对的官方译名：The Lodge=陋室 / Cydonia=赛多尼亚 / Ryujin Industries=龙神集团 /
+#     Deimos Staryards=火卫二造船厂 / Trident Staryard=海神叉造船厂 /
+#     Stroud-Eklund Staryards=斯特劳艾克伦集团造船厂 / The Key=星钥站 /
+#     Hopetown=霍普镇 / New Homestead=新家园 / New Atlantis=新亚特兰蒂斯城。
 ENTRIES = [
-    (0x0021001E, "CityNewAtlantisWell", "Mission Board - New Atlantis", "任务板 · 新亚特兰蒂斯"),
+    (0x0021001E, "CityNewAtlantisWell", "Mission Board - New Atlantis", "任务板 · 新亚特兰蒂斯城"),
     (0x0014D497, "CityAkilaCityTheRock", "Mission Board - Akila City", "任务板 · 阿基拉城"),
     (0x00148C93, "CityNeonCore", "Mission Board - Neon", "任务板 · 霓虹城"),
-    (0x001DF853, "CityCydoniaMainLevel", "Mission Board - Cydonia", "任务板 · 塞多尼亚"),
+    (0x001DF853, "CityCydoniaMainLevel", "Mission Board - Cydonia", "任务板 · 赛多尼亚"),
     (0x001DED95, "SettleHopeTownPitStop", "Mission Board - Hopetown", "任务板 · 霍普镇"),
     (0x001DF5BD, "SettleNewHomestead01", "Mission Board - New Homestead", "任务板 · 新家园"),
-    (0x00137573, "CityNewAtlantisLodgeInt", "Mission Board - The Lodge", "任务板 · 星座小屋"),
-    (0x0013F738, "LC044RyujinIndustriesHQ", "Mission Board - Ryujin Industries", "任务板 · 龙神工业"),
-    (0x000C2D64, "ssSettleDeimosStaryard", "Mission Board - Deimos Staryard", "任务板 · 狄摩斯星船厂"),
-    (0x0016265F, "ssSettleTridentStaryard", "Mission Board - Trident Staryard", "任务板 · 三叉戟星船厂"),
-    (0x00167872, "ssSettleStroudEklundStaryard", "Mission Board - Stroud-Eklund Staryard", "任务板 · 斯特劳德-埃克伦德星船厂"),
+    (0x00137573, "CityNewAtlantisLodgeInt", "Mission Board - The Lodge", "任务板 · 陋室"),
+    (0x0013F738, "LC044RyujinIndustriesHQ", "Mission Board - Ryujin Industries", "任务板 · 龙神集团"),
+    (0x000C2D64, "ssSettleDeimosStaryard", "Mission Board - Deimos Staryards", "任务板 · 火卫二造船厂"),
+    (0x0016265F, "ssSettleTridentStaryard", "Mission Board - Trident Staryard", "任务板 · 海神叉造船厂"),
+    (0x00167872, "ssSettleStroudEklundStaryard", "Mission Board - Stroud-Eklund Staryards", "任务板 · 斯特劳艾克伦集团造船厂"),
     (0x00197D22, "StationTheKeyInterior", "Mission Board - The Key", "任务板 · 星钥站"),
 ]
 

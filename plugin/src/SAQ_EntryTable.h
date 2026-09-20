@@ -28,17 +28,17 @@ namespace SAQ
 	};
 
 	inline constexpr StaticEntryInfo kEntryTable[] = {
-		{ 0x0021001eu, 0u, false, "Mission Board - New Atlantis", "任务板 · 新亚特兰蒂斯" },
+		{ 0x0021001eu, 0u, false, "Mission Board - New Atlantis", "任务板 · 新亚特兰蒂斯城" },
 		{ 0x0014d497u, 0u, true , "Mission Board - Akila City", "任务板 · 阿基拉城" },
 		{ 0x00148c93u, 0u, false, "Mission Board - Neon", "任务板 · 霓虹城" },
-		{ 0x001df853u, 0u, false, "Mission Board - Cydonia", "任务板 · 塞多尼亚" },
+		{ 0x001df853u, 0u, false, "Mission Board - Cydonia", "任务板 · 赛多尼亚" },
 		{ 0x001ded95u, 0u, false, "Mission Board - Hopetown", "任务板 · 霍普镇" },
 		{ 0x001df5bdu, 0u, false, "Mission Board - New Homestead", "任务板 · 新家园" },
-		{ 0x00137573u, 0u, false, "Mission Board - The Lodge", "任务板 · 星座小屋" },
-		{ 0x0013f738u, 0u, false, "Mission Board - Ryujin Industries", "任务板 · 龙神工业" },
-		{ 0x000c2d64u, 0u, false, "Mission Board - Deimos Staryard", "任务板 · 狄摩斯星船厂" },
-		{ 0x0016265fu, 0u, false, "Mission Board - Trident Staryard", "任务板 · 三叉戟星船厂" },
-		{ 0x00167872u, 0u, false, "Mission Board - Stroud-Eklund Staryard", "任务板 · 斯特劳德-埃克伦德星船厂" },
+		{ 0x00137573u, 0u, false, "Mission Board - The Lodge", "任务板 · 陋室" },
+		{ 0x0013f738u, 0u, false, "Mission Board - Ryujin Industries", "任务板 · 龙神集团" },
+		{ 0x000c2d64u, 0u, false, "Mission Board - Deimos Staryards", "任务板 · 火卫二造船厂" },
+		{ 0x0016265fu, 0u, false, "Mission Board - Trident Staryard", "任务板 · 海神叉造船厂" },
+		{ 0x00167872u, 0u, false, "Mission Board - Stroud-Eklund Staryards", "任务板 · 斯特劳艾克伦集团造船厂" },
 		{ 0x00197d22u, 0u, false, "Mission Board - The Key", "任务板 · 星钥站" },
 	};
 	inline constexpr std::size_t kEntryTableSize = 12;
