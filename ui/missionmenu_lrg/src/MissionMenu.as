@@ -147,6 +147,11 @@ package
 
       private var SaqOurTabMaxList:int = -1;
 
+      // ★ 第 19 轮：最近一次 FilterKnownQuests 过滤掉的「玩家已有」uID 名单（日志诊断用）。
+      private var SaqDropList:String = "-";
+
+      private var SaqDropCount:int = 0;
+
       // ---- 引导（第 10 轮）------------------------------------------------
       // 玩家在「可接任务」tab 里选中一条、按 Enter 或 SET COURSE（键盘 R / 手柄 X）时：
       //   SaqGuideSeq++ / SaqGuideQuest = 任务 FormID（0 = 取消）
@@ -388,14 +393,26 @@ package
          }
          var _loc4_:Array = new Array();
          var _loc5_:int = 0;
+         // ★ 第 19 轮：记录被过滤掉的 uID 名单（最多 12 条，进 SAQ_Report 的 drop=）。
+         //   用途：C++ 的 `raw=` 与 `keep=` 差几条时，日志直接给出「是哪几条」，
+         //   不用再人肉比对 qdata 名单（第 18 轮实测：raw=260 keep=257 少 3 条，无从确认）。
+         var _loc6_:String = "";
+         var _loc7_:int = 0;
          while(_loc5_ < param1.length)
          {
             if(!_loc2_[param1[_loc5_].uID])
             {
                _loc4_.push(param1[_loc5_]);
             }
+            else if(_loc7_ < 12)
+            {
+               _loc7_++;
+               _loc6_ += (_loc7_ > 1 ? "," : "") + param1[_loc5_].uID.toString(16);
+            }
             _loc5_++;
          }
+         this.SaqDropCount = _loc7_;
+         this.SaqDropList = _loc7_ > 0 ? _loc6_ : "-";
          return _loc4_;
       }
       
@@ -860,6 +877,10 @@ package
             }
          }
          _loc8_ += " qdata[" + _loc3_ + "]=[" + _loc9_ + "]";
+         // ★ 第 19 轮：被过滤名单（raw 与 keep 的差是哪几条）。放在 qdata **之后**，
+         //   但 qdata 最多 12 条 —— 若报告被长度上限截断，先保 qdata（玩家可对照的名字），
+         //   drop 只是纯 uID 十六进制（通常 0~5 条），实际几乎不会被截到。
+         _loc8_ += " drop[" + this.SaqDropCount + "]=[" + this.SaqDropList + "]";
          return _loc8_;
       }
       
@@ -1006,6 +1027,9 @@ package
       //
       //  协议："<seq>|<实际引导任务FormID>|<结果码>"
       //    结果码：0=成功 / 1=该任务没有引导目标 / 2=写 ESM 通道失败 / 3=静态表里没有这条
+      //           ★ 第 19 轮新增 4 = 引导未生效（脚本确认超时 / 别名不存在）——
+      //           C++ 侧做过确认（PollGuideVerify）后仍未生效，必须回滚界面，
+      //           否则界面会一直显示「已设为引导」而世界里什么都没有（界面说谎）。
       //  语义：**以「实际值」为准**——界面把 SaqGuideQuest 对齐到 C++ 报的实际值，
       //  与本地状态不一致时就是「被拒绝」，回滚竖条并给出失败文案。
       // ==================================================================
@@ -1050,6 +1074,11 @@ package
             else if(_loc5_ == 2)
             {
                this.SaqGuideNote = "引导通道写入失败";
+            }
+            else if(_loc5_ == 4)
+            {
+               // ★ 第 19 轮：脚本没响应（确认超时 / 别名不存在）——必须回滚。
+               this.SaqGuideNote = "引导未生效:脚本未响应";
             }
             else
             {

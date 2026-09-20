@@ -467,6 +467,11 @@ namespace SAQ
 				const auto t0 = NowMs();
 				if (UI::EnsureResolved(bridgeDetail)) {
 					REX::INFO("UI 桥解析：{}", bridgeDetail);
+				} else if (bridgeDetail.find(kMenuNotReadyMark) != std::string::npos) {
+					// ★ 第 19 轮降噪：菜单刚开的头几帧「菜单表里还没有 BSMissionMenu」是
+					//   **预期**状态（推送侧已有同样的分流），不该占一行 WARN。
+					REX::INFO("菜单尚未就绪（UI 表里还没有 BSMissionMenu 条目）| 桥解析耗时 {} ms",
+						NowMs() - t0);
 				} else {
 					REX::WARN("UI 桥解析失败（耗时 {} ms）：{}", NowMs() - t0, bridgeDetail);
 				}
@@ -685,6 +690,65 @@ namespace SAQ
 			g_guide.verifySeq = static_cast<std::uint32_t>(a_seq);
 		}
 
+		// ★ 第 19 轮：**脚本活性探测**。
+		//
+		// 起因（第 18 轮实测日志）：本次会话的 Papyrus 日志里**没有任何 SAQ_Main 痕迹**
+		// （历史会话每次都有 `SAQ_Main OnInit`），而 DLL 侧读到的 `通知=7778` 与上一次
+		// 会话完全相同 —— 无法区分「脚本实例从存档恢复后僵死（收不到菜单事件）」和
+		// 「DLL 读通道比脚本处理早」。若真僵死，玩家点引导会「写入成功但没人处理」。
+		//
+		// 判据：脚本的 OnMenuOpenCloseEvent 每次菜单打开都会把 SAQ_Notify +1，并在
+		// Papyrus 日志留一条 `[SAQ] 菜单打开 通知=N`。这里在开菜单 1.5 秒后复读一次：
+		//   值涨了 = 脚本活着（静默，不留噪音）；
+		//   没涨   = WARN 留证（每轮菜单最多一次）。
+		struct ScriptLiveness
+		{
+			bool          pending{};        // 菜单打开后等待复读
+			bool          warned{};         // 本轮菜单已警告过（不重复刷）
+			float         notifyAtOpen{};   // 打开时读到的通知值
+			std::uint64_t dueMs{};          // 复读时间点
+		};
+		ScriptLiveness g_liveness;
+		constexpr std::uint64_t kLivenessDelayMs = 1500;
+
+		// 菜单打开时武装一次（读当前通知值作为基线）。
+		void ArmScriptLiveness()
+		{
+			g_liveness.pending = false;
+			g_liveness.warned = false;
+			const auto ch = Guide::EnsureChannel();
+			if (!ch.resolved) {
+				return;  // 通道没认领（ESM 没启用等）—— LogEsmChannel 已经记过原因
+			}
+			g_liveness.notifyAtOpen = ch.notify;
+			g_liveness.dueMs = NowMs() + kLivenessDelayMs;
+			g_liveness.pending = true;
+		}
+
+		// 菜单开着时每帧调用（内部按 dueMs 自我短路，没到点/没武装时零开销）。
+		void CheckScriptLiveness()
+		{
+			if (!g_liveness.pending || NowMs() < g_liveness.dueMs) {
+				return;
+			}
+			g_liveness.pending = false;
+			const auto ch = Guide::EnsureChannel();
+			if (!ch.resolved) {
+				return;
+			}
+			if (ch.notify > g_liveness.notifyAtOpen) {
+				return;  // 通知值 +1 ⇒ 脚本响应了菜单事件（正常路径，不留噪音）
+			}
+			if (!g_liveness.warned) {
+				g_liveness.warned = true;
+				REX::WARN("脚本活性探测：开菜单 {} ms 后 SAQ_Notify 仍是 {:.0f}（没有 +1）——"
+						  "SAQ_Main 可能没有响应菜单事件（实例从存档恢复后僵死？），"
+						  "引导请求会写入成功但无人处理。看 Papyrus 日志有没有 `[SAQ] 菜单打开`；"
+						  "若确实缺失，重新读一次档/重开游戏后再试",
+					kLivenessDelayMs, ch.notify);
+			}
+		}
+
 		// 应用一次引导请求，并把结果回写给界面。a_formID = 0 表示取消引导。
 		// 结果码（与 AS3 的约定）：0=成功 / 1=没有引导目标 / 2=写通道失败 / 3=静态表里没有
 		void ApplyGuideRequest(std::uint32_t a_formID, int a_seq)
@@ -740,6 +804,34 @@ namespace SAQ
 			ScheduleGuideVerify(a_seq);
 		}
 
+		// ★ 第 19 轮：一次引导请求「确定没能生效」时的收尾（确认超时 / 脚本状态 4）。
+		//
+		// 原来的行为只打一行 WARN，然后**什么都不做** —— 后果：
+		//   ① 界面（由 SyncGuideState / AdoptExistingGuide 驱动）继续显示「正在引导」，
+		//      而世界里根本没有标记 —— 界面说谎；
+		//   ② 通道里的目标引用一直留着，下次开菜单又会被「认领」回来，无限重复。
+		// 现在：清 ESM 通道 + 清本侧状态 +（菜单开着时）用结果码 4 回写界面回滚，
+		// 让「界面上显示的」与「世界里真实发生的」重新对齐。
+		void AbortUnverifiedGuide(std::string_view a_why, bool aMenuOpen)
+		{
+			const auto questID = g_guide.questFormID;
+			const auto seq = static_cast<int>(g_guide.verifySeq);
+			const auto* entry = FindStaticQuest(questID);
+
+			std::string detail;
+			const bool cleared = Guide::SetGuideTarget(0, detail);
+			g_guide.questFormID = 0;
+			g_guide.guideRef = 0;
+			g_guide.verifyAtMs = 0;
+
+			REX::WARN("引导未生效：{}（0x{:08X}）—— {}；已放弃本次引导（清通道{}）",
+				entry ? entry->nameZh : "?", questID, a_why,
+				cleared ? "成功" : ("失败: " + detail));
+			if (aMenuOpen) {
+				NotifyGuideReply(seq, 0, 4);  // 4 = 未生效：界面回滚竖条 + OFF 音
+			}
+		}
+
 		// ★ 第 17 轮：引导下发后的结果确认。
 		//
 		// 为什么需要：第 16 轮把「请求已写入通道」和「界面回写」都补齐了，但**脚本那一半**
@@ -751,9 +843,9 @@ namespace SAQ
 		//   1 = 已应用（蓝点应该出现了）→ 记一行 INFO，收工
 		//   2 = 目标引用当时取不到（非常驻引用 + 格子没加载）→ 重发一次（最多 2 次）
 		//   3 = 已清除（脚本重挂丢别名）→ 重发一次
-		//   0 = 还没被脚本处理（脚本没跑 / 轮询太慢）→ 继续等，超时后 WARN
-		//   4 = 别名不存在（ESM 补丁没生效）→ WARN 后放弃（重发无用）
-		void PollGuideVerify()
+		//   0 = 还没被脚本处理（脚本没跑 / 轮询太慢）→ 继续等，超时后收尾（第 19 轮起）
+		//   4 = 别名不存在（ESM 补丁没生效）→ 收尾（重发无用）
+		void PollGuideVerify(bool aMenuOpen)
 		{
 			if (g_guide.verifyAtMs == 0 || NowMs() < g_guide.verifyAtMs) {
 				return;
@@ -766,9 +858,9 @@ namespace SAQ
 			}
 			const auto* entry = FindStaticQuest(g_guide.questFormID);
 			if (++g_guide.verifyTries >= kGuideVerifyMaxTries) {
-				REX::WARN("引导结果确认超时：{}（0x{:08X}）脚本状态一直是 {:.0f}"
-						  "（0 待处理 / 2 取不到 / 3 已清除 —— 看 Papyrus 日志里 SAQ_Main 有没有在跑）",
-					entry ? entry->nameZh : "?", g_guide.questFormID, ch.guideState);
+				AbortUnverifiedGuide(std::format("脚本状态一直是 {:.0f}"
+					"（0 待处理 / 2 取不到 / 3 已清除 —— 看 Papyrus 日志里 SAQ_Main 有没有在跑）",
+					ch.guideState), aMenuOpen);
 				return;
 			}
 			const auto again = [&]() { g_guide.verifyAtMs = NowMs() + kGuideVerifyRetryMs; };
@@ -778,7 +870,8 @@ namespace SAQ
 				return;
 			}
 			if (ch.guideState == 4.0f) {
-				REX::WARN("引导未生效：脚本状态=4（别名 SAQ_GuideTarget 不存在 —— ESM 补丁没生效，重发无用）");
+				AbortUnverifiedGuide("脚本状态=4（别名 SAQ_GuideTarget 不存在 —— ESM 补丁没生效，重发无用）",
+					aMenuOpen);
 				return;
 			}
 			if ((ch.guideState == 2.0f || ch.guideState == 3.0f) && g_guide.verifyTries <= 2) {
@@ -991,6 +1084,7 @@ namespace SAQ
 			LogGuideState();
 
 			TryPushPending();
+			ArmScriptLiveness();  // ★ 第 19 轮：菜单打开 1.5 秒后复读通知值，验证脚本活性
 			}
 
 		// Tick 停顿检测（第 11 轮）：只在菜单开着时统计（读档/加载时的长停顿不记，免得刷屏）。
@@ -1038,7 +1132,14 @@ namespace SAQ
 			//   （脚本在菜单关闭时会立刻应用一次引导，玩家点完往往马上关菜单去看 HUD 上的蓝点；
 			//    这里只读 ESM 的 GLOB + 静态表，不碰 UI，所以关着菜单调用是安全的。
 			//    函数内部用 verifyAtMs==0 自我短路，没请求时零开销。）
-			PollGuideVerify();
+			//   ★ 第 19 轮：把 open 传进去 —— 超时/失败时要回写界面（菜单开着才做）。
+			PollGuideVerify(open);
+
+			// ★ 第 19 轮：脚本活性探测（菜单打开 1.5 秒后复读通知值，见 CheckScriptLiveness）。
+			//   内部按「是否武装 + 到点没有」自我短路，菜单关着/没请求时零开销。
+			if (open) {
+				CheckScriptLiveness();
+			}
 		}
 	}
 

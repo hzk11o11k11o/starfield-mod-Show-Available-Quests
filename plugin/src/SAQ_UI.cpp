@@ -1066,13 +1066,16 @@ namespace SAQ::UI
 	}
 
 	// 无参调用，并把返回值（字符串/数值）读回来 —— 诊断用（SAQ_Report / SAQ_Probe）。
+	// ★ 第 19 轮：缓冲区 512 → 2048。SAQ_Report 里带玩家任务日志名单（qdata=，最多
+	//   12 条中文名），512 字节在多任务存档上会把尾部截断，而且可能切在多字节字符
+	//   中间（实测日志出现 `0:�`）。
 	std::string CallAs3NoArg(RE::Scaleform::GFx::ASMovieRootBase* a_root, const char* a_path)
 	{
 		RE::Scaleform::GFx::Value ret;
 		if (!SafeInvoke(a_root, a_path, &ret, nullptr, 0)) {
 			return std::string{ a_path } + "=fail(路径不存在或调用失败)";
 		}
-		char buf[512]{};
+		char buf[2048]{};
 		if (SafeReadValueString(ret, buf, sizeof(buf))) {
 			return std::string{ a_path } + "=" + buf;
 		}
@@ -1182,7 +1185,8 @@ namespace SAQ::UI
 		// 第 7 轮的教训是「日志说成功、却没人能证明界面显示了什么」，只能靠肉眼进游戏核对；
 		// SAQ_Report 一次给出「解析几条/过滤后几条/列表几条/掩码/选中 tab/语言/标题」，
 		// 从此这一层在日志里就能闭环（SWF 还是旧版时会显示 fail，也能一眼看出）。
-		const std::string report = EscapeForLog(CallAs3NoArg(root, "_root.SAQ_Report"), 400);
+		// ★ 第 19 轮：400 → 900（报告里现在还有 drop= 被过滤名单，别把它截掉）。
+		const std::string report = EscapeForLog(CallAs3NoArg(root, "_root.SAQ_Report"), 900);
 
 		// 先把解析信息留一份 —— 失败时下面会 Reset()，缓存里的 detail 会被清掉。
 		const std::string bridgeDetail = bridge.detail;
@@ -1221,7 +1225,7 @@ namespace SAQ::UI
 		if (raw.find("=fail") != std::string::npos) {
 			return false;  // 路径不存在 / 调用失败（SWF 旧版或桥在换代的中间态）
 		}
-		a_report = EscapeForLog(raw, 400);
+		a_report = EscapeForLog(raw, 900);  // ★ 第 19 轮：400 → 900（drop= 名单别被截掉）
 		return true;
 	}
 

@@ -106,6 +106,11 @@ Event OnMenuOpenCloseEvent(String asMenuName, Bool abOpening)
 		; 证据：菜单开过 ⇒ 这条脚本在跑、且看得到菜单事件（DLL 会读这一位写日志）
 		If NotifyFlag != None
 			NotifyFlag.SetValue(NotifyFlag.GetValue() + 1.0)
+			; ★ 第 19 轮：每次菜单打开都在 Papyrus 日志里留一条 —— 这是「脚本活性」的
+			;   直接证据（第 18 轮实测：一次会话里 Papyrus 日志没有任何 SAQ 痕迹，
+			;   而 DLL 侧无法区分「脚本僵死」和「DLL 读得早」）。
+			;   DLL 侧会比对「开菜单 1.5 秒后通知值有没有 +1」，与本行互为佐证。
+			Debug.Trace("[SAQ] 菜单打开 通知=" + (NotifyFlag.GetValue() as int))
 		EndIf
 		Return
 	EndIf
