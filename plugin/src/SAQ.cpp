@@ -81,6 +81,10 @@ namespace SAQ
 		constexpr std::int32_t kEntryQuestType = 100;
 		// 测试模式 5 = 只显示入口条目（在列表里单独验证任务板入口，不受 260 条任务干扰）。
 		constexpr int kEntryOnlyTestMode = 5;
+		// ★ 第 46 轮：测试模式值的**上限**（6 = 只显示「需要靠近」的任务）。
+		//   加新模式时**必须**一起改这里 —— 上限原先写死成 `v > 5`（第 27 轮），
+		//   结果 `Mode=6` 被静默折成 0（=不过滤）：玩家看到的是「过滤失效，所有任务都在」。
+		constexpr int kMaxTestMode = 6;
 
 		// ==================================================================
 		// 编译期 ID 审计（别删！）
@@ -467,13 +471,27 @@ namespace SAQ
 		TestModeResolved ResolveTestMode(float a_globMode)
 		{
 			if (a_globMode >= 0.5f) {
-				return { static_cast<int>(a_globMode + 0.5f), "控制台" };
+				const int m = static_cast<int>(a_globMode + 0.5f);
+				if (m > kMaxTestMode) {
+					// ★ 第 46 轮：超范围**不静默**（旧写法把 Mode=6 折成 0，看起来就是「过滤失效」）
+					REX::WARN("测试模式：控制台值 {} 超出已知范围（0~{}）—— 按 0（不过滤）处理",
+						m, kMaxTestMode);
+					return { 0, "控制台(未知值)" };
+				}
+				return { m, "控制台" };
 			}
 			const auto path = TestModeIniPath();
 			if (!path.empty()) {
 				const int v = static_cast<int>(::GetPrivateProfileIntW(L"Test", L"Mode", 0, path.c_str()));
 				if (v > 0) {
-					return { v > 5 ? 0 : v, "ini" };  // 未知值按 0（不过滤）处理（第 27 轮上限 4→5）
+					if (v > kMaxTestMode) {
+						// 未知值按 0（不过滤）处理，但要**说出来** —— 否则玩家只知道「过滤没生效」
+						REX::WARN("测试模式：ini 的 Mode={} 超出已知范围（0~{}）—— 按 0（不过滤）处理"
+								  "｜ini：SAQ_ShowAvailableQuests.ini（[Test] Mode）",
+							v, kMaxTestMode);
+						return { 0, "ini(未知值)" };
+					}
+					return { v, "ini" };
 				}
 			}
 			return { 0, "默认" };
@@ -2880,11 +2898,12 @@ namespace SAQ
 			const auto collectCost = NowMs() - t0;
 			// ★ 第 27 轮：入口条目表（任务板）一并报出来 —— 排查「任务板没显示」先看这里。
 			REX::INFO("数据源：{}；入口条目表={} 条（任务板）", masters, kEntryTableSize);
-			if (testMode.mode > 0) {
-				// 测试模式醒目提示（只在开启时打 —— 免得玩家忘了关、以为列表坏了）
-				REX::INFO("测试模式：{}（{}）[来源={}] —— 控制台 set SAQ_TestMode to 0 或改 ini，均可关闭",
-					testMode.mode, TestModeNote(testMode.mode), testMode.source);
-			}
+			// ★ 第 46 轮：**无论开没开都打这一行**。起因：ini 写 `Mode=6` 而解析层把未知值
+			//   静默折成 0 时，日志里**一行都没有** —— 玩家只知道「过滤没生效」，无从下手。
+			//   现在 mode=0 也会写 `测试模式：0（关闭（显示全部））[来源=ini]`，
+			//   一眼能看出「ini 读到了、但值是 0」和「ini 根本没读到（来源=默认）」的区别。
+			REX::INFO("测试模式：{}（{}）[来源={}] —— 控制台 set SAQ_TestMode to 0 或改 ini，均可关闭",
+				testMode.mode, TestModeNote(testMode.mode), testMode.source);
 			REX::INFO("{}", FormatRuntimeStats(g_pending.stats));
 			// 语言这一项只是**日志参考**：实际显示语言由 AS3 侧按引擎推来的任务名判定。
 			// 收集耗时进日志（第 11 轮）：正常应为毫秒级；若出现几百 ms，就是查询本身有问题。
