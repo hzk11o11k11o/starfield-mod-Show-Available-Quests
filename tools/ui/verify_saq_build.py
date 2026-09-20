@@ -446,6 +446,13 @@ def main() -> int:
         "测试入口-切 tab": b"SAQ_TestDriveTab",
         "测试入口-状态": b"SAQ_TestDriveState",
         "列表按 uID 找行": b"SAQ_FindEntryIndexByUID",
+        # ★★ 第 50 轮：SWF 构建指纹（进 SAQ_Report 的输出）—— 诊断「游戏加载的是
+        #   哪一版 SWF」。起因：第 49 轮补丁③ 的产物经字节码级验证（FFDec P-code）
+        #   确认无误，而 22:48 会话 ui.tab 仍 0 ms 失败 ⇒ 证据指向「游戏加载的仍是
+        #   部署前的旧 SWF」（Starfield 的 UI 资源在**游戏启动阶段**加载，早于 SFSE
+        #   插件加载日志的时刻）。日志里 SAQ_Report 带 `stamp=NN` = 本次构建的新版；
+        #   没有该字段 = 旧版 ⇒ 完全重启游戏后再测。
+        "SWF 构建指纹 stamp=": b"stamp=",
         # ★★ 第 46 轮（大项 B）：引导可用性 + 提示收口 ——
         #   ① 描述里**提前**告知「目标要靠近才加载」（载荷第 6 列 bSaqNeedsApproach）；
         #   ② 结果码 5 = 已排定但目标尚未加载（保持竖条、不回滚、不关菜单）。
@@ -759,6 +766,11 @@ def main() -> int:
         #   ② 用例结束（含失败中止）时把菜单恢复成关着 —— 首测失败中止后
         #      menu.close 步骤没跑到，任务菜单一直留在屏幕上（游戏暂停）。
         all_ok &= check("DLL · harness 结束清菜单", blob, "结束时菜单还开着".encode())
+        # ★★ 第 50 轮：ui.* 失败时的「SWF 版本指纹」诊断（见 SAQ_UI.cpp 的
+        #   InvokeUiTestDrive）—— 失败时读 SAQ_Report 看有没有 `stamp=` 字段，
+        #   把「游戏加载的 SWF 是新版还是旧版」直接写进失败详情。
+        all_ok &= check("DLL · 失败带 SWF 指纹", blob, "SWF 指纹".encode())
+        all_ok &= check("DLL · 旧版 SWF 判定文案", blob, "游戏加载的还是旧版 SWF".encode())
         # ★ 第 17 轮的核心判据：DLC 的两个 + 基础游戏一共 4 个数据源名都编进了 DLL
         for master in (b"Starfield.esm", b"ShatteredSpace.esm", b"SFBGS050.esm", b"SFBGS00D.esm"):
             all_ok &= check(f"DLL · 数据源 {master.decode()}", blob, master)

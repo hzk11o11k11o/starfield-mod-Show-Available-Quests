@@ -1414,7 +1414,24 @@ namespace SAQ::UI
 			called = SafeInvoke(root, path.c_str(), &ret, &arg, 1);
 		}
 		if (!called) {
+			// ★★ 第 50 轮：失败时顺便把「游戏加载的 SWF 是新版还是旧版」带出来 ——
+			//   起因：第 49 轮补丁③ 的产物经字节码级验证（FFDec P-code）无误，
+			//   22:48 会话 ui.tab 仍 0 ms 失败 ⇒ 证据指向「游戏加载的仍是部署前的旧
+			//   SWF」（Starfield 的 UI 资源在**游戏启动阶段**加载，早于 SFSE 插件加载
+			//   日志的时刻；补丁③是在游戏进程启动之后才构建部署的）。
+			//   这里读一次 SAQ_Report（0 参、已挂载、一直可用的入口）：
+			//     有 `stamp=` 字段 = SWF 是带指纹的新版 ⇒ 失败另有其因；
+			//     没有              = 游戏加载的是旧版 SWF ⇒ 完全重启游戏后可解。
 			a_reply = path + "=fail(路径不存在或调用失败；SWF 是旧版？)";
+			const auto report = CallAs3NoArg(root, "_root.SAQ_Report");
+			const auto at = report.find("stamp=");
+			if (at != std::string::npos) {
+				a_reply += "｜SWF 指纹=" + report.substr(at + 6, 8) +
+					"（新版 SWF 已加载 ⇒ 失败与 SWF 版本无关）";
+			} else {
+				a_reply += "｜SWF 指纹：SAQ_Report 里没有 stamp= 字段"
+					"（⇒ 游戏加载的还是旧版 SWF；完全重启游戏后再跑）";
+			}
 			return false;
 		}
 		char buf[512]{};

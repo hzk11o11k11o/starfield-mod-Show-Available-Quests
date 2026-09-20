@@ -4,8 +4,11 @@
 ;  怎么用：
 ;    ① 把本文件放到 mod 目录的 SFSE\Plugins\ 下（build-saq.ps1 部署时会自动拷过去）；
 ;    ② ini（SFSE\Plugins\SAQ_ShowAvailableQuests.ini）里设 [Test] Harness=1；
-;    ③ 启动游戏并**读一个存档**（随便哪个，用例会自己把需要的那几条任务回滚）；
-;    ④ 等日志出现 `harness：全部用例结束`，看 mod 目录里的 SAQ_testresults.json。
+;    ③ ★★ 顺序不能反：**先构建 + 部署完成，再启动游戏**（第 50 轮实测定论）——
+;       Starfield 的 UI 资源在游戏启动阶段加载，进程起来之后再部署的 SWF 不会被采用；
+;    ④ 启动游戏并**读一个存档**（随便哪个，用例会自己把需要的那几条任务回滚）；
+;    ⑤ 等日志出现 `harness：全部用例结束`，看 mod 目录里的 SAQ_testresults.json。
+;       （判定游戏加载的 SWF 版本：看日志 SAQ_Report 输出有没有 `stamp=` 字段。）
 ;
 ;  语法：`[case:名字]` 开一个用例；`desc = 说明`；`step = <操作> [参数]`。
 ;  ★ 会改任务状态（Reset/Start/SetStage/CompleteQuest）—— 先备份存档，别在主力存档上跑。

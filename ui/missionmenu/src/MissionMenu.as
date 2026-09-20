@@ -1011,6 +1011,15 @@ package
             + " lang=" + _loc7_
             + " title=" + this.SaqTabTitle()
             + " visible=" + (this.visible ? "1" : "0");
+         // ★★ 第 50 轮：SWF 构建指纹（诊断用）。
+         //   起因：第 49 轮补丁③（测试入口挂到 root）部署 + 字节码级验证（FFDec P-code）
+         //   都证明 SWF 是对的，而 22:48 会话的 `ui.tab` 仍 0 ms 失败 —— 证据链指向
+         //   「游戏加载的仍是部署前的旧 SWF」：Starfield 的 UI 资源在**游戏启动阶段**
+         //   加载（早于 SFSE 插件加载日志的时刻），而补丁③是在游戏进程启动之后才部署的。
+         //   指纹写进本报告 ⇒ 日志里一眼看出游戏加载的是哪一版 SWF：
+         //     有 `stamp=50` = 本次构建；没有 = 旧版（**完全重启游戏**后才会更新）。
+         //   ★ 以后每改一次 SWF，就把这个数字 +1（verify 检查 `stamp=` 是否存在）。
+         _loc8_ += " stamp=50";
          _loc8_ += " last=" + this.SaqTabProbe + " ourTab=" + this.SaqOurTabProbe + " ourTabMax=" + this.SaqOurTabMaxList;
          _loc8_ += " guide=" + this.SaqGuideSeq + "|" + this.SaqGuideQuest + "|" + this.SaqGuideNote;
          // ★ 第 37 轮：本次请求要不要打开星图（R = 1 / Enter = 0）—— 与 `SAQ_PeekGuide`
