@@ -40,6 +40,13 @@
            Game.ShowGalaxyStarMapMenuAndPlotToLocation(地点)」。
            本脚本检查：DLL 的三条星图日志 + 状态 5 文案 + 原生函数名（DLL/PEX）+ PEX 的
            OpenStarMapFor 痕迹
+  第 38 轮：★ 修「R 键现象混乱」（玩家实测）——只 kHide 任务菜单会停在**暂停菜单顶层**
+           （游戏仍暂停 ⇒ 脚本定时器不走 ⇒ 星图 R 后 4~5 秒才出现）；
+           改成界面侧在成功回写后走原版「退回游戏」路径（CloseMenu(true) →
+           CloseAllMenus）整个暂停菜单一起关；DLL 用 peek 第四段识别新协议（不发 kHide），
+           星图探测改多段窗口（中途记「任务菜单/暂停菜单」状态 + R 后多少秒打开）；
+           脚本侧星图目的地加「行星诊断 + 父地点链兜底」。
+           本脚本检查：DLL 新协议/等待中/耗时日志 + SWF 关菜单 note + PEX 行星/父地点文案
 
 用法：python tools/ui/verify_saq_build.py
 """
@@ -264,6 +271,9 @@ def main() -> int:
         "星图请求 note": "星图:已请求(代理任务 0x".encode(),
         # ★ 第 37 轮：报告里的星图标记（R = 1 / Enter = 0），与 peek 第三段同源
         "星图标记(map=)": b" map=",
+        # ★ 第 38 轮：界面侧会在回写成功后关掉整个暂停菜单（CloseMenu(true) 路径），
+        #   这行 note 是「新协议第四段」的链路证据。
+        "星图关菜单 note": "星图:菜单已交界面关闭".encode(),
     }
     swf_paths = [
         ROOT / "ui/missionmenu/build/missionmenu.swf",
@@ -354,13 +364,21 @@ def main() -> int:
             "进度门槛切片越界保护": "门槛切片越界".encode(),
             "IsStageDone 不可用提示": "IsStageDone 不可用".encode(),
             # ★★ 第 37 轮：SET COURSE 的星图 —— 关任务菜单 + 结果探测 + 状态 5
-            "星图请求(关菜单)": "星图：已请求关闭任务菜单".encode(),
-            "星图结果(已打开)": "星图：已打开（MapMenu 在屏幕上）".encode(),
-            "星图结果(没打开)": "星图：没有打开（MapMenu 不在屏幕上）".encode(),
-            "星图结果(菜单没关掉)": "星图：任务菜单没被关掉".encode(),
+            "星图请求(旧协议 kHide)": "星图：已请求关闭任务菜单".encode(),
+            "星图结果(已打开)": "星图：已打开（MapMenu 在屏幕上".encode(),
+            "星图结果(没打开)": "秒内没有打开（MapMenu 不在屏幕上".encode(),
             "状态5写入文案": "5（星图请求）".encode(),
             "星图原生函数名": b"ShowGalaxyStarMapMenuAndPlotToLocation",
             "星图菜单名": b"MapMenu",
+            # ★★ 第 38 轮：SET COURSE 的「最外层主菜单 / 要等好久」修复 ——
+            #   新协议（界面侧关整个暂停菜单）+ 多段探测（还开着哪些菜单 / R 后多少秒打开）
+            "星图请求(新协议 界面关菜单)": "星图：界面侧会自己关掉整个暂停菜单".encode(),
+            "星图等待(通用)": "星图：等待中".encode(),
+            "星图等待(任务菜单仍开着)": "星图：等待中——任务菜单仍开着".encode(),
+            "星图等待(列出开着的菜单)": "还开着：".encode(),
+            "星图打开(带耗时)": "R 后约".encode(),
+            # 暂停菜单的真正注册名（exe 菜单名表里是 PauseMenu，没有 DataMenu）
+            "暂停菜单名": b"PauseMenu",
         }.items():
             all_ok &= check(f"DLL · {name}", blob, needle)
         # 反向检查：第 31 轮把候选链顺序换掉，第 30 轮的「marker 优先」诊断文案不应再出现
@@ -386,6 +404,11 @@ def main() -> int:
         # 反向检查：第 30 轮把「任务板引用取不到」换成候选链判定，旧文案不应再出现
         gone = "的任务板引用当前取不到".encode() not in blob
         print(("OK  " if gone else "MISS") + " DLL · 旧入口取不到文案已替换(反向检查)")
+        all_ok &= gone
+        # 反向检查：第 38 轮把「2.5 秒单点判定」的旧文案换成多段窗口，旧串不应再出现
+        gone = ("星图：任务菜单没被关掉".encode() not in blob
+                and "星图：没有打开（MapMenu 不在屏幕上）".encode() not in blob)
+        print(("OK  " if gone else "MISS") + " DLL · 旧单点星图探测文案已替换(反向检查)")
         all_ok &= gone
         # ★ 第 17 轮的核心判据：DLC 的两个 + 基础游戏一共 4 个数据源名都编进了 DLL
         for master in (b"Starfield.esm", b"ShatteredSpace.esm", b"SFBGS050.esm", b"SFBGS00D.esm"):
@@ -413,6 +436,11 @@ def main() -> int:
         # ★ 第 37 轮：SET COURSE 打开星图（OpenStarMapFor 的 Trace + 引擎原生函数名）
         all_ok &= check("PEX · 星图请求 Trace", blob, "星图请求".encode())
         all_ok &= check("PEX · 原生星图函数调用", blob, b"ShowGalaxyStarMapMenuAndPlotToLocation")
+        # ★ 第 38 轮：星图目的地的「行星诊断」+「父地点链兜底」（第 38 轮新增的两段文案）
+        all_ok &= check("PEX · 星图行星诊断", blob, "（行星=".encode())
+        all_ok &= check("PEX · 父地点兜底", blob, "地点自己没有行星，改用父地点".encode())
+        all_ok &= check("PEX · 父地点 API", blob, b"GetParentLocations")
+        all_ok &= check("PEX · 行星 API", blob, b"GetCurrentPlanet")
     else:
         print(f"MISS 缺少 PEX {pex}")
         all_ok = False

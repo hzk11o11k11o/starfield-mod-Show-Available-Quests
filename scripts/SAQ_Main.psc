@@ -249,6 +249,14 @@ EndFunction
 ;    ① akTarget.GetCurrentLocation()  —— 引用所在位置（引用已加载时最准）；
 ;    ② akTarget.GetEditorLocation()   —— 数据里的放置位置（引用没加载时仍然有值）；
 ;  两者都拿不到就不调引擎函数（避免拿 None 去调、弹一条「Location passed was null.」）。
+;
+;  ★ 第 38 轮：加两道保险 + 一行诊断（回应玩家反馈「星图显示的还是我所在的星球 /
+;   R 键不会帮我选中这个任务」）：
+;    ① 引擎是按「地点 → 行星」解析目的地的 ⇒ 先把地点的行星查出来进日志
+;       （GetCurrentPlanet；玩家再报「指错星球」时，这一行就能证明我们传的是什么）；
+;    ② 地点自己查不到行星时，沿父地点链往上找第一个**带行星**的地点再传给引擎
+;       （传一个解析不出行星的地点，引擎只会把星图按默认焦点打开 —— 表现就是
+;       「显示我所在的星球、没有任务导航点」）。
 ; ============================================================================
 Function OpenStarMapFor(ObjectReference akTarget)
 	If akTarget == None
@@ -263,6 +271,24 @@ Function OpenStarMapFor(ObjectReference akTarget)
 		Debug.Trace("[SAQ] 星图请求失败：取不到目标地点（" + akTarget + "）")
 		Return
 	EndIf
-	Debug.Trace("[SAQ] 星图请求：打开星图并设定航线 → " + akTarget + " @ " + loc)
-	Game.ShowGalaxyStarMapMenuAndPlotToLocation(loc)
+	Location plotLoc = loc
+	Planet body = loc.GetCurrentPlanet()
+	If body == None
+		Location[] parents = loc.GetParentLocations()
+		int i = 0
+		While i < parents.Length && body == None
+			Location parentLoc = parents[i]
+			If parentLoc != None
+				Planet parentBody = parentLoc.GetCurrentPlanet()
+				If parentBody != None
+					plotLoc = parentLoc
+					body = parentBody
+					Debug.Trace("[SAQ] 星图请求：地点自己没有行星，改用父地点 " + plotLoc)
+				EndIf
+			EndIf
+			i += 1
+		EndWhile
+	EndIf
+	Debug.Trace("[SAQ] 星图请求：打开星图并设定航线 → " + akTarget + " @ " + plotLoc + "（行星=" + body + "）")
+	Game.ShowGalaxyStarMapMenuAndPlotToLocation(plotLoc)
 EndFunction

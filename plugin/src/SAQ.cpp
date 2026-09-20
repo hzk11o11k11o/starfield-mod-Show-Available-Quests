@@ -1348,17 +1348,48 @@ namespace SAQ
 		//   → 本文件的 `星图：已打开（MapMenu 在屏幕上）`（或没打开的 WARN）。
 		struct StarMapProbe
 		{
-			bool          pending{};   // 已发出「关菜单 + 开星图」请求，等验证
-			std::uint64_t dueMs{};     // 验证时间点
-			std::uint32_t questID{};   // 请求时的引导任务（日志用）
+			bool          pending{};      // 已发出「关菜单 + 开星图」请求，等验证
+			std::uint64_t startMs{};      // 请求时刻（用来算「R 后多少秒星图才出现」）
+			std::uint64_t midCheckMs{};   // 中途那次「菜单状态」日志的时间点
+			std::uint64_t deadlineMs{};   // 到点还没开就 WARN
+			bool          midLogged{};    // 中途日志只打一次
+			// ★ 第 38 轮：界面侧会自己走原版的「退回游戏」路径关掉**整个**暂停菜单。
+			bool          closedBySwf{};
+			std::uint32_t questID{};      // 请求时的引导任务（日志用）
 		};
 		StarMapProbe g_starMap;
 
-		constexpr std::uint64_t kStarMapProbeMs = 2500;  // 关菜单 → 脚本跑完 → 星图出现的时间
+		// ★ 第 38 轮：探测改「多段窗口」。
+		//   第 37 轮的单点判定（2.5 秒）给出了假结论：只 kHide 任务菜单时，暂停菜单
+		//   还开着 ⇒ 游戏仍暂停 ⇒ 脚本的 0.5 秒定时器走不动（VM 冻结）⇒ 星图要等玩家
+		//   手动关掉暂停菜单才出现（实测 R 后 4~5 秒），而探测早已超时打了「没有打开」。
+		//   现在：中途记一行「任务菜单/暂停菜单」状态（一眼看出卡在哪），窗口放到 12 秒，
+		//   星图一出现就记「R 后约 N 秒」。
+		constexpr std::uint64_t kStarMapMidCheckMs = 1500;
+		constexpr std::uint64_t kStarMapWindowMs = 12000;
 
-		// 关掉任务菜单（让脚本能在关闭事件里打开星图）。调用方保证通道已经写好状态 5。
-		void RequestStarMapOpen(std::uint32_t a_questID)
+		// 请求「关菜单 + 开星图」。调用方保证通道已经写好状态 5。
+		// ★ 第 38 轮：a_swfCloses = 新 SWF 会在收到回写后自己调 CloseMenu(true)
+		//   （原版「退回游戏」路径 → 动画结束 → GlobalFunc.CloseAllMenus()，整个暂停菜单
+		//   一步关完）。那种情况下这里**不发 kHide**：
+		//   只隐藏任务菜单会停在「暂停菜单顶层」——游戏仍暂停、星图要等玩家手动关，
+		//   正是玩家反馈的「有时候只是切换到了最外层主菜单 / 要等好久」。
+		void RequestStarMapOpen(std::uint32_t a_questID, bool a_swfCloses)
 		{
+			const auto now = NowMs();
+			g_starMap.pending = true;
+			g_starMap.startMs = now;
+			g_starMap.midCheckMs = now + kStarMapMidCheckMs;
+			g_starMap.deadlineMs = now + kStarMapWindowMs;
+			g_starMap.midLogged = false;
+			g_starMap.closedBySwf = a_swfCloses;
+			g_starMap.questID = a_questID;
+			if (a_swfCloses) {
+				REX::INFO("星图：界面侧会自己关掉整个暂停菜单（新协议，不发 kHide）"
+						  "｜引导任务={}（0x{:08X}）",
+					DisplayNameOf(a_questID), a_questID);
+				return;
+			}
 			auto* queue = RE::UIMessageQueue::GetSingleton();
 			if (!queue) {
 				REX::WARN("星图：UI 消息队列取不到（UIMessageQueue 单例为空）—— 本次不发（引导本身不受影响）");
@@ -1366,37 +1397,83 @@ namespace SAQ
 			}
 			// 菜单名与 UIMessageQueue 的地址库 ID 都是 commonlibsf 里已有的（ID::UIMessageQueue::*）
 			queue->AddMessage(RE::BSFixedString{ kMenuName }, RE::UI_MESSAGE_TYPE::kHide);
-			g_starMap.pending = true;
-			g_starMap.dueMs = NowMs() + kStarMapProbeMs;
-			g_starMap.questID = a_questID;
-			REX::INFO("星图：已请求关闭任务菜单（脚本会在菜单关闭时调用 "
+			REX::INFO("星图：已请求关闭任务菜单（旧协议 kHide；脚本会在菜单关闭时调用 "
 					  "Game.ShowGalaxyStarMapMenuAndPlotToLocation）｜引导任务={}（0x{:08X}）",
 				DisplayNameOf(a_questID), a_questID);
 		}
 
-		// 菜单关着时每帧调用（内部按 pending/dueMs 自我短路，没请求时零开销）：
-		// 到点后查一次 MapMenu 是否真的在屏幕上，把「R 键链路到底通没通」写进日志。
+		// 诊断：把「此刻还开着的菜单」拼成一行（只查菜单名表里有把握的几个）。
+		// 为什么不用 UI::menuStack / IMenu：那要读 commonlibsf 的结构体偏移（本项目通则：
+		// 偏移一律不可信），而 IsMenuOpen 是引擎自己的函数，按注册名查哈希表 —— 零风险。
+		// 名字取自 exe 的菜单名表（`.rdata 0x4D7DF00` 一带）：PauseMenu / BSMissionMenu /
+		// MapMenu / SkillsMenu / StatusMenu …（注意表里**没有 DataMenu** —— 那只是 AS3
+		// 事件前缀；带 tab 栏的外层暂停菜单注册名是 PauseMenu）。
+		std::string OpenMenusSummary()
+		{
+			static const RE::BSFixedString kNames[] = {
+				"BSMissionMenu", "PauseMenu", "MapMenu", "SkillsMenu", "StatusMenu",
+				"ContainerMenu", "DataSlateMenu", "LoadingMenu", "MainMenu", "FaderMenu"
+			};
+			auto* ui = RE::UI::GetSingleton();
+			if (!ui) {
+				return "UI 单例不可用";
+			}
+			std::string out;
+			for (const auto& name : kNames) {
+				if (ui->IsMenuOpen(name)) {
+					if (!out.empty()) {
+						out += ", ";
+					}
+					out += name.c_str();
+				}
+			}
+			return out.empty() ? std::string{ "无" } : out;
+		}
+
+		// 每帧调用（内部按 pending/到点自我短路，没请求时零开销）：
+		//   ① 星图一出现就记一行（带 R 后的秒数）；
+		//   ② 中途记一行「还开着哪些菜单」（卡在 PauseMenu = 游戏仍暂停 = 脚本定时器不走
+		//      = 星图要等玩家手动关菜单，正是第 37 轮那个 4~5 秒延迟）；
+		//   ③ 窗口结束还没出现才 WARN。
 		void CheckStarMapOpened()
 		{
-			if (!g_starMap.pending || NowMs() < g_starMap.dueMs) {
+			if (!g_starMap.pending) {
 				return;
 			}
-			g_starMap.pending = false;
 			auto* ui = RE::UI::GetSingleton();
 			if (!ui) {
 				return;
 			}
-			// 任务菜单还开着 ⇒ 我们那条 kHide 没生效（引擎/别的插件挡住了），脚本不可能跑。
-			if (ui->IsMenuOpen(MenuName())) {
-				REX::WARN("星图：任务菜单没被关掉（kHide 无效）—— 脚本跑不到，星图不会打开；"
-						  "请看 docs/05 第十一节");
+			const auto now = NowMs();
+			const auto elapsed = static_cast<double>(now - g_starMap.startMs) / 1000.0;
+
+			if (ui->IsMenuOpen("MapMenu")) {
+				g_starMap.pending = false;
+				REX::INFO("星图：已打开（MapMenu 在屏幕上，R 后约 {:.1f} 秒）—— SET COURSE 链路完整",
+					elapsed);
 				return;
 			}
-			if (ui->IsMenuOpen("MapMenu")) {
-				REX::INFO("星图：已打开（MapMenu 在屏幕上）—— SET COURSE 链路完整");
-			} else {
-				REX::WARN("星图：没有打开（MapMenu 不在屏幕上）—— 脚本可能没跑到 / 取不到目标地点"
-						  "（看 Papyrus 日志里 `[SAQ] 星图请求` 那一行）");
+			if (!g_starMap.midLogged && now >= g_starMap.midCheckMs) {
+				g_starMap.midLogged = true;
+				const auto menus = OpenMenusSummary();
+				if (ui->IsMenuOpen(MenuName())) {
+					// 任务菜单还开着 ⇒ 脚本跑不到（菜单暂停游戏 ⇒ 定时器不走）。
+					REX::WARN("星图：等待中——任务菜单仍开着（R 后 {:.1f} 秒｜还开着：{}）：{}",
+						elapsed, menus,
+						g_starMap.closedBySwf
+							? "界面侧还没关菜单（旧 SWF？回写没到？）"
+							: "kHide 没生效？请看 docs/05 第十一节");
+				} else {
+					REX::INFO("星图：等待中（R 后 {:.1f} 秒｜还开着：{}）—— 脚本的定时器要等"
+							  "游戏恢复运行才走（PauseMenu 还在 = 玩家还没离开暂停菜单）",
+						elapsed, menus);
+				}
+			}
+			if (now >= g_starMap.deadlineMs) {
+				g_starMap.pending = false;
+				REX::WARN("星图：{:.1f} 秒内没有打开（MapMenu 不在屏幕上｜还开着：{}）—— "
+						  "看 Papyrus 的 `[SAQ] 星图请求` 两行有没有出现（取不到地点 / 脚本没跑）",
+					static_cast<double>(kStarMapWindowMs) / 1000.0, OpenMenusSummary());
 			}
 		}
 
@@ -1404,7 +1481,9 @@ namespace SAQ
 		// 结果码（与 AS3 的约定）：0=成功 / 1=没有引导目标 / 2=写通道失败 / 3=静态表里没有
 		// ★ 第 37 轮：a_wantMap = 玩家这次按的是「设定航线（R）」（AS3 在 peek 第三段传来）
 		//   —— 成功时除了设引导，还要关掉任务菜单让脚本打开星图（见 RequestStarMapOpen）。
-		void ApplyGuideRequest(std::uint32_t a_formID, int a_seq, bool a_wantMap)
+		// ★ 第 38 轮：a_swfCloses = 新 SWF 会在收到回写后自己关掉**整个**暂停菜单
+		//   （peek 第四段；旧 SWF 没有这一段 ⇒ false ⇒ 沿用 kHide 的旧路径）。
+		void ApplyGuideRequest(std::uint32_t a_formID, int a_seq, bool a_wantMap, bool a_swfCloses)
 		{
 			if (a_formID == 0) {
 				g_guide.verifyAtMs = 0;  // 取消：没有「结果」要确认
@@ -1487,7 +1566,8 @@ namespace SAQ
 			NotifyGuideReply(a_seq, a_formID, 0);
 			ScheduleGuideVerify(a_seq);
 			if (a_wantMap) {
-				RequestStarMapOpen(a_formID);  // ★ 第 37 轮：关掉任务菜单，让脚本打开星图
+				// ★ 第 37/38 轮：关掉任务菜单（或由界面侧关掉整个暂停菜单），让脚本打开星图
+				RequestStarMapOpen(a_formID, a_swfCloses);
 			}
 		}
 
@@ -1723,10 +1803,20 @@ namespace SAQ
 			// ★ 第 37 轮：第三段 = 要不要打开星图（1 = 玩家按的是「设定航线（R）」，
 			//   0 / 缺省 = Enter 子项等普通引导）。旧 SWF 只给两段 ⇒ 按 0 处理，
 			//   行为与第 36 轮之前完全一致（只设引导，不动菜单）。
+			// ★ 第 38 轮：第四段 = 界面侧会不会自己关掉整个暂停菜单（1/0）。
+			//   新 SWF 在「设定航线」成功回写后走原版「退回游戏」路径（CloseMenu(true)），
+			//   那样 DLL 就不必（也不该）发 kHide —— 只隐藏任务菜单会停在暂停菜单顶层。
+			//   旧 SWF 没有第四段 ⇒ false ⇒ 沿用 kHide 的旧路径（行为不变）。
 			std::string_view rest = std::string_view{ peek }.substr(bar + 1);
 			bool             wantMap = false;
+			bool             swfCloses = false;
 			if (const auto bar2 = rest.find('|'); bar2 != std::string_view::npos) {
-				wantMap = rest.substr(bar2 + 1).find('1') != std::string_view::npos;
+				std::string_view third = rest.substr(bar2 + 1);
+				if (const auto bar3 = third.find('|'); bar3 != std::string_view::npos) {
+					swfCloses = third.substr(bar3 + 1).find('1') != std::string_view::npos;
+					third = third.substr(0, bar3);
+				}
+				wantMap = third.find('1') != std::string_view::npos;
 				rest = rest.substr(0, bar2);
 			}
 			int seq = 0;
@@ -1742,7 +1832,7 @@ namespace SAQ
 				return;
 			}
 			g_guide.lastSeq = seq;
-			ApplyGuideRequest(static_cast<std::uint32_t>(fid), seq, wantMap);
+			ApplyGuideRequest(static_cast<std::uint32_t>(fid), seq, wantMap, swfCloses);
 		}
 
 		// 菜单打开时的收尾：被引导的任务如果已经「被引擎开始」（玩家接到了），

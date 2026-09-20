@@ -175,6 +175,20 @@ package
       //   ★ 它随请求一起经 `SAQ_PeekGuide` 的第三段传给 DLL（`<序号>|<任务FormID>|<1/0>`）。
       private var SaqGuideWantMap:Boolean = false;
 
+      // ★ 第 38 轮：等 C++ 回写成功后，由**界面侧**关掉整个暂停菜单（原版「退回游戏」路径）。
+      //
+      // 为什么需要：第 37 轮只让 DLL 用 kHide 隐藏「任务菜单」——但 Starfield 的暂停菜单
+      // （DataMenu）是任务菜单的父级，只隐藏子菜单会停在「暂停菜单顶层」：游戏仍然暂停
+      // ⇒ 脚本的 0.5 秒定时器走不动（Papyrus 定时器只在游戏运行时走）⇒ 星图要等玩家手动
+      // 关掉暂停菜单才出现。玩家实测反馈正是这个：「有时候只是切换到了最外层主菜单」
+      // 「打开了星图但要等好久（R 后 4~5 秒）」。
+      //
+      // 现在：收到 C++ 的成功回写后调 `CloseMenu(true)`（= 原版「按住返回键退回游戏」那条
+      // 路径：播关闭动画 → OnTimelineCloseEvent → `GlobalFunc.CloseAllMenus()`），整个暂停
+      // 菜单一步关完、游戏立刻恢复运行 ⇒ 定时器走得动 ⇒ 星图约 1 秒后就出现。
+      // 同时把这件事经 `SAQ_PeekGuide` 的第四段告诉 DLL（它就不必再发 kHide 了）。
+      private var SaqPendingCloseToGame:Boolean = false;
+
       // 最近一次引导动作（进报告，日志里能看出玩家点了什么）
       private var SaqGuideNote:String = "-";
 
@@ -1023,6 +1037,7 @@ package
                this.SaqGuideSeq = this.SaqGuideSeq + 1;
                this.SaqGuideQuest = 0;
                this.SaqGuideWantMap = false;   // 第 37 轮：取消方向永远不带星图请求
+               this.SaqPendingCloseToGame = false;   // 第 38 轮：同理，不关菜单
                this.SaqGuideNote = "已接取，自动取消引导";
                this.SaqApplyTrackedMarker(_loc3_, 0);
                return;
@@ -1046,6 +1061,7 @@ package
          if(param1.bSaqHasTarget != true)
          {
             this.SaqGuideWantMap = false;   // 第 37 轮：没发请求 ⇒ 也不会有星图
+            this.SaqPendingCloseToGame = false;   // 第 38 轮：没发请求 ⇒ 也不关菜单
             GlobalFunc.PlayMenuSound(MISSION_TRACKING_TOGGLE_OFF_SOUND);
             // ★ 第 28 轮：入口条目（任务板）与任务的「不可导航」原因不同 —— 提示分开写。
             // ★ 第 29 轮：常驻化 override 之后这是兜底分支（引用理论上总取得到），
@@ -1066,6 +1082,9 @@ package
          this.SaqGuideQuest = _loc2_;
          // ★ 第 37 轮：只有「新设定」+「来自设定航线（R）」才带星图请求（取消时一律不带）。
          this.SaqGuideWantMap = param2 && _loc2_ != 0;
+         // ★ 第 38 轮：与星图请求同生共死 —— 只有「会打开星图」的请求才需要关整个暂停菜单；
+         //   请求被 C++ 拒绝时（回写结果码 != 0）会在 SAQ_GuideReply 里清掉。
+         this.SaqPendingCloseToGame = this.SaqGuideWantMap;
          if(_loc2_ != 0)
          {
             GlobalFunc.PlayMenuSound(MISSION_TRACKING_TOGGLE_ON_SOUND);
@@ -1168,9 +1187,36 @@ package
       // ★ 第 37 轮：第三段是新增的（1 = 玩家按的是「设定航线（R）」，0 = Enter / 其它）——
       //   C++ 侧据此决定「要不要关掉任务菜单让脚本打开星图」。旧 SWF 只给两段时
       //   C++ 侧按 0 处理（= 只要蓝点，不打开星图），行为与第 36 轮之前完全一致。
+      // ★ 第 38 轮：第四段 = 界面侧会不会自己关掉整个暂停菜单（1/0，见 SaqPendingCloseToGame）。
+      //   C++ 侧拿到 1 就不发 kHide（只隐藏任务菜单会停在暂停菜单顶层，游戏不恢复、
+      //   脚本定时器不走）。旧 SWF 没有第四段 ⇒ C++ 按 0 处理 ⇒ 旧行为完全不变。
       public function SAQ_PeekGuide() : String
       {
-         return this.SaqGuideSeq + "|" + this.SaqGuideQuest + "|" + (this.SaqGuideWantMap ? 1 : 0);
+         return this.SaqGuideSeq + "|" + this.SaqGuideQuest + "|" + (this.SaqGuideWantMap ? 1 : 0)
+            + "|" + (this.SaqPendingCloseToGame ? 1 : 0);
+      }
+
+      // ★ 第 38 轮：C++ 回写成功后的「关菜单」这一步（见 SaqPendingCloseToGame 的说明）。
+      //   `CloseMenu(true)` = 原版「退回游戏」路径：
+      //     设置 bReturningToGame → StartGameRender + DataMenu_SetMenuForQuickEntry
+      //     → 播关闭动画 → OnTimelineCloseEvent → SaveMissionMenuState + GlobalFunc.CloseAllMenus()
+      //   整个暂停菜单随之关掉 —— 游戏恢复运行，脚本的定时器 0.5 秒后走到、星图打开。
+      private function SaqReturnToGameForStarMap() : void
+      {
+         if(!this.SaqPendingCloseToGame)
+         {
+            return;
+         }
+         this.SaqPendingCloseToGame = false;
+         this.SaqGuideNote += "｜星图:菜单已交界面关闭";
+         try
+         {
+            this.CloseMenu(true);
+         }
+         catch(_loc1_:Error)
+         {
+            this.SaqGuideNote += "关菜单异常:" + _loc1_.message;
+         }
       }
       
       // 按 uID 找一条可接任务的显示名（引导相关文案用；找不到给 "?"）。
@@ -1223,12 +1269,17 @@ package
          if(_loc4_ == _loc6_ && _loc5_ == 0)
          {
             // 成功且状态一致：本地早已切好（音效/文案/竖条都不动）
+            // ★ 第 38 轮：这是「设定航线（R）」的常见分支 —— 此刻 C++ 已把状态 5 写好，
+            //   可以让界面侧关掉整个暂停菜单了（见 SaqReturnToGameForStarMap）。
+            this.SaqReturnToGameForStarMap();
             return "same";
          }
          this.SaqGuideQuest = _loc4_;
          if(_loc5_ == 0)
          {
             this.SaqGuideNote = _loc4_ != 0 ? "已设为引导:" + this.SaqQuestNameByID(_loc4_) : "已取消引导";
+            // ★ 第 38 轮：成功 ⇒ 若这次请求带星图意图，现在关菜单。
+            this.SaqReturnToGameForStarMap();
          }
          else
          {
@@ -1236,6 +1287,8 @@ package
             // ★ 第 37 轮：拒绝 ⇒ 星图也不会开（DLL 只在成功路径上关菜单、写状态 5），
             //   把本地的星图标记一并清掉，免得日志/后续请求带错意图。
             this.SaqGuideWantMap = false;
+            // ★ 第 38 轮：被拒绝 ⇒ 更不能关菜单（星图不会开，关了只会把玩家踢出菜单）。
+            this.SaqPendingCloseToGame = false;
             GlobalFunc.PlayMenuSound(MISSION_TRACKING_TOGGLE_OFF_SOUND);
             if(_loc5_ == 1)
             {
