@@ -188,6 +188,14 @@ if (-not $SkipDeploy) {
         Write-Host '    已预置空日志文件（让 MO2 把日志写入重定向回 mod 目录）'
     }
 
+    # 配置文件（测试开关）模板已入库（resources\），只在 mod 目录里没有时补一份 ——
+    # 已存在则保留（测试时可能改过 Mode，不能被部署覆盖）。
+    $iniDest = Join-Path $dest 'SFSE\Plugins\SAQ_ShowAvailableQuests.ini'
+    if (-not (Test-Path $iniDest)) {
+        Copy-Item (Join-Path $root 'resources\SAQ_ShowAvailableQuests.ini') $iniDest -Force
+        Write-Host '    已放入配置文件模板（SFSE\Plugins\SAQ_ShowAvailableQuests.ini）'
+    }
+
     $meta = Join-Path $dest 'meta.ini'
     if (-not (Test-Path $meta)) {
         @"

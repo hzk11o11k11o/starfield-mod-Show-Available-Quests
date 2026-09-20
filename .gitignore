@@ -18,6 +18,9 @@ Interface-main.zip
 # --- 逆向 / 分析中间产物（都可由 tools 重新生成） ---
 ref/
 
+# --- 打包产物（tools/package-saq.ps1 生成，可随时重打） ---
+dist/
+
 # --- Python 缓存 ---
 __pycache__/
 *.pyc
