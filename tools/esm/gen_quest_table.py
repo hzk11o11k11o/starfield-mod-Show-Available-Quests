@@ -240,6 +240,20 @@ def load_gates(path: Path) -> dict[int, list[dict]]:
     return {int(t["formid"]): t.get("gates", []) for t in raw}
 
 
+def load_info_gates(path: Path) -> dict[int, list[dict]]:
+    """INFO 门槛表（tools/esm/analyze_info_gates.py 生成；没有 ⇒ 不做 INFO 过滤）。
+
+    ★★ 大项 D（第 48 轮）：任务自己的对话（INFO）里「引用别的任务」的进度条件 ——
+    任务运行中的对话（推进类）与没有任何事件条件的对话都不算；判定语义见
+    analyze_info_gates.py 头注释（全部参与对话都「有已知为假的条件」⇒ 隐藏）。
+    """
+    if not path.exists():
+        print(f"（没有 {path} —— INFO 门槛为空，先跑 tools/esm/analyze_info_gates.py）")
+        return {}
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    return {int(t["formid"]): t.get("infos", []) for t in raw}
+
+
 def master_strings_key(master: str) -> str:
     """master 名 -> 字符串表前缀：ShatteredSpace.esm -> shatteredspace（与游戏内文件名一致）。"""
     return Path(master).stem.lower()
@@ -253,6 +267,8 @@ def main() -> int:
     ap.add_argument("--guide-targets", default="ref/guide_targets.json")
     ap.add_argument("--gates", default="ref/ctda_gates.json",
                     help="进度门槛（analyze_ctda.py 产物；决定「进度没到不显示」）")
+    ap.add_argument("--info-gates", default="ref/info_gates_final.json",
+                    help="★ 大项 D：对话侧 INFO 门槛（analyze_info_gates.py 产物）")
     ap.add_argument("--out-header", default="plugin/src/SAQ_QuestTable.h")
     ap.add_argument("--out-json", default="ref/quest_table_debug.json")
     ap.add_argument("--out-as3", default="ui/missionmenu/saqdata/SaqEmbeddedPayload.inc")
@@ -419,6 +435,27 @@ def main() -> int:
                     desc.append(f"{name}(0x{int(g['quest_local']):06X})=={g['want']}")
             print(f"  {r['edid']:<34} {' AND '.join(desc)}")
 
+    # ★★ 大项 D（第 48 轮）：INFO 门槛（对话侧条件）—— 每条任务一组「参与判定的对话」，
+    #   每条对话又是一组条件（切片）。运行时：全部对话都「有已知为假的条件」⇒ 隐藏。
+    info_by_fid = load_info_gates(Path(a.info_gates))
+    info_cond_flat: list[tuple[int, int, int, int, int]] = []
+    info_group_flat: list[tuple[int, int]] = []
+    n_info_tasks = 0
+    for r in rows:
+        infos = info_by_fid.get(r["formid"], [])
+        r["info_group_begin"] = len(info_group_flat)
+        r["info_group_count"] = len(infos)
+        if infos:
+            n_info_tasks += 1
+        for inf in infos:
+            conds = inf.get("conds", [])
+            info_group_flat.append((len(info_cond_flat), len(conds)))
+            for c in conds:
+                info_cond_flat.append((int(c["quest_local"]) & 0xFFFFFF, int(c["quest_master"]),
+                                       int(c["func"]), int(c["want"]), int(c.get("stage", 0)) & 0xFFFF))
+    print(f"INFO 门槛：{n_info_tasks} 条任务 / {len(info_group_flat)} 条对话 / "
+          f"{len(info_cond_flat)} 条条件")
+
     per_master = Counter(r["master"] for r in rows)
     print("按 master：" + " ".join(f"{m}={per_master[m]}" for m in masters))
     kind_count: dict[str, int] = {}
@@ -479,6 +516,12 @@ def main() -> int:
     lines.append("\t\t//   condCount == 0 ⇒ 这条任务不做条件过滤（无门槛 / 门槛不可求值）。")
     lines.append("\t\tstd::uint32_t condBegin;")
     lines.append("\t\tstd::uint8_t  condCount;")
+    lines.append("\t\t// ★ 大项 D（第 48 轮）：INFO 门槛切片（见下方 kInfoGroups / kInfoConds）——")
+    lines.append("\t\t//   infoGroupCount > 0 时：**全部参与判定的对话**都至少有「一条已知为假」的")
+    lines.append("\t\t//   条件 ⇒ 隐藏（进度没到）；任一对话的条件全为真/不可判定 ⇒ 显示。")
+    lines.append("\t\t//   infoGroupCount == 0 ⇒ 这条任务不做 INFO 过滤。")
+    lines.append("\t\tstd::uint32_t infoGroupBegin;")
+    lines.append("\t\tstd::uint8_t  infoGroupCount;")
     lines.append("\t\tconst char*   whereEn;  // 目标所在地（城市/飞船），日志与 UI 提示用")
     lines.append("\t\tconst char*   whereZh;")
     lines.append("\t\tconst char*   nameEn;")
@@ -514,6 +557,36 @@ def main() -> int:
     lines.append("\t};")
     lines.append(f"\tinline constexpr std::size_t kQuestCondCount = {len(cond_flat)};")
     lines.append("")
+    lines.append("\t// ★★ 大项 D（第 48 轮）：INFO 门槛（对话侧进度条件）——")
+    lines.append("\t//   任务自己的对话（INFO）里「任务还没开始时才出现」的入口类 + 中性类对话，")
+    lines.append("\t//   其条件「引用别的任务」的进度检查（形态同 StaticCondGate）。")
+    lines.append("\t//   运行时判据（见 SAQ_QuestCond.cpp::EvaluateInfoGates）：")
+    lines.append("\t//     每一条对话 = 一组条件（AND）；**全部对话都至少有「一条已知为假」"
+               "的条件** ⇒ 隐藏。")
+    lines.append("\t//   任何一条对话的条件「全为真 / 不可判定」 ⇒ 可能可用 ⇒ 显示（保守）。")
+    lines.append("\t//   数据链：scan_info_gates.py → analyze_info_gates.py → 本表；设计见 docs/08。")
+    lines.append("\tstruct StaticInfoGroup")
+    lines.append("\t{")
+    lines.append("\t\tstd::uint16_t condBegin;  // 本条对话的条件切片起点（kInfoConds 下标）")
+    lines.append("\t\tstd::uint16_t condCount;")
+    lines.append("\t};")
+    lines.append("\tinline constexpr StaticInfoGroup kInfoGroups[] = {")
+    if info_group_flat:
+        for (cb, cc) in info_group_flat:
+            lines.append(f"\t\t{{ {cb}u, {cc}u }},")
+    else:
+        lines.append("\t\t{ 0u, 0u },  // 占位（表为空时 MSVC 不允许零长数组）")
+    lines.append("\t};")
+    lines.append(f"\tinline constexpr std::size_t kInfoGroupCount = {len(info_group_flat)};")
+    lines.append("\tinline constexpr StaticCondGate kInfoConds[] = {")
+    if info_cond_flat:
+        for (ql, qm, chk, want, stage) in info_cond_flat:
+            lines.append(f"\t\t{{ 0x{ql:08X}u, {qm}u, {chk}u, {want}u, {stage}u }},")
+    else:
+        lines.append("\t\t{ 0u, 0u, 0u, 0u, 0u },  // 占位（表为空时 MSVC 不允许零长数组）")
+    lines.append("\t};")
+    lines.append(f"\tinline constexpr std::size_t kInfoCondCount = {len(info_cond_flat)};")
+    lines.append("")
     lines.append("\t// ★ 第 45 轮：引导目标候选池（按质量排序；每条任务用 candBegin/candCount 切片）。")
     lines.append("\t//   flags bit0 = persistent（常驻引用 —— 脚本任何时候都取得到，是「玩家在远处」的备胎）。")
     lines.append("\t//   生成：gen_guide_targets.py 的 cands 数组（排序规则见那个文件头注释）。")
@@ -541,6 +614,7 @@ def main() -> int:
             f'\t\t{{ 0x{int(r["local"]):08X}u, {master_idx[r["master"]]}u, {r["itype"]}u,'
             f' 0x{flags:08X}u, {int(r["cand_begin"])}u, {int(r["cand_count"])}u,'
             f' {int(r.get("cond_begin", 0))}u, {int(r.get("cond_count", 0))}u,'
+            f' {int(r.get("info_group_begin", 0))}u, {int(r.get("info_group_count", 0))}u,'
             f' "{c_escape(r["guide_where_en"])}", "{c_escape(r["guide_where_zh"])}",'
             f' "{c_escape(r["name_en"])}", "{c_escape(r["name_zh"])}" }},'
         )

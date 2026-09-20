@@ -144,6 +144,13 @@ namespace SAQ
 			std::size_t progressUnknown{};    // 求值不了 → 放行（保守）
 			bool        progressFilterOff{};  // ini 把过滤关了（只统计不隐藏）
 			std::string progressSamples;      // 「进度没到」的名单（名字 + 没通过的检查）
+			// ★★ 大项 D（第 48 轮）：INFO 门槛（对话侧条件）
+			std::size_t infoGated{};          // 带 INFO 门槛的任务数（静态表 infoGroupCount>0 的）
+			std::size_t infoPassed{};         // 全部对话都有「已知为假」以外的出路 → 显示
+			std::size_t infoHidden{};         // 全部对话都有已知为假的条件 → 隐藏
+			std::size_t infoUnknown{};        // 结构异常 → 放行（保守）
+			bool        infoFilterOff{};      // ini 把过滤关了（只统计不隐藏）
+			std::string infoSamples;          // 「INFO 没到」的名单（名字 + 已知为假的条件）
 			bool        filterApplied{};      // 这次到底有没有按运行时状态过滤
 			std::string samples;              // 被剔掉的前几条（名字 + 状态）
 			std::string vtableSamples;        // 未识别虚表的样本（诊断）
@@ -359,20 +366,24 @@ namespace SAQ
 		// ★ 第 27 轮：N=5 = 只显示「无限任务入口」（任务板）条目 —— 验证任务板入口时
 		//   不受 260 条任务干扰（见 CollectAvailableQuests 里的 kEntryOnlyTestMode 分支）。
 		// ★★ 第 46 轮：N=6 = 只显示「需要靠近」的任务。
-		// ★★ 第 47 轮（大项 C）：判据升级 —— 「**首选**（质量最优）候选非常驻」。
-		//   第 47 轮给这一类任务补了「同 cell 常驻兜底」候选（见 gen_guide_targets.py
-		//   的 find_fallbacks）⇒ 远处点引导会**落到兜底**（蓝点在目标附近，不再「没反应」），
-		//   但**精确目标仍然要靠近才加载**；没有兜底的（本机 20 条）走
-		//   「待生效 → 退避重试 → 靠近后自动生效」那条链路。清单仍是 76 条
-		//   （实测样本「营救机器人」）—— 验证这两条链路的清单，不用在 261 条里翻。
+		// ★★ 第 47 轮（大项 C）：判据一度放宽为「**首选**（质量最优）候选非常驻」。
+		// ★★ 第 48 轮（本轮）：**回退为「全部候选都非常驻」**（实测反馈：放宽后
+		//   209 条有目标的任务里 158 条命中 ⇒ 测试模式 6 显示 155 条、描述提示覆盖 76%
+		//   的任务，「提示」噪音化）。
+		//
+		//   现在只把**真正会「点了暂时没反应」**的任务算进这一类（本机 20 条）：
+		//   候选池里一个常驻都没有 ⇒ 远处点引导 = 全不可得 = 待生效链路
+		//   （结果码 5 + HUD 提示 + 退避重试，靠近后自动生效）。
+		//   对比：「首选非常驻 + 池里有常驻候选」的 138 条 —— 远处点引导会**落到常驻候选**
+		//   （立即生效、蓝点在目标附近），靠近后由复算自动升级 → 不需要提示，
+		//   也不在这场清单里。
 		// ------------------------------------------------------------------
 
 		// ★ 第 46 轮：候选池判定助手 —— 定义在下面的候选池区（`CandidateAt` 之后）。
-		//   ★ 第 47 轮改名（原 AllCandidatesNonPersistent）：判据从「全部候选都非常驻」
-		//   改为「**首选**候选非常驻」（兜底候选是常驻的，不该把这一类判没）。
+		//   ★ 第 47 轮改名 FirstCandidateNonPersistent（判据放宽），第 48 轮改回本名。
 		//   两处调用：① 这里的测试模式 6（筛「需要靠近」的任务）；② CollectAvailableQuests
 		//   组 QuestEntry 时算 needsApproach（推给界面提示用）。
-		bool FirstCandidateNonPersistent(const StaticQuestInfo& a_info);
+		bool AllCandidatesNonPersistent(const StaticQuestInfo& a_info);
 
 		bool PassesTestFilter(const StaticQuestInfo& a_info, int a_mode)
 		{
@@ -386,7 +397,7 @@ namespace SAQ
 			case 4:
 				return a_info.candCount != 0 && a_info.whereZh != nullptr && a_info.whereZh[0] != '\0';
 			case 6:
-				return FirstCandidateNonPersistent(a_info);   // ★ 第 46/47 轮：「需要靠近」那一类
+				return AllCandidatesNonPersistent(a_info);   // ★ 第 46/48 轮：「需要靠近否则没反应」那一类
 			default:
 				return true;  // 0 / 未知值 = 不过滤
 			}
@@ -402,7 +413,7 @@ namespace SAQ
 			case 3: return "只显示 DLC 条目";
 			case 4: return "只显示「有引导目标 + 有具名地点」的条目";
 			case 5: return "只显示「无限任务入口」（任务板）条目";
-			case 6: return "只显示「需要靠近」的条目（首选候选非常驻：远处 = 就近兜底 / 待生效）";
+			case 6: return "只显示「需要靠近」的条目（全部候选都非常驻：远处点引导进入待生效、靠近后自动生效）";
 			default: return "关闭（显示全部）";
 			}
 		}
@@ -444,8 +455,9 @@ namespace SAQ
 				";   3 = 只显示 DLC 任务（59 条）\r\n"
 				";   4 = 只显示「有引导目标 + 有具名地点」的任务（85 条，最少最好找）\r\n"
 				";   5 = 只显示「无限任务入口」（任务板，12 条）—— 验证任务板条目的显示与引导\r\n"
-				";   6 = 只显示「需要靠近」的任务（首选候选非常驻，76 条；含「营救机器人」）\r\n"
-				";       —— 验证第 46/47 轮：就近兜底 / 待生效 / HUD 提示 / 自动重试 / 靠近后生效\r\n"
+				";   6 = 只显示「需要靠近」的任务（全部候选都非常驻，20 条）—— 远处点「前往接取地点」\r\n"
+				";       会提示「目标尚未加载」并等待你靠近（靠近后自动生效）；验证待生效 / HUD 提示 /\r\n"
+				";       自动重试链路（第 46/48 轮）\r\n"
 				"; 控制台（如果你的游戏认 `set SAQ_TestMode to N`）非 0 时优先于本文件。\r\n"
 				"[Test]\r\n"
 				"Mode=0\r\n"
@@ -455,8 +467,14 @@ namespace SAQ
 				"; / GetStageDone（等于比较）—— 目前覆盖 7 条任务（如「迟到者」要「枝节横生」完成）。\r\n"
 				";   1 = 过滤（默认）：进度没到的任务不显示\r\n"
 				";   0 = 不过滤：只把判据结果写进日志（便于对照界面）\r\n"
+				";\r\n"
+				"; ---- 对话条件过滤（第 48 轮·大项 D，「进度没到」的第二判据） ----\r\n"
+				"; 判据来自任务自己的对话（INFO）里「引用别的任务」的同类条件 —— 全部参与判定的\r\n"
+				"; 对话都「有已知为假的条件」⇒ 进度没到 ⇒ 不显示（目前覆盖 60 条任务）。\r\n"
+				";   1 = 过滤（默认）；0 = 只写日志（便于对照界面）\r\n"
 				"[Filter]\r\n"
-				"ProgressCond=1\r\n";
+				"ProgressCond=1\r\n"
+				"InfoCond=1\r\n";
 			std::ofstream f{ path.c_str(), std::ios::binary };
 			if (!f) {
 				REX::WARN("测试开关 ini 写不进去（忽略；不影响其它功能）");
@@ -512,6 +530,19 @@ namespace SAQ
 			const auto path = TestModeIniPath();
 			if (!path.empty()) {
 				return ::GetPrivateProfileIntW(L"Filter", L"ProgressCond", 1, path.c_str()) != 0;
+			}
+			return true;
+		}
+
+		// ★★ 大项 D（第 48 轮）：INFO 门槛过滤开关（ini `[Filter] InfoCond`）。
+		//   1 = 过滤（默认）：任务自己的对话条件判定「进度没到」⇒ 不显示；
+		//   0 = 只把判据结果写进日志、**不隐藏**（实机对照用：能直接对照「INFO 没到」名单
+		//       和界面里实际出现的条目）。
+		bool ResolveInfoCondFilter()
+		{
+			const auto path = TestModeIniPath();
+			if (!path.empty()) {
+				return ::GetPrivateProfileIntW(L"Filter", L"InfoCond", 1, path.c_str()) != 0;
 			}
 			return true;
 		}
@@ -739,6 +770,11 @@ namespace SAQ
 			a_stats.progressFilterOff = !progressFilter;
 			std::size_t progressSampleCount = 0;
 
+			// ★★ 大项 D（第 48 轮）：INFO 门槛（对话侧条件）过滤开关（ini `[Filter] InfoCond`）。
+			const bool infoFilter = ResolveInfoCondFilter();
+			a_stats.infoFilterOff = !infoFilter;
+			std::size_t infoSampleCount = 0;
+
 			// ★ 第 27 轮：模式 5（只显示入口条目）跳过整段任务循环（入口在下面单独追加）。
 			const bool entryOnly = (a_testMode == kEntryOnlyTestMode);
 			if (!entryOnly) for (const auto& row : g_runtimeRows) {
@@ -821,7 +857,48 @@ namespace SAQ
 					default:
 						break;
 					}
-				}
+					}
+
+					// ★★ 大项 D（第 48 轮）：INFO 门槛（对话侧条件）——「进度没到」的第二判据。
+					//
+					//   任务自己的对话（INFO）里、条件「引用别的任务」的那些：全部参与判定的
+					//   对话都至少有「一条已知为假」的条件 ⇒ 进度没到 ⇒ 隐藏（判据设计与
+					//   两例实测对照见 tools/esm/analyze_info_gates.py 与 docs/08）。
+					//   求值语义（保守）：任何一条对话「没有已知为假的条件」（全真 / 不可判定）
+					//   ⇒ 显示；数据结构异常 ⇒ 放行。
+					if (info.infoGroupCount) {
+					++a_stats.infoGated;
+					const auto infoGate = EvaluateInfoGates(info.infoGroupBegin, info.infoGroupCount);
+					switch (infoGate.verdict) {
+					case CondVerdict::kPass:
+						++a_stats.infoPassed;
+						break;
+					case CondVerdict::kFail:
+						// 交叉验证：引擎已把这个任务标成「已开始」（第 11 轮证明它不能当
+						// 「已接取」用，但表示引擎为它做了启动准备）—— 与我们的隐藏判定冲突，
+						// 只记 WARN 提示可能误判（名单照进日志，便于实机核对）。
+						if (state.started) {
+							REX::WARN("INFO 门槛要隐藏『{}』（0x{:08X}）但引擎已开始 —— 可能误判，"
+									  "请反馈这一行（{}）", info.nameZh, row.formID, infoGate.detail);
+						}
+						// 名单无条件记录（即使 ini 把过滤关了 —— 那是实机对照的对照物）。
+						if (infoSampleCount < kMaxSamples) {
+							++infoSampleCount;
+							a_stats.infoSamples += std::format("{}[0x{:08X} {}] ",
+								info.nameZh, row.formID, infoGate.detail);
+						}
+						if (infoFilter) {
+							++a_stats.infoHidden;
+							continue;
+						}
+						break;
+					case CondVerdict::kUnknown:
+						++a_stats.infoUnknown;
+						break;
+					default:
+						break;
+					}
+					}
 
 				// ★ 第 20 轮：控制台测试过滤（`set SAQ_TestMode to N`，见 PassesTestFilter）。
 				//   只影响显示，与上面的运行时过滤是「与」的关系。
@@ -836,11 +913,11 @@ namespace SAQ
 				// ★ 第 23 轮：把「有没有引导目标」也推给界面（能不能导航要看得见）
 				// ★ 第 45 轮：判据换成候选池（candCount > 0 等价于旧 guideRefLocal != 0）。
 				entry.hasGuideTarget = info.candCount != 0;
-				// ★★ 第 46 轮（大项 B）：精确目标非常驻 ⇒ 远处点引导取不到它。
-				//   界面据此在描述里**提前**告知玩家「靠近目标区域后才能导航」。
-				//   ★★ 第 47 轮：判据 = **首选**候选非常驻（第 47 轮起这类任务在远处
-				//   会落到「同 cell 常驻兜底」，蓝点在目标附近；靠近后自动升级回精确目标）。
-				entry.needsApproach = FirstCandidateNonPersistent(info);
+				// ★★ 第 46 轮（大项 B）：远处点引导会「点了暂时没反应」（待生效）的任务，
+				//   界面据此在描述里**提前**告知玩家「靠近目标区域后才会自动生效」。
+				//   ★ 第 47 轮曾放宽为「首选候选非常驻」；第 48 轮改回「**全部**候选都非常驻」
+				//   —— 有常驻候选的任务远处点引导会落到常驻候选（立即生效），不需要提示。
+				entry.needsApproach = AllCandidatesNonPersistent(info);
 				entry.nameZh = info.nameZh;        // 中英都带上，AS3 侧按游戏语言挑
 				entry.nameEn = info.nameEn;
 				a_out.push_back(std::move(entry));
@@ -941,6 +1018,16 @@ namespace SAQ
 				// 「进度没到」名单：玩家报「某条任务没显示」时，先在这里搜 FormID；
 				// 每条后面括号里是**没通过的检查**（哪个任务是什么状态、期望什么）。
 				out += " 进度没到: " + a_stats.progressSamples;
+			}
+			// ★★ 大项 D（第 48 轮）：INFO 门槛（对话侧条件）的统计与名单。
+			if (a_stats.infoGated) {
+				out += std::format(" INFO门槛={}(过{}/藏{}/未知{}",
+					a_stats.infoGated, a_stats.infoPassed,
+					a_stats.infoHidden, a_stats.infoUnknown);
+				out += a_stats.infoFilterOff ? "｜过滤=ini关闭)" : ")";
+			}
+			if (!a_stats.infoSamples.empty()) {
+				out += " INFO没到: " + a_stats.infoSamples;
 			}
 			if (!a_stats.samples.empty()) {
 				// 完整名单（第 11 轮起不再只记前几条）：玩家反馈「某条任务没显示」时，
@@ -1165,6 +1252,11 @@ namespace SAQ
 			//   通道里遗留的引导认领回来，动态更新才有机会把蓝点挪到板上。
 			std::uint32_t adoptWarnRef{};      // 「认不出的通道目标」已 WARN 过的值（同一目标只刷一次）
 			std::uint64_t upkeepMs{};          // 例行认领/对账的节流时间戳（第 32 轮）
+			// ★ 第 48 轮：认领后的**复算宽限期**（见 kAdoptGraceMs）——
+			//   实测（20:42 会话）：读档瞬间 `LookupByID` 对还没加载完的引用返回 null，
+			//   「候选复算」据此把目标从 NPC 误降级到同 cell 兜底，10 秒后又升回去。
+			//   宽限期内不复算（目标保持通道里的原值，等引擎稳定）。
+			std::uint64_t adoptGraceUntilMs{};
 			// ★ 第 45 轮：候选池 —— 当前引导用的是第几个候选（0-based，列表按质量排序）。
 			//   「脚本报状态 2（取不到）」时换下一个（循环）；菜单关着时还会定期复算
 			//   「有没有更优的候选变得可用了」（见 UpdateQuestGuideTarget）。
@@ -1186,6 +1278,9 @@ namespace SAQ
 		constexpr std::uint64_t kGuideVerifyRetryMs = 2000;  // 之后每次重查的间隔
 		constexpr std::uint32_t kGuideVerifyMaxTries = 6;    // 最多查这么久（≈ 11 秒）
 		constexpr std::uint64_t kEntryTargetCheckMs = 1500;  // 入口引导目标复算间隔（第 31 轮）
+		// ★ 第 48 轮：认领已有引导后的复算宽限期 —— 读档/开局瞬间引擎查询不稳定，
+		//   立即复算会把目标误降级（实测例：补给之行 [1]NPC → [3]兜底 → 10 秒后又升回）。
+		constexpr std::uint64_t kAdoptGraceMs = 8000;
 		constexpr std::uint64_t kUpkeepIntervalMs = 2000;    // 菜单关着时例行认领/对账间隔（第 32 轮）
 		// ★ 第 46 轮：引导「待生效」（目标尚未加载）的退避重试参数（见 PollApproachRetry）。
 		constexpr std::uint64_t kApproachRetryFirstMs = 10000;  // 第一次重试：10 秒
@@ -1263,31 +1358,32 @@ namespace SAQ
 			return 0;
 		}
 
-		// ★★ 第 46 轮（大项 B）：「需要靠近」判定 —— 这条任务的**精确目标**（首选候选）
-		//   是非常驻引用 ⇒ 玩家在远处（目标的 cell 没加载）时取不到，必须靠近才能拿到。
+		// ★★ 第 46 轮（大项 B）／第 48 轮（定稿）：「需要靠近」判定 —— 这条任务的候选池里
+		//   **一个常驻候选都没有** ⇒ 玩家在远处（目标的 cell 没加载）时全部取不到，
+		//   引导进入「待生效」链路（结果码 5 + HUD 提示 + 退避重试），必须靠近才能看到标记。
 		//
-		//   ★★ 第 47 轮（大项 C）：判据从「**全部**候选都非常驻」改为「**首选**候选非常驻」。
-		//   为什么：第 47 轮给这一类任务补了「同 cell 常驻兜底」候选（常驻 ⇒ 任何位置都能
-		//   取到，见 tools/esm/gen_guide_targets.py::find_fallbacks）—— 远处点引导不再
-		//   「什么都不发生」，而是**落到兜底**（蓝点落在目标附近），靠近后由运行时
-		//   「候选复算」（UpdateQuestGuideTarget）自动升级回精确目标。
-		//   但**精确目标仍要靠近才加载**：描述里的「需靠近」提示 + 测试模式 6 的清单
-		//   继续按「首选取不到」来算（否则这一类会被判没，见 docs/05 第二十一节）。
+		//   为什么不用「首选候选非常驻」（第 47 轮的判据）：实测 209 条有目标的任务里
+		//   158 条命中 ⇒ 描述提示 + 测试模式 6 覆盖 76% 的任务，而其中 138 条
+		//   （首选非常驻、但池里有常驻候选/兜底）在远处点引导会**立即落到常驻候选**、
+		//   只是位置未必最精确，靠近后由「候选复算」自动升级 —— 玩家侧有即时反馈，
+		//   不需要（也不该）提前警告，否则真会「没反应」的那 20 条反而被淹没。
 		//
 		//   用途：① 推给界面，在描述里**提前**告知（MissionMenu 的 bSaqNeedsApproach）；
-		//         ② 点引导且全不可得（含兜底也没有 / 兜底也没命中）时，据此走
-		//            「保持待生效 + 慢速重试 + HUD 提示」而不是 19 秒后静默放弃。
+		//         ② 点引导且全不可得时走「保持待生效 + 慢速重试 + HUD 提示」
+		//            （不安排 19 秒超时判定）而不是静默放弃。
 		//   数据来源 = StaticGuideCandidate.flags bit0（离线由持久位算出）。
-		bool FirstCandidateNonPersistent(const StaticQuestInfo& a_info)
+		bool AllCandidatesNonPersistent(const StaticQuestInfo& a_info)
 		{
 			if (a_info.candCount == 0) {
 				return false;  // 没有目标：那是「暂无导航目标」，与「需要靠近」是两回事
 			}
-			const auto* c = CandidateAt(a_info, 0);
-			if (!c) {
-				return false;  // 取不到的槽位：保守放行
+			for (std::uint8_t i = 0; i < a_info.candCount; ++i) {
+				const auto* c = CandidateAt(a_info, i);
+				if (!c || (c->flags & kGuideCandidatePersistent) != 0) {
+					return false;  // 有任何一个常驻（或槽位异常）：保守判「不需要靠近」
+				}
 			}
-			return (c->flags & kGuideCandidatePersistent) == 0;
+			return true;
 		}
 
 		// ★ 第 45 轮：换候选（定义在下方 ReissueGuideIfScriptLost 之前）——
@@ -1956,14 +2052,16 @@ namespace SAQ
 				const auto menus = OpenMenusSummary();
 				if (ui->IsMenuOpen(MenuName())) {
 					// 任务菜单还开着 ⇒ 脚本跑不到（菜单暂停游戏 ⇒ 定时器不走）。
-					REX::WARN("星图：等待中——任务菜单仍开着（R 后 {:.1f} 秒｜还开着：{}）：{}",
+					REX::WARN("星图：等待中——任务菜单仍开着（R 后 {:.1f} 秒｜其它打开的菜单：{}）：{}",
 						elapsed, menus,
 						g_starMap.closedBySwf
 							? "界面侧还没关菜单（旧 SWF？回写没到？）"
 							: "kHide 没生效？请看 docs/05 第十一节");
 				} else {
-					REX::INFO("星图：等待中（R 后 {:.1f} 秒｜还开着：{}）—— 脚本的定时器要等"
-							  "游戏恢复运行才走（PauseMenu 还在 = 玩家还没离开暂停菜单）",
+					// ★ 第 48 轮：文案改清楚（旧文案「还开着：无」自相矛盾 —— 空列表 = 除星图外
+					//   没有别的菜单挡着，只是脚本的轮询节拍还没到）。
+					REX::INFO("星图：等待中（R 后 {:.1f} 秒｜星图还没出现；其它打开的菜单：{}）——"
+							  "脚本的定时器要等游戏恢复运行才走（PauseMenu 还在 = 玩家还没离开暂停菜单）",
 						elapsed, menus);
 				}
 			}
@@ -2033,7 +2131,7 @@ namespace SAQ
 					REX::INFO("星图：按预期未打开（`星图诊断` 全层节点=0：目标位置不在星图上）"
 							  "—— 脚本已改发 HUD 提示（不开无意义的星图），不算失败");
 				} else {
-					REX::WARN("星图：{:.1f} 秒内没有打开（已尝试 {} 次｜GalaxyStarMapMenu 不在屏幕上｜还开着：{}）"
+					REX::WARN("星图：{:.1f} 秒内没有打开（已尝试 {} 次｜GalaxyStarMapMenu 不在屏幕上｜其它打开的菜单：{}）"
 							  "—— 看 Papyrus 的 `[SAQ] 星图请求` 两行有没有出现（取不到地点 / 脚本没跑）",
 						static_cast<double>(kStarMapWindowMs) / 1000.0, g_starMap.attempts,
 						OpenMenusSummary());
@@ -2219,8 +2317,11 @@ namespace SAQ
 				g_guide.verifySilent = false;
 				g_guide.verifyAtMs = 0;
 				g_guide.verifySeq = 0;
-				REX::WARN("入口引导目标更新未被脚本确认：{}（0x{:08X}）—— {}；"
-						  "通道保持不动（脚本下次运行/关菜单时会应用它）",
+				// ★ 第 48 轮：文案去掉「入口」（普通任务的候选复算也走这里）；
+				//   并说明「读档/脚本未运行期间属预期」（实测：确认窗口整段落在读档 VM 冻结期）。
+				REX::WARN("引导目标更新未被脚本确认：{}（0x{:08X}）—— {}；"
+						  "通道保持不动（脚本下次运行/关菜单时会应用它；"
+						  "读档 / 脚本未运行期间出现这一行属预期）",
 					DisplayNameOf(questID), questID, a_why);
 				return;
 			}
@@ -2379,7 +2480,9 @@ namespace SAQ
 					const auto uid = Masters::MakeFormID(gap->master, gap->refLocal);
 					g_guide.questFormID = uid;
 					g_guide.guideRef = targetID;
-					g_guide.lastTargetCheckMs = 0;   // 第 32 轮：允许同帧的动态更新立即复算
+					g_guide.lastTargetCheckMs = 0;
+					// ★ 第 48 轮：宽限期内不复算（读档瞬间的引擎查询不可靠，见 kAdoptGraceMs）。
+					g_guide.adoptGraceUntilMs = NowMs() + kAdoptGraceMs;
 					g_guide.adoptWarnRef = 0;
 					REX::INFO("认领已有引导（任务板入口）：{}（0x{:08X}）引导目标=0x{:08X}｜脚本状态={:.0f}"
 							  "（上一次会话/读档留下的，界面会同步成「正在引导」）",
@@ -2413,7 +2516,9 @@ namespace SAQ
 			g_guide.guideRef = targetID;
 			g_guide.candIndex = adoptCandIdx;   // ★ 第 45 轮：从通道里的那个候选继续
 			g_guide.candSwitches = 0;
-			g_guide.lastTargetCheckMs = 0;   // 第 32 轮：允许同帧的动态更新立即复算
+			g_guide.lastTargetCheckMs = 0;
+			// ★ 第 48 轮：宽限期内不复算（读档瞬间的引擎查询不可靠，见 kAdoptGraceMs）。
+			g_guide.adoptGraceUntilMs = NowMs() + kAdoptGraceMs;
 			g_guide.adoptWarnRef = 0;
 			REX::INFO("认领已有引导：{}（0x{:08X}）目标引用=0x{:08X}（候选 [{}]「{}」/ 共 {}）"
 					  "｜脚本状态={:.0f}（上一次会话/读档留下的，界面会同步成「正在引导」）",
@@ -2610,6 +2715,9 @@ namespace SAQ
 				return;  // 只有一个候选：没什么可复算的
 			}
 			const auto now = NowMs();
+			if (now < g_guide.adoptGraceUntilMs) {
+				return;  // ★ 第 48 轮：认领后的复算宽限期（读档瞬间查询不可靠，见 kAdoptGraceMs）
+			}
 			if (g_guide.lastTargetCheckMs != 0 &&
 				now - g_guide.lastTargetCheckMs < kEntryTargetCheckMs) {
 				return;  // 节流：1.5 秒最多复算一次（与入口共用同一个节流戳）
@@ -2678,6 +2786,9 @@ namespace SAQ
 				return;
 			}
 			const auto now = NowMs();
+			if (now < g_guide.adoptGraceUntilMs) {
+				return;  // ★ 第 48 轮：认领后的复算宽限期（读档瞬间查询不可靠，见 kAdoptGraceMs）
+			}
 			if (g_guide.lastTargetCheckMs != 0 &&
 				now - g_guide.lastTargetCheckMs < kEntryTargetCheckMs) {
 				return;  // 节流：1.5 秒最多复算一次

@@ -61,6 +61,13 @@ if (-not $SkipTable) {
     Step '1/6' '提取进度门槛（analyze_ctda.py → ref\ctda_gates.json）'
     & python (Join-Path $root 'tools\esm\analyze_ctda.py') | Write-Host
     if ($LASTEXITCODE -ne 0) { throw "analyze_ctda.py 失败（exit $LASTEXITCODE）" }
+    # ★ 大项 D（第 48 轮）：INFO 门槛（对话侧条件）——
+    #   ref\info_gates.json 由 scan_info_gates.py 全表扫 Starfield.esm 的 DIAL/INFO 得到
+    #   （约 1 分钟；只在需要刷新对话数据时手动跑：python tools\esm\scan_info_gates.py）。
+    #   这里只做交叉分析（快）：info_gates.json + 候选表 → ref\info_gates_final.json。
+    Step '1/6' '生成 INFO 门槛（analyze_info_gates.py → ref\info_gates_final.json）'
+    & python (Join-Path $root 'tools\esm\analyze_info_gates.py') | Write-Host
+    if ($LASTEXITCODE -ne 0) { throw "analyze_info_gates.py 失败（exit $LASTEXITCODE）" }
     Step '1/6' '生成静态任务表（gen_quest_table.py）'
     & python (Join-Path $root 'tools\esm\gen_quest_table.py') | Write-Host
     if ($LASTEXITCODE -ne 0) { throw "gen_quest_table.py 失败（exit $LASTEXITCODE）" }

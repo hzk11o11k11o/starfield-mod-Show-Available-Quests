@@ -1061,7 +1061,13 @@ package
             return "无";
          }
          var _loc1_:String = param1.sName != null ? String(param1.sName) : "?";
-         return "0x" + Number(param1.uID).toString(16) + "@" + _loc1_;
+         var _loc3_:Number = Number(param1.uID);
+         if(isNaN(_loc3_))
+         {
+            // ★ 第 48 轮：子项（「前往接取地点」等）没有 uID ⇒ 旧写法会打出「0xNaN」。
+            return "「" + _loc1_ + "」(子项)";
+         }
+         return "0x" + _loc3_.toString(16) + "@" + _loc1_;
       }
       
       // ★ 第 43 轮：把收到的 user event 记进 SaqEventLog（相邻重复不重复记，最多 6 条）。
@@ -1313,6 +1319,10 @@ package
       }
       
       // 按 uID 找一条可接任务的显示名（引导相关文案用；找不到给 "?"）。
+      // 显示名：优先在「可接列表」里找（AvailableQuests），找不到再查**玩家任务日志**
+      // （QuestData —— 任务被接取后就会从可接列表消失，但日志里还在）。
+      // ★ 第 48 轮：旧写法只查可接列表 ⇒ 玩家刚接取任务时状态栏会显示「当前引导:?」。
+      //   最后兜底打 FormID（绝不再出现「?」）。
       private function SaqQuestNameByID(param1:Number) : String
       {
          var _loc2_:Object = this.FindQuestEntryByID(this.AvailableQuests, param1);
@@ -1320,7 +1330,12 @@ package
          {
             return _loc2_.sName;
          }
-         return "?";
+         var _loc3_:Object = this.FindQuestEntryByID(this.QuestData, param1);
+         if(_loc3_ != null)
+         {
+            return _loc3_.sName;
+         }
+         return "0x" + Number(param1).toString(16);
       }
       
       // ==================================================================

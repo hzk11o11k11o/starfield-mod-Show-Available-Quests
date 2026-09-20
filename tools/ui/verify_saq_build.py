@@ -356,7 +356,10 @@ def main() -> int:
         "需要靠近函数": b"SaqApproachNote",
         "载荷第 6 列": b"bSaqNeedsApproach",
         "目标未加载 note": "目标尚未加载:靠近后自动生效".encode(),
-    }
+        # ★ 第 48 轮：诊断标签的 NaN 兜底 —— 子项（「前往接取地点」）没有 uID，
+        #   旧写法会打出「0xNaN@…」，新写法给「「名字」(子项)」。
+        "子项标签": "(子项)".encode(),
+        }
     swf_paths = [
         ROOT / "ui/missionmenu/build/missionmenu.swf",
         ROOT / "ui/missionmenu_lrg/build/missionmenu_lrg.swf",
@@ -473,7 +476,8 @@ def main() -> int:
             "星图脚本应用后窗口": "它的星图调用在下一个轮询节拍".encode(),
             "星图等待(通用)": "星图：等待中".encode(),
             "星图等待(任务菜单仍开着)": "星图：等待中——任务菜单仍开着".encode(),
-            "星图等待(列出开着的菜单)": "还开着：".encode(),
+            #   ★ 第 48 轮：文案改清楚 —— 旧「还开着：」在空列表时自相矛盾（「等待中…还开着：无」）。
+            "星图等待(列出开着的菜单)": "其它打开的菜单：".encode(),
             "星图打开(带耗时)": "R 后约".encode(),
             # 暂停菜单的真正注册名（exe 菜单名表里是 PauseMenu，没有 DataMenu）
             "暂停菜单名": b"PauseMenu",
@@ -532,19 +536,39 @@ def main() -> int:
             #   （实测样本「营救机器人」），方便实测时找条目。
             #   ★ 第 47 轮：判据升级为「首选候选非常驻」（兜底候选是常驻的）。
             "测试模式 6 日志文案": "只显示「需要靠近」的条目".encode(),
-            "测试模式 6 ini 说明": "含「营救机器人」".encode(),
+            # ★ 第 48 轮：判据回退为「全部候选都非常驻」（20 条）—— ini 说明同步。
+            "测试模式 6 ini 说明": "全部候选都非常驻，20 条".encode(),
             # 上限写死成 5 曾把 Mode=6 静默折成 0（玩家看到的是「过滤失效」）⇒ 现在
             # 超范围要 WARN，且模式行**无论开没开都打**（缺了这行就没法区分「ini 没读到」）。
             "测试模式超范围告警": "超出已知范围".encode(),
-            # ★★ 第 47 轮（大项 C）：同 cell 常驻兜底 —— 「需要靠近」判据改成
-            #   「**首选**候选非常驻」（ini 模板与 TestModeNote 的文案同步更新）。
-            "需要靠近判据(首选)": "首选候选非常驻".encode(),
+            # ★★ 第 47 轮（大项 C）→ 第 48 轮收口：「需要靠近」判据 = **全部**候选都非常驻
+            #   （第 47 轮曾放宽为「首选候选非常驻」，实测命中 158 条 ⇒ 提示噪音化，已回退）。
+            "需要靠近判据(全部)": "全部候选都非常驻".encode(),
+            # ★★ 第 48 轮（大项 D）：INFO 门槛（对话侧条件）—— 统计行 / 名单 /
+            #   误判告警（引擎已开始却要隐藏 ⇒ WARN）/ ini 开关与说明。
+            "INFO 门槛统计": "INFO门槛=".encode(),
+            "INFO 没到名单": "INFO没到:".encode(),
+            "INFO 门槛误判告警": "INFO 门槛要隐藏".encode(),
+            "ini INFO 开关": "InfoCond=1".encode(),
+            "ini 对话条件说明": "对话条件过滤".encode(),
+            # ★ 第 48 轮：认领后的复算宽限期（读档瞬间引擎查询不可靠）+ 引导更新未确认
+            #   文案去「入口」二字（普通任务的候选复算也走同一个 WARN）。
+            "认领宽限说明": "读档 / 脚本未运行期间出现这一行属预期".encode(),
+            "引导更新未确认(新文案)": "引导目标更新未被脚本确认".encode(),
         }.items():
             all_ok &= check(f"DLL · {name}", blob, needle)
         # 反向检查：第 47 轮把「候选**全是**非常驻引用」的旧说法换掉
-        #   （判据已改为「首选候选非常驻」—— 兜底候选是常驻的，旧说法已不成立）
+        #   （判据已改为「全部候选都非常驻」）
         gone = "候选全是非常驻引用".encode() not in blob
         print(("OK  " if gone else "MISS") + " DLL · 旧「全是 非常驻」判据文案已替换(反向检查)")
+        all_ok &= gone
+        # 反向检查（第 48 轮）：① 「首选候选非常驻」的放宽判据文案已回退；
+        #   ② 「入口引导目标更新未被脚本确认」的旧 WARN 文案去掉「入口」二字；
+        #   ③ 星图旧「还开着：」文案已替换（空列表时自相矛盾）。
+        gone = ("首选候选非常驻".encode() not in blob
+                and "入口引导目标更新未被脚本确认".encode() not in blob
+                and "还开着：".encode() not in blob)
+        print(("OK  " if gone else "MISS") + " DLL · 第 48 轮旧文案已替换(反向检查)")
         all_ok &= gone
         # 反向检查：第 31 轮把候选链顺序换掉，第 30 轮的「marker 优先」诊断文案不应再出现
         gone = "这些条目没走新建的常驻 marker".encode() not in blob
@@ -759,6 +783,56 @@ def main() -> int:
         print(("OK  " if ok_slice else "MISS") +
               " 静态表 · 营救机器人兜底链（0x08ECA5 非常驻 → 0x08ECA6 常驻）")
         all_ok &= ok_slice
+
+        # ★★ 第 48 轮（大项 D）：INFO 门槛（对话侧条件）—— 数据侧完整性：
+        #   ① 结构/数组存在；② 计数与实测对齐（290 条对话 / 341 条条件）；
+        #   ③ 全部对话与全部任务的切片不越界；④ 有门槛任务数 = 60；
+        #   ⑤ 实测样本「大器晚成」（0x00270717）的门槛 = 「孤立无援」（0x0027071B）完成。
+        for name, needle in {
+            "INFO 门槛结构 StaticInfoGroup": "struct StaticInfoGroup",
+            "INFO 门槛数组 kInfoGroups": "kInfoGroups[] = {",
+            "INFO 条件数组 kInfoConds": "kInfoConds[] = {",
+        }.items():
+            ok = needle in blob
+            print(("OK  " if ok else "MISS") + f" 静态表 · {name}")
+            all_ok &= ok
+        info_cond_total = _num_after(blob, "kInfoCondCount = ")
+        info_group_total = _num_after(blob, "kInfoGroupCount = ")
+        g0 = blob.find("kInfoGroups[] = {")
+        g1 = blob.find("kInfoGroupCount")
+        g_region = blob[g0:g1] if 0 <= g0 < g1 else ""
+        g_rows = re.findall(r"\{\s*(\d+)u,\s*(\d+)u\s*\},", g_region)
+        n_oob_g = sum(1 for a, b in g_rows if int(a) + int(b) > info_cond_total)
+        n_info_tasks = 0
+        n_oob_t = 0
+        for m in re.finditer(
+                r"\{\s*0x[0-9A-F]+u,\s*\d+u,\s*\d+u,\s*0x[0-9A-F]+u,"
+                r"\s*\d+u,\s*\d+u,\s*\d+u,\s*\d+u,\s*(\d+)u,\s*(\d+)u,", region):
+            begin, count = int(m.group(1)), int(m.group(2))
+            if count:
+                n_info_tasks += 1
+                if info_group_total >= 0 and begin + count > info_group_total:
+                    n_oob_t += 1
+        ok = (info_cond_total == 341 and len(g_rows) == 290 and n_oob_g == 0
+              and n_info_tasks == 60 and n_oob_t == 0)
+        print(("OK  " if ok else "MISS") +
+              f" 静态表 · INFO 门槛完整（对话 {len(g_rows)} 条 / 条件 {info_cond_total} 条 / "
+              f"有门槛任务 {n_info_tasks} / 切片越界 {n_oob_g + n_oob_t}）")
+        all_ok &= ok
+        m_bot = re.search(
+            r"\{\s*0x00270717u,\s*\d+u,\s*\d+u,\s*0x[0-9A-F]+u,"
+            r"\s*\d+u,\s*\d+u,\s*\d+u,\s*\d+u,\s*(\d+)u,\s*(\d+)u,", blob)
+        ok_bot = False
+        if m_bot:
+            gb, gc = int(m_bot.group(1)), int(m_bot.group(2))
+            if gc == 1 and gb + 1 <= len(g_rows):
+                cc = int(g_rows[gb][1])
+                if cc == 1:
+                    ok_bot = re.search(
+                        r"\{\s*0x0027071Bu,\s*0u,\s*1u,\s*1u,\s*0u\s*\},", blob) is not None
+        print(("OK  " if ok_bot else "MISS") +
+              " 静态表 · 大器晚成 INFO 门槛（孤立无援 0x0027071B 完成）")
+        all_ok &= ok_bot
     else:
         print(f"MISS 缺少 {table_h}")
         all_ok = False

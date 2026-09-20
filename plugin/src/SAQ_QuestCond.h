@@ -39,4 +39,20 @@ namespace SAQ
 	// a_condBegin / a_condCount 来自 StaticQuestInfo（kQuestConds[] 的切片）。
 	// 只在主线程调用（读引擎对象）。失败不清空缓存，无副作用。
 	CondEvalResult EvaluateProgressGates(std::uint32_t a_condBegin, std::uint8_t a_condCount);
+
+	// ★★ 大项 D（第 48 轮）：INFO 门槛求值 —— **对话侧**进度条件（数据见
+	// SAQ_QuestTable.h 的 kInfoGroups / kInfoConds，生成链见 docs/08）。
+	//
+	// a_groupBegin / a_groupCount 来自 StaticQuestInfo（kInfoGroups[] 的切片）；
+	// 每个 group 再切片到 kInfoConds[] ——「一条对话 = 一组条件（AND）」。
+	//
+	// 语义（保守，误藏最小化）：
+	//   * 一条对话只要有**一条「已知为假」**的条件 ⇒ 这条对话不可用；
+	//   * **全部对话都不可用** ⇒ kFail（进度没到 ⇒ 隐藏）；
+	//   * 任何一条对话「没有已知为假的条件」（条件全真 / 有不可判定项 / 求值不了）
+	//     ⇒ kPass（可能可用 ⇒ 显示）；
+	//   * 切片越界等结构性异常 ⇒ kUnknown（放行）。
+	// 设计依据（为什么只收「入口类 + 中性类」对话、为什么忽略无事件条件的对话）
+	// 见 tools/esm/analyze_info_gates.py 头注释与 docs/08。
+	CondEvalResult EvaluateInfoGates(std::uint32_t a_groupBegin, std::uint8_t a_groupCount);
 }
