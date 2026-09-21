@@ -44,6 +44,8 @@ ITEMS: list[tuple[str, str]] = [
     ("ref/guide_targets.json", "引导目标候选池（gen_guide_targets.py）"),
     ("ref/entry_targets.json", "任务板入口表（gen_entry_table.py）"),
     ("ref/board_markers.json", "新建常驻 marker（create_board_markers.py）"),
+    # ★★ 第 74 轮：同伴好感度任务（入口固定显示 + 后续启动边；gen_companion_quests.py）
+    ("ref/companion_quests.json", "同伴好感度任务（gen_companion_quests.py）"),
     ("plugin/src/SAQ_QuestTable.h", "静态任务表（gen_quest_table.py，DLL 编译进去）"),
     ("plugin/src/SAQ_EntryTable.h", "入口条目表（gen_entry_table.py，DLL 编译进去）"),
     ("esm/SAQ_ShowAvailableQuests.esm", "代理任务 ESM（patch_saq_esm.py 等，幂等补丁）"),
@@ -93,6 +95,11 @@ def summarize(rel: str, path: pathlib.Path) -> str:
                 return f"条目 {len(obj)}"
             if rel.endswith("board_markers.json") and isinstance(obj, dict) and "markers" in obj:
                 return f"marker {len(obj['markers'])}"
+            if rel.endswith("companion_quests.json") and isinstance(obj, list):
+                # ★★ 第 74 轮：同伴 / 任务数 + 入口（固定显示）与后续（链式门槛）的条数
+                qs = [q for g in obj for q in g.get("quests", [])]
+                n_pin = sum(1 for q in qs if q.get("pin"))
+                return f"同伴 {len(obj)} / 任务 {len(qs)}（入口 {n_pin}）"
             return f"键 {len(obj)}" if isinstance(obj, dict) else f"条目 {len(obj)}"
         if path.suffix.lower() == ".h":
             text = path.read_text(encoding="utf-8-sig")

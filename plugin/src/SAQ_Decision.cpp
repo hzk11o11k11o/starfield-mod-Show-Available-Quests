@@ -161,6 +161,26 @@ namespace SAQ::Decision
 		return out;
 	}
 
+	// ------------------------------------------------- 3b. 同伴好感度任务（第 74 轮）
+
+	bool IsCompanionPinned(std::uint8_t a_companionPin)
+	{
+		// 语义见 SAQ_QuestTable.h 的 StaticQuestInfo::companionPin：1 = 「入口」同伴任务
+		// （个人任务 COM_Quest_<同伴>_Q01 —— 由好感度里程碑直接启动的那一环）⇒ 固定显示。
+		// 「后续」（承诺任务）是 0：照旧走链式门槛（前置好感度里程碑没到就不显示）。
+		return a_companionPin != 0;
+	}
+
+	GateAction DecideGateAction(CondVerdict a_verdict, bool a_pinned)
+	{
+		if (a_verdict != CondVerdict::kFail) {
+			return GateAction::kNone;  // 没门槛 / 通过 / 求值不了 ⇒ 不动作（与抽取前一致）
+		}
+		// ★★ 第 74 轮：同伴「入口」任务固定显示 —— 门槛判「进度没到」也不隐藏
+		//   （玩家要求「固定在可接任务列表里，并在提示里提示到达一定好感度才能接取」）。
+		return a_pinned ? GateAction::kPinBypass : GateAction::kHide;
+	}
+
 	// ---------------------------------------------------------------- 4. 候选池
 
 	CandidatePick PickCandidate(std::span<const bool> a_alive)

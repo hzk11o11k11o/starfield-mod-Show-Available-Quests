@@ -171,6 +171,12 @@ namespace SAQ
 			std::size_t chainUnknown{};       // 求值不了 → 放行（保守）
 			bool        chainFilterOff{};     // ini 把过滤关了（只统计不隐藏）
 			std::string chainSamples;         // 「链式没到」的名单（名字 + 未触发的前置）
+			// ★★ 第 74 轮（同伴好感度任务）：「入口」同伴任务（个人任务）**固定显示** ——
+			//   跳过三类门槛（进度 / INFO / 链式）；完成过滤仍生效（做过的任务不再显示）。
+			//   「后续」（承诺任务）不在其中：照旧走链式门槛（见 kChainGates 里的同伴边）。
+			std::size_t companionPinned{};    // 固定显示的同伴任务数
+			std::size_t companionGateMiss{};  // 其中被门槛判「进度没到」但被放行的条数
+			std::string companionSamples;     // 名单（任务名已带同伴前缀）
 			bool        filterApplied{};      // 这次到底有没有按运行时状态过滤
 			std::string samples;              // 被剔掉的前几条（名字 + 状态）
 			std::string vtableSamples;        // 未识别虚表的样本（诊断）
@@ -863,6 +869,9 @@ namespace SAQ
 			a_stats.chainFilterOff = !chainFilter;
 			std::size_t chainSampleCount = 0;
 
+			// ★★ 第 74 轮（同伴好感度任务）：「入口」同伴任务的名单样本上限（与其它名单一致）。
+			std::size_t companionSampleCount = 0;
+
 			// ★ 第 27 轮：模式 5（只显示入口条目）跳过整段任务循环（入口在下面单独追加）。
 			const bool entryOnly = (a_testMode == kEntryOnlyTestMode);
 			if (!entryOnly) for (const auto& row : g_runtimeRows) {
@@ -915,6 +924,19 @@ namespace SAQ
 					continue;
 				}
 
+				// ★★ 第 74 轮（同伴好感度任务）：「入口」同伴任务（个人任务 —— 由好感度
+				//   里程碑直接启动的那一环）**固定显示**：跳过下面三类门槛（进度 / INFO /
+				//   链式），界面另有描述提示「需要一定好感度才能接取」（载荷第 8 列）。
+				//   需求（玩家）：「把所有达到一定好感度才能接到的同伴任务**固定**在可接
+				//   任务列表里，任务名称前面写上同伴的名字，并在提示里提示到达一定好感度
+				//   才能接取」。
+				//   ★ 只对「入口」生效：「后续」（承诺任务）companionPin == 0，照旧走链式
+				//     门槛 —— 玩家要求「链式关系的后续任务还是不要显示，只显示入口任务」。
+				//   ★ 不跳过「已完成 ⇒ 隐藏」（做过的任务不该再出现在「可接」里），
+				//     也不跳过控制台测试过滤（diagnostic，与产品语义正交）。
+				const bool pinned = Decision::IsCompanionPinned(info.companionPin);
+				bool pinnedBypassed = false;   // 被门槛判「进度没到」但固定显示放行（统计证据）
+
 				// ★ 第 35 轮：进度门槛（需求「游戏进度还不能让玩家接到 ⇒ 不显示」）。
 				//
 				// 判据 = 任务记录级条件（CTDA）里「引用别的任务」的进度检查（只收
@@ -930,6 +952,14 @@ namespace SAQ
 						++a_stats.progressPassed;
 						break;
 					case CondVerdict::kFail:
+						// ★★ 第 74 轮：判据在离线层（Decision::DecideGateAction，有单测）——
+						//   kPinBypass = 同伴「入口」任务：不隐藏、不进「进度没到」名单
+						//   （名单的语义是「因为进度没到被隐藏」，放行的任务不该混进去）。
+						if (Decision::DecideGateAction(gate.verdict, pinned) ==
+							Decision::GateAction::kPinBypass) {
+							pinnedBypassed = true;
+							break;
+						}
 						// 名单无条件记录（即使 ini 把过滤关了 —— 那是实机对照的对照物）。
 						if (progressSampleCount < kMaxSamples) {
 							++progressSampleCount;
@@ -964,6 +994,12 @@ namespace SAQ
 							++a_stats.infoPassed;
 							break;
 						case CondVerdict::kFail:
+							// ★★ 第 74 轮：同伴「入口」任务固定显示（判据同上，离线层有单测）。
+							if (Decision::DecideGateAction(infoGate.verdict, pinned) ==
+								Decision::GateAction::kPinBypass) {
+								pinnedBypassed = true;
+								break;
+							}
 							// ★ 第 48 轮补丁（实机日志复查抓到的误藏）：引擎已把这个任务标成
 							//   「已开始」⇒ **放行**，不隐藏。依据 = 第 11 轮的实证：引擎 started
 							//   的任务玩家**仍可能接到**（「全数到期」RAD05 就是那一轮的案例 ——
@@ -1013,6 +1049,15 @@ namespace SAQ
 							++a_stats.chainPassed;
 							break;
 						case CondVerdict::kFail:
+							// ★★ 第 74 轮：同伴「入口」任务固定显示（判据同上，离线层有单测）。
+							//   ★ 同伴线的**后续**任务（承诺任务）companionPin == 0 ⇒ 到这里
+							//     照旧判「链式没到 ⇒ 隐藏」（玩家要求「后续任务不要显示」）；
+							//     它们的启动边（好感度里程碑）见 gen_companion_quests.py。
+							if (Decision::DecideGateAction(chainGate.verdict, pinned) ==
+								Decision::GateAction::kPinBypass) {
+								pinnedBypassed = true;
+								break;
+							}
 							// 名单无条件记录（即使 ini 把过滤关了 —— 那是实机对照的对照物）。
 							if (chainSampleCount < kMaxSamples) {
 								++chainSampleCount;
@@ -1032,6 +1077,26 @@ namespace SAQ
 						}
 						}
 
+				// ★★ 第 74 轮（同伴好感度任务）：「入口」同伴任务固定显示 ——
+				//   到这里说明它过了完成过滤、且没有被三类门槛藏掉（pinned ⇒ 门槛
+				//   一律放行）；把统计与名单记下来（「固定显示」真的生效的证据）。
+				if (pinned) {
+					++a_stats.companionPinned;
+					if (pinnedBypassed) {
+						++a_stats.companionGateMiss;
+					}
+					if (companionSampleCount < kMaxSamples) {
+						++companionSampleCount;
+						a_stats.companionSamples += std::format("{}[0x{:08X}{}{}] ",
+							info.nameZh, row.formID,
+							(info.companion >= 0 &&
+								static_cast<std::size_t>(info.companion) < kCompanionCount)
+								? std::format(" 同伴={}", kCompanionNamesZh[info.companion])
+								: std::string{},
+							pinnedBypassed ? " 跳过门槛" : "");
+					}
+				}
+
 						// ★ 第 20 轮：控制台测试过滤（`set SAQ_TestMode to N`，见 PassesTestFilter）。
 				//   只影响显示，与上面的运行时过滤是「与」的关系。
 				if (!PassesTestFilter(info, a_testMode)) {
@@ -1041,6 +1106,9 @@ namespace SAQ
 
 				QuestEntry entry;
 				entry.formID = row.formID;
+				// ★★ 第 74 轮（同伴好感度任务）：界面据此在描述里提示「需要一定好感度
+				//   才能接取」（载荷第 8 列）—— 固定显示的「入口」同伴任务才有这个标记。
+				entry.companionPinned = pinned;
 				// ★ 第 65 轮（任务专属图标）：type 推真实任务类型（此前推 6「可接任务」
 				//   统一值）—— 界面按它 + faction 选图标，与原版任务菜单一致。
 				entry.type = info.type;
@@ -1180,6 +1248,18 @@ namespace SAQ
 			}
 			if (!a_stats.chainSamples.empty()) {
 				out += " 链式没到: " + a_stats.chainSamples;
+			}
+			// ★★ 第 74 轮：同伴好感度任务（「入口」固定显示）的统计与名单。
+			//   「其中 N 条被门槛判『进度没到』但放行」= 固定显示真的起了作用的证据
+			//   （否则这些任务会出现在上面的「进度没到 / INFO没到 / 链式没到」名单里）。
+			//   名单里每条带所属同伴与「跳过门槛」标记；「后续」（承诺任务）不在这里
+			//   —— 它们照旧走链式门槛（前置没到 ⇒ 出现在「链式没到」名单里）。
+			if (a_stats.companionPinned) {
+				out += std::format(" 同伴固定={}(其中{}条被门槛判「进度没到」但放行)",
+					a_stats.companionPinned, a_stats.companionGateMiss);
+			}
+			if (!a_stats.companionSamples.empty()) {
+				out += " 同伴固定名单: " + a_stats.companionSamples;
 			}
 			if (!a_stats.samples.empty()) {
 				// 完整名单（第 11 轮起不再只记前几条）：玩家反馈「某条任务没显示」时，

@@ -158,6 +158,38 @@ namespace SAQ::Decision
 	GateDecision DecideChainGates(std::span<const CondCheck> a_edges);
 
 	// ========================================================================
+	//  3b. 同伴好感度任务（第 74 轮）：「入口」固定显示 / 「后续」照旧走链式门槛
+	//
+	//  需求（玩家）：「把所有达到一定好感度才能接到的同伴任务**固定**在可接任务
+	//  列表里，任务名称前面写上同伴的名字，并在提示里提示到达一定好感度才能接取」
+	//  + 「链式关系的后续任务还是不要显示，只显示入口任务」。
+	//
+	//  数据：StaticQuestInfo::companion（哪一位同伴）+ companionPin（1 = **入口**
+	//  同伴任务 = 个人任务 COM_Quest_<同伴>_Q01 —— 由好感度里程碑直接启动的那一环）。
+	//  生成器 tools/esm/gen_companion_quests.py（对着官方 Papyrus 源码核验）。
+	//  ========================================================================
+
+	// a_companionPin != 0 ⇒ 这条是「入口」同伴任务（固定显示）。
+	bool IsCompanionPinned(std::uint8_t a_companionPin);
+
+	// 门槛求值的最终动作（三个门槛 —— 进度 / INFO / 链式 —— 共用）：
+	//   * kNone       —— 没有门槛 / 求值通过 / 求值不了（放行，不动作）；
+	//   * kHide       —— 进度没到 ⇒ 隐藏（调用方还要看对应 ini 开关是否关闭）；
+	//   * kPinBypass  —— 本来该隐藏，但这是**固定显示**的「入口」同伴任务 ⇒ 放行
+	//                    （调用方只记统计 —— 「固定显示」真的起了作用的证据）。
+	enum class GateAction : std::uint8_t
+	{
+		kNone = 0,
+		kHide,
+		kPinBypass,
+	};
+
+	// 判据（阈值/组合都在这里，调用点不许各写一份）：
+	//   verdict == kFail 时：pinned ⇒ kPinBypass；否则 kHide；
+	//   其余 verdict（kNoGates / kPass / kUnknown）⇒ kNone。
+	GateAction DecideGateAction(CondVerdict a_verdict, bool a_pinned);
+
+	// ========================================================================
 	//  4. 引导候选池：选择 / 需要靠近 判定 / 降级观察期状态机
 	// ========================================================================
 

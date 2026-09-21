@@ -250,6 +250,45 @@ MT_TEST(链式门槛_任一边触发即放行_全未触发才隐藏)
 	MT_CHECK_EQ(DecideChainGates(allEmpty).detail, std::string("全部链式前置都还没到"));
 }
 
+// ---------------------------------------------------- 4c. 同伴好感度任务（第 74 轮）
+
+MT_TEST(同伴固定显示_入口任务跳过三类门槛)
+{
+	// 判据一：companionPin（静态表字段）—— 1 = 「入口」同伴任务（个人任务，
+	// 由好感度里程碑直接启动的那一环）；0 = 不是（普通任务 / 同伴线的「后续」承诺任务）。
+	MT_CHECK_EQ(IsCompanionPinned(0), false);
+	MT_CHECK_EQ(IsCompanionPinned(1), true);
+	MT_CHECK_EQ(IsCompanionPinned(255), true);  // 字段只当布尔用
+
+	// 判据二：门槛求值的最终动作（三个门槛共用）——
+	//   只有 kFail（进度没到）才隐藏；固定显示的同伴任务改成 kPinBypass（放行 + 统计）。
+	using A = GateAction;
+	MT_CHECK_EQ(DecideGateAction(CondV::kNoGates, false), A::kNone);
+	MT_CHECK_EQ(DecideGateAction(CondV::kNoGates, true), A::kNone);
+	MT_CHECK_EQ(DecideGateAction(CondV::kPass, false), A::kNone);
+	MT_CHECK_EQ(DecideGateAction(CondV::kPass, true), A::kNone);
+	MT_CHECK_EQ(DecideGateAction(CondV::kUnknown, false), A::kNone);
+	MT_CHECK_EQ(DecideGateAction(CondV::kUnknown, true), A::kNone);
+	MT_CHECK_EQ(DecideGateAction(CondV::kFail, false), A::kHide);
+	MT_CHECK_EQ(DecideGateAction(CondV::kFail, true), A::kPinBypass);
+
+	// 全组合守卫：只有 kFail 会隐藏；固定显示时**任何** verdict 都不隐藏。
+	for (int v = 0; v < 4; ++v) {
+		const auto verdict = static_cast<CondV>(v);
+		for (int pin = 0; pin < 2; ++pin) {
+			const auto a = DecideGateAction(verdict, pin != 0);
+			if (a == A::kHide) {
+				MT_CHECK(verdict == CondV::kFail);
+				MT_CHECK(pin == 0);   // 固定显示的同伴任务永不隐藏（玩家要求「固定显示」）
+			}
+			if (a == A::kPinBypass) {
+				MT_CHECK(verdict == CondV::kFail);
+				MT_CHECK(pin != 0);
+			}
+		}
+	}
+}
+
 // ---------------------------------------------------------------- 5. 候选池
 
 MT_TEST(候选选择_第一个可得的即最优)

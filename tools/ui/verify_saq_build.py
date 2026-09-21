@@ -675,8 +675,21 @@ def main() -> int:
         #   这个名字只可能来自本轮新代码（SaqParsePayload 解析第 7 列 +
         #   SaqBuildEntry 用真实 iType/iFaction 喂原版 SetFactionIcon）。
         "阵营边界函数 SaqSafeFaction": b"SaqSafeFaction",
-        # ★★ 第 65 轮：构建指纹（本轮 = 54）——**以后每改一次 SWF 都要 +1 并同步这里**。
-        "构建指纹 stamp=54": b"stamp=54",
+        # ★★ 第 65 轮：构建指纹 ——**以后每改一次 SWF 都要 +1 并同步这里**。
+        #   ★★ 第 74 轮（同伴好感度任务）：stamp 54 → 55（载荷加第 8 列 + 描述提示）。
+        "构建指纹 stamp=55": b"stamp=55",
+        # ★★ 第 74 轮（同伴好感度任务）：「入口」同伴任务固定显示 + 描述提示 + 名字前缀。
+        #   ① 载荷第 8 列（bSaqCompanion）与解析分支；
+        #   ② 描述提示函数（SaqCompanionNote，中英文案）；
+        #   ③ 内嵌回退载荷里的名字前缀（「巴雷特：违约」）—— 证明静态表的名字前缀
+        #      也进了 SWF 的内嵌数据（不只是 C++ 载荷）。
+        "同伴标记列 bSaqCompanion": b"bSaqCompanion",
+        "同伴提示函数 SaqCompanionNote": b"SaqCompanionNote",
+        "同伴提示(中)": "好感度达到一定水平后才能接取".encode(),
+        #   注：英文原文是「after reaching a certain affinity level…」——
+        #   此处只取不含词形变化的那一段（写 "reach a certain" 会永远匹配不上）。
+        "同伴提示(英)": b"a certain affinity level",
+        "内嵌载荷同伴名前缀(中)": "巴雷特：违约".encode(),
         # ★★ 第 65 轮：图标帧自检 —— SAQ_Report 的 icon= 字段 + MissionsList.SAQ_IconProbe。
         #   数据层对了 ≠ 图标帧真的切过去了（索引错位 / 帧名拼错 / sprite 结构变化都会
         #   停在第 1 帧）；实机日志里的 `icon=[0x…:Constellation,…]` 是图标真的画出来的证据。
@@ -1000,6 +1013,14 @@ def main() -> int:
             "链式门槛统计（链式门槛= 过/藏/未知）": "链式门槛=",
             "链式门槛名单（链式没到:）": "链式没到: ",
             "链式门槛 ini 开关（[Filter] ChainCond）": "ChainCond=1",
+            # ★★ 第 74 轮（同伴好感度任务）：「入口」同伴任务固定显示 —— 统计与名单。
+            #   `其中 N 条被门槛判「进度没到」但放行` = 固定显示真的起作用的证据；
+            #   名单每条带「同伴=」与「跳过门槛」标记；「后续」（承诺任务）不在这里
+            #   —— 它们照旧走链式门槛（前置没到 ⇒ 在「链式没到」名单里）。
+            "同伴固定统计（同伴固定=）": "同伴固定=",
+            "同伴固定名单（同伴固定名单:）": "同伴固定名单: ",
+            "同伴固定放行标记（跳过门槛）": "跳过门槛",
+            "同伴名查表（kCompanionNamesZh）": "同伴=",
         }.items():
             all_ok &= check(f"DLL · {name}", blob, needle.encode())
         # ★★ 第 49 轮（引擎内 harness）：用例驱动器 + 原语层。
@@ -1062,6 +1083,8 @@ def main() -> int:
                             "r69_chain_extra", "r69_chain_extra_pass",
                             # ★★ 第 71 轮：链式门槛全量入边审计（CF 线 / 火星城官僚线 A/B）
                             "r71_chain_cf", "r71_chain_redtape", "r71_chain_redtape_pass",
+                            # ★★ 第 74 轮：同伴好感度任务（入口固定显示 + 后续走链式门槛）
+                            "r74_companion",
                             "r62_reload_observe"):
                     all_ok &= check(f"用例计划 · [case:{cid}]", plan_text.encode(),
                                     f"[case:{cid}]".encode())
@@ -1210,6 +1233,20 @@ def main() -> int:
                 print(("OK  " if gone else "MISS") +
                       " 用例计划 · 旧「先保持」断言（需读档窗口，不可达）已替换(反向检查)")
                 all_ok &= gone
+                # ★★ 第 74 轮（同伴好感度任务）：r74 用例的三条断言 ——
+                #   ① 固定显示统计行（`同伴固定=N(其中M条被门槛判「进度没到」但放行)`）；
+                #   ② 入口任务在名单里且名字带同伴前缀（「巴雷特：违约」0x000369AB）；
+                #   ③ 「后续」（承诺任务「巴雷特：承诺」0x001C7185）照旧在链式名单里
+                #      （= 没被固定显示放行 —— 玩家要求「只显示入口任务」）。
+                all_ok &= check("用例计划 · r74 同伴固定统计断言",
+                                plan_text.encode(),
+                                "assert.log 同伴固定=\\d+\\(其中\\d+条被门槛判".encode())
+                all_ok &= check("用例计划 · r74 入口任务名单断言（名字带同伴前缀）",
+                                plan_text.encode(),
+                                "assert.log 同伴固定名单: .*巴雷特：违约\\[0x000369AB".encode())
+                all_ok &= check("用例计划 · r74 后续任务仍走链式门槛断言",
+                                plan_text.encode(),
+                                "assert.log 链式没到: .*巴雷特：承诺\\[0x001C7185".encode())
                 # ★★ 第 62 轮（大项 I）：自动读档用例 —— ① 只允许用**用户指定的那个存档**
                 #   （子串 Save7_3AB5A2FA）；② 读档步骤在；③ 存档列表诊断在。
                 all_ok &= check("用例计划 · r62 自动读档（指定存档）",
@@ -1539,9 +1576,13 @@ def main() -> int:
         def _expected_chain_edges() -> tuple[int, int, set[tuple[int, int, int]]]:
             """(边数, 有边任务数, {(目标记录号, 宿主记录号, 宿主stage)})。
 
-            ★ 两个数据源里的边**不是全部进表**（如 MQ106/MQ302b/MQ402 这类主线任务不在
+            ★ 数据源里的边**不是全部进表**（如 MQ106/MQ302b/MQ402 这类主线任务不在
             「可接任务」表里；宿主 master 不在表内的边也会被生成器跳过）⇒ 期望值要先按
             「目标在表内 + 宿主是基础游戏」过滤，才能和 kChainGates 对得上。
+            ★★ 第 74 轮：**三个**数据源 —— 编号链（quest_chain.json）+ 扩展边
+            （quest_chain_extra.json）+ **同伴「后续」任务的启动边**
+            （companion_quests.json 的 followUpGate：承诺任务只能由好感度里程碑启动，
+            并入链式门槛 ⇒ 前置没到不显示 —— 玩家要求「只显示入口任务」）。
             """
             tbl = json.loads((ROOT / "ref" / "quest_table_debug.json").read_text(encoding="utf-8"))
             table_set = {int(t["formid"]) for t in tbl}
@@ -1558,6 +1599,17 @@ def main() -> int:
                             continue
                         merged.setdefault(int(t["formid"]), set()).add(
                             (int(e["host_local"]), int(e["host_stage"])))
+            cp = ROOT / "ref" / "companion_quests.json"
+            if cp.exists():
+                for g in json.loads(cp.read_text(encoding="utf-8")):
+                    for q in g.get("quests", []):
+                        fg = q.get("followUpGate")
+                        if not fg or int(q["formid"]) not in table_set:
+                            continue
+                        if (fg.get("hostMaster") or "Starfield.esm") != "Starfield.esm":
+                            continue
+                        merged.setdefault(int(q["formid"]), set()).add(
+                            (int(fg["hostLocal"]), int(fg["hostStage"])))
             n_edges = sum(len(v) for v in merged.values())
             return n_edges, len(merged), {(t, h, s) for t, v in merged.items() for (h, s) in v}
 
@@ -1611,6 +1663,13 @@ def main() -> int:
         for label, tgt, host, stage in (
                 ("幽灵狩猎 ← 完全停止@1000", "0016D4D1", "0017134F", "1000"),
                 ("展示力量 ← 面试@500", "00226527", "00229EE7", "500"),
+                # ★★ 第 74 轮：同伴「后续」（承诺任务）的启动边 —— 前置没到不显示
+                #   （玩家要求「只显示入口任务」）：
+                #     安德列娅：承诺（0x000B8633）← 宿主 @2000（fragment 里 StartCommitmentQuest）
+                #     莎拉·摩根：承诺（0x0027B667）← 个人任务完成 @1000（场景 fragment 启动 ⇒
+                #       退一步用「个人任务完成」当必要条件）
+                ("安德列娅·承诺 ← 宿主@2000", "000B8633", "0023DF2A", "2000"),
+                ("莎拉·摩根·承诺 ← 个人任务@1000", "0027B667", "002C7C11", "1000"),
         ):
             ok_e = False
             m = re.search(r"\{\s*0x" + tgt + r"u,\s*\d+u,\s*\d+u,\s*0x[0-9A-F]+u,"
@@ -1631,21 +1690,62 @@ def main() -> int:
         #      UC 19 / Ryujin 16 / HouseVaruun 8 / Freestar 10 / BlackFleet 12 /
         #      Constellation 3 / TerranArmada 6）；④ 实测样本「深藏不露」
         #      （0x00009136，Crimson Fleet 任务）= 5。
-        fac_rows = re.findall(r'",\s*(-?\d+)\s*\},', region)
+        #   ★★ 第 74 轮：行尾追加两列（companion / companionPin）⇒ 正则要显式取
+        #   「名字之后的那两个数」，不能再拿「最后一个数」当 faction。
+        fac_rows = re.findall(r'",\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(\d+)u\s*\},', region)
         table_size = _num_after(blob, "kQuestTableSize = ")
-        n_with_fac = sum(1 for v in fac_rows if int(v) >= 0)
+        n_with_fac = sum(1 for v, _c, _p in fac_rows if int(v) >= 0)
         fac_ok = (len(fac_rows) == table_size and table_size > 0
-                  and all(-1 <= int(v) <= 9 for v in fac_rows)
+                  and all(-1 <= int(v) <= 9 for v, _c, _p in fac_rows)
                   and n_with_fac == 74)
         print(("OK  " if fac_ok else "MISS") +
               f" 静态表 · 阵营列完整（行 {len(fac_rows)}/{table_size} / 有阵营 {n_with_fac} /"
               f" 值域 -1..9）")
         all_ok &= fac_ok
-        m_fac = re.search(r"\{\s*0x00009136u,.*?,\s*(-?\d+)\s*\},", blob)
+        m_fac = re.search(r"\{\s*0x00009136u,.*?,\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(\d+)u\s*\},", blob)
         ok_fac = m_fac is not None and int(m_fac.group(1)) == 5
         print(("OK  " if ok_fac else "MISS") +
               " 静态表 · 样本「深藏不露」阵营（Crimson Fleet = 5）")
         all_ok &= ok_fac
+
+        # ★★ 第 74 轮（同伴好感度任务）：同伴列完整性 —— 数据侧（不只是特征串）：
+        #   ① 表里恰好 8 条 COM_Quest_ 任务带 companion ≥ 0（4 位同伴 × 入口/后续）；
+        #   ② 「入口」（companionPin == 1）恰好 4 条，且名字都带同伴前缀
+        #      （「巴雷特：违约」/「Sarah Morgan: In Memoriam」形态）；
+        #   ③ 名字数组 kCompanionNamesZh/En 与同伴表（ref/companion_quests.json）逐项一致；
+        #   ④ 实测样本：「巴雷特：违约」（0x000369AB）= Barrett(1) + pin 1；
+        #      「巴雷特：承诺」（0x001C7185）= Barrett(1) + pin 0（**后续** ⇒ 走链式门槛）。
+        comp_rows = [(int(f), int(c), int(p)) for (f, c, p) in fac_rows if int(c) >= 0]
+        n_pin = sum(1 for _f, _c, p in comp_rows if p)
+        comp_json = ROOT / "ref" / "companion_quests.json"
+        names_zh, names_en, n_json_q = [], [], 0
+        if comp_json.exists():
+            cj = json.loads(comp_json.read_text(encoding="utf-8"))
+            names_zh = [g["nameZh"] for g in cj]
+            names_en = [g["nameEn"] for g in cj]
+            n_json_q = sum(len(g["quests"]) for g in cj)
+        m_zh = re.search(r"kCompanionNamesZh\[\]\s*=\s*\{(.*?)\};", blob, re.S)
+        m_en = re.search(r"kCompanionNamesEn\[\]\s*=\s*\{(.*?)\};", blob, re.S)
+        rows_zh = re.findall(r'"([^"]*)"', m_zh.group(1)) if m_zh else []
+        rows_en = re.findall(r'"([^"]*)"', m_en.group(1)) if m_en else []
+        comp_ok = (len(comp_rows) == 8 == n_json_q and n_pin == 4
+                   and rows_zh == names_zh and rows_en == names_en
+                   and _num_after(blob, "kCompanionCount = ") == len(names_zh) > 0)
+        print(("OK  " if comp_ok else "MISS") +
+              f" 静态表 · 同伴好感度任务完整（标记 {len(comp_rows)}/8、入口固定显示 {n_pin}/4、"
+              f"名字表 {len(rows_zh)} 位/与 ref 逐项一致={rows_zh == names_zh}）")
+        all_ok &= comp_ok
+        for local, want_pin, want_name, label in (
+                ("000369AB", 1, "巴雷特：违约", "入口·固定显示"),
+                ("001C7185", 0, "巴雷特：承诺", "后续·链式门槛"),
+                ("00263262", 1, "萨姆·科尔：哈特家事", "入口·固定显示"),
+                ("0027B667", 0, "莎拉·摩根：承诺", "后续·链式门槛")):
+            m = re.search(r"\{\s*0x" + local + r"u,.*?,\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(\d+)u\s*\},", blob)
+            ok_row = (m is not None and int(m.group(3)) == want_pin
+                      and f'"{want_name}"' in blob)
+            print(("OK  " if ok_row else "MISS") +
+                  f" 静态表 · 同伴样本 {label}（{want_name} pin={want_pin}）")
+            all_ok &= ok_row
 
         # ★★ 第 65 轮（任务专属图标）：**图标映射表** —— 「数据 -> 图标帧」永不落空。
         #
@@ -1686,8 +1786,12 @@ def main() -> int:
                 return "Missions"
             return "None"
 
+        #   ★★ 第 74 轮：行尾多了 companion / companionPin 两列 ⇒ 这里显式取
+        #   「type + faction」（此前用 `.*?,\s*(-?\d+)\s*\},` 取最后一个数 —— 会读到
+        #   companionPin，把图标映射检查变成瞎猜）。
         tf_pairs = {(int(m.group(1)), int(m.group(2))) for m in re.finditer(
-            r"\{\s*0x[0-9A-F]+u,\s*\d+u,\s*(\d+)u,\s*0x[0-9A-F]+u,.*?,\s*(-?\d+)\s*\},", region)}
+            r"\{\s*0x[0-9A-F]+u,\s*\d+u,\s*(\d+)u,\s*0x[0-9A-F]+u,"
+            r".*?,\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*\d+u\s*\},", region)}
         tf_bad = sorted(p for p in tf_pairs if icon_label(p[1], p[0]) not in icon_frames)
         ok_icon = not tf_bad and len(tf_pairs) > 0
         print(("OK  " if ok_icon else "MISS") +

@@ -633,7 +633,12 @@ package
                         // ★★ 第 65 轮（任务专属图标）：第 7 列 = 原版 UI 阵营枚举
                         //   （-1 = 无阵营；离线由 QUST 的 FTYP 关键字映射）。
                         //   旧载荷 / 旧内嵌数据缺这列 ⇒ NaN ⇒ SaqSafeFaction 折成 -1。
-                        "iFaction":_loc7_.length >= 7 ? parseInt(_loc7_[6]) : FactionUtils.FACTION_NONE
+                        "iFaction":_loc7_.length >= 7 ? parseInt(_loc7_[6]) : FactionUtils.FACTION_NONE,
+                        // ★★ 第 74 轮（同伴好感度任务）：第 8 列 = 「入口」同伴任务
+                        //   （固定显示的那一类 —— 个人任务；"1"/"0"）。
+                        //   描述里据此提示「需要与同伴的好感度达到一定水平后才能接取」；
+                        //   旧载荷 / 旧内嵌数据缺这列 ⇒ false（不提这回事）。
+                        "bSaqCompanion":_loc7_.length >= 8 ? _loc7_[7] == "1" : false
                      });
                   }
                }
@@ -748,11 +753,22 @@ package
             : " Note: its navigation target loads only when you are near its area - from a distance SET COURSE may show no marker at first (it starts automatically once you get closer).";
       }
       
+      // ★★ 第 74 轮（同伴好感度任务）：这类任务**固定显示**（好感度没到也留在列表里），
+      //   所以描述里不能再写「这条任务当前可以接取」（自相矛盾：好感度不够时玩家接不到）。
+      //   首句换成「需要一定好感度才能接取」；判据 = C++ 载荷第 8 列（bSaqCompanion）。
+      private function SaqCompanionNote() : String
+      {
+         return this.SaqUseChinese()
+            ? "这条同伴任务需要与同伴的好感度达到一定水平后才能接取（在那之前会固定显示在这里）。"
+            : "This companion quest can be accepted only after reaching a certain affinity level with the companion (it stays listed here until then).";
+      }
+      
       // 右侧详情面板里的描述文案（固定内容，告诉玩家这条记录怎么用）。
       // ★ 第 27 轮：第 2 个参数 = 入口条目（任务板）—— 它没有「接取地点」的概念，
       //   描述改成「这是什么、怎么去」。
       // ★ 第 46 轮：第 3 个参数 = 需要靠近（见 SaqApproachNote）。
-      private function SaqDescriptionText(param1:Boolean, param2:Boolean = false, param3:Boolean = false) : String
+      // ★★ 第 74 轮：第 4 个参数 = 「入口」同伴任务（见 SaqCompanionNote）。
+      private function SaqDescriptionText(param1:Boolean, param2:Boolean = false, param3:Boolean = false, param4:Boolean = false) : String
       {
          // ★ 第 27 轮：无限任务入口（任务板）。
          // ★ 第 29 轮：入口引用已经在 ESM 里 override 成**常驻引用**（任何位置都能取到），
@@ -776,26 +792,31 @@ package
                ? "这是一块任务板 —— 与它交互就能接到赏金、运输、勘探等不断刷新的任务。按 " + this.SaqCourseKeyName() + "（设定航线）即可引导到它的位置。"
                : "This is a mission board - interact with it to pick up endlessly refreshing jobs (bounties, transport, survey...). Press " + this.SaqCourseKeyName() + " (SET COURSE) to be guided to its location.";
          }
+         // ★★ 第 74 轮：首句分两种 —— 普通任务「当前可以接取」；「入口」同伴任务
+         //   「需要好感度达标后才能接取」（param4 = bSaqCompanion，见 SaqCompanionNote）。
+         var _loc1_:String = param4 == true
+            ? this.SaqCompanionNote()
+            : (this.SaqUseChinese() ? "这条任务当前可以接取。" : "This quest is currently available.");
+         // ★ 第 46 轮：全是非常驻候选的任务追加一句「需要靠近」（param3 = bSaqNeedsApproach）
+         var _loc2_:String = param3 == true ? this.SaqApproachNote() : "";
          // ★ 第 23 轮：没有引导目标的任务（261 条里 52 条）——列表照常显示，但**无法导航**。
          //   把原因直接写进描述，玩家不用点一下才知道（此前「点了瞬间回滚」看不出原因）。
          if(param1 != true)
          {
-            return this.SaqUseChinese()
-               ? "这条任务当前可以接取，但还没有导航目标 —— 暂时无法引导到接取地点（任务本身照常显示）。"
-               : "This quest is available, but it has no navigation target yet - it cannot guide you to the pickup location.";
+            return _loc1_ + (this.SaqUseChinese()
+               ? "但它暂时还没有导航目标 —— 无法引导到接取地点（任务本身照常显示）。"
+               : " It has no navigation target yet, so it cannot guide you to the pickup location.") + _loc2_;
          }
-         var _loc1_:String = this.SaqCourseKeyName();
-         // ★ 第 46 轮：全是非常驻候选的任务追加一句「需要靠近」（param3 = bSaqNeedsApproach）
-         var _loc2_:String = param3 == true ? this.SaqApproachNote() : "";
-         if(_loc1_.length == 0)
+         var _loc3_:String = this.SaqCourseKeyName();
+         if(_loc3_.length == 0)
          {
-            return (this.SaqUseChinese()
-               ? "这条任务当前可以接取。展开后选中目标，或使用底部的「设定航线」即可引导到接取地点。"
-               : "This quest is currently available. Expand it, then select the objective or use SET COURSE to be guided to the pickup location.") + _loc2_;
+            return _loc1_ + (this.SaqUseChinese()
+               ? "展开后选中目标，或使用底部的「设定航线」即可引导到接取地点。"
+               : " Expand it, then select the objective or use SET COURSE to be guided to the pickup location.") + _loc2_;
          }
-         return (this.SaqUseChinese()
-            ? "这条任务当前可以接取。展开后选中目标，或按 " + _loc1_ + "（设定航线）即可引导到接取地点。"
-            : "This quest is currently available. Expand it, then select the objective or press " + _loc1_ + " (SET COURSE) to be guided to the pickup location.") + _loc2_;
+         return _loc1_ + (this.SaqUseChinese()
+            ? "展开后选中目标，或按 " + _loc3_ + "（设定航线）即可引导到接取地点。"
+            : " Expand it, then select the objective or press " + _loc3_ + " (SET COURSE) to be guided to the pickup location.") + _loc2_;
       }
       
       private function SaqBuildEntry(param1:Object) : Object
@@ -811,7 +832,8 @@ package
             "iFaction":SaqSafeFaction(param1.iFaction),
             "sName":this.SaqUseChinese() ? param1.sNameZh : param1.sNameEn,
             // ★ 第 27 轮：入口条目（任务板）的描述用专门文案（第 2 个参数）。
-            "sDescription":this.SaqDescriptionText(param1.bSaqHasTarget != false, param1.iType == SAQ_ENTRY_TYPE, param1.bSaqNeedsApproach == true),
+            // ★★ 第 74 轮：第 4 个参数 = 「入口」同伴任务（描述里提示好感度要求）。
+            "sDescription":this.SaqDescriptionText(param1.bSaqHasTarget != false, param1.iType == SAQ_ENTRY_TYPE, param1.bSaqNeedsApproach == true, param1.bSaqCompanion == true),
             // 引导中的那条保持「追踪中」的视觉（左侧竖条）—— 列表重建（SaqRefresh）后不丢状态。
             "bActive":this.SaqGuideQuest != 0 && param1.uID == this.SaqGuideQuest,
             "bComplete":false,
@@ -1066,7 +1088,9 @@ package
          //   ★ 以后每改一次 SWF，就把这个数字 +1（verify 检查 `stamp=` 是否存在）。
          //   ★ 第 65 轮（任务专属图标）：stamp 54 —— 载荷加第 7 列（阵营），
          //     列表图标改为与原版一致（真实 iType + iFaction）。
-         _loc8_ += " stamp=54";
+         //   ★★ 第 74 轮（同伴好感度任务）：stamp 55 —— 载荷加第 8 列（同伴固定显示），
+         //     描述里提示「需要一定好感度才能接取」（见 SaqCompanionNote）。
+         _loc8_ += " stamp=55";
          // ★★ 第 51 轮：入口自检（ep=）—— 见 SaqEntryProbe 的说明。
          //   位置在 stamp 之后、其余字段之前：报告有长度上限，这个字段是当前排查
          //   「测试入口调不到」问题的关键证据，必须优先保下来。

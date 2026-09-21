@@ -26,10 +26,15 @@
       "sha256": "5ccd9ff18379fc37abd2804edc8b1321500ab837428ef5d620a06f87306cd52d",
       "summary": "marker 11"
     },
+    "ref/companion_quests.json": {
+      "desc": "同伴好感度任务（gen_companion_quests.py）",
+      "sha256": "e8764b114415bb01ad9df1d8816772603b4bdbba9ff18abdb6ef1cffd568f01c",
+      "summary": "同伴 4 / 任务 8（入口 4）"
+    },
     "plugin/src/SAQ_QuestTable.h": {
       "desc": "静态任务表（gen_quest_table.py，DLL 编译进去）",
-      "sha256": "87f05c4bf87a227d6f7abc47f86c2178d0670724886ae72bd346d2bb79988e25",
-      "summary": "任务 261 / 候选 931 / 进度门槛 9 / INFO对话 290 / INFO条件 341 / 链式边 52"
+      "sha256": "8615640e85e2023d5a33f3bad31fd174b69dd8e43931fb35b6a4af881d8484c3",
+      "summary": "任务 261 / 候选 931 / 进度门槛 9 / INFO对话 290 / INFO条件 341 / 链式边 55"
     },
     "plugin/src/SAQ_EntryTable.h": {
       "desc": "入口条目表（gen_entry_table.py，DLL 编译进去）",

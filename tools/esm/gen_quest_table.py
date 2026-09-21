@@ -7,6 +7,8 @@
     ref/strings/strings/<master>_zhhans.strings    master 名小写去掉扩展名，与游戏内 strings 文件同名
     ref/faction_types.json                  ★ 第 65 轮：QUST 的 FTYP 关键字 -> 原版 UI 阵营枚举
                                             （gen_faction_types.py 生成；缺失 ⇒ 全部按无阵营）
+    ref/companion_quests.json               ★★ 第 74 轮：同伴好感度任务（gen_companion_quests.py
+                                            生成；缺失 ⇒ 不标记 —— 这类任务就不会固定显示）
 输出：
     plugin/src/SAQ_QuestTable.h             C++ 静态数组（多 master）
     ref/quest_table_debug.json              同样的数据（便于人工核对）
@@ -168,13 +170,15 @@ def build_payload(rows: list[dict], title_zh: str = "可接任务", title_en: st
     """与 C++ 侧 BuildPayloadUtf8 **完全同格式**的载荷（AS3 内嵌回退用）。
 
     列序 = C++ 的 Q 行，**必须逐列对齐**（AS3 解析按列号取值，错一列后果严重）：
-        formid / itype / 中文名 / 英文名 / 有无引导目标 / 是否需要靠近 / 阵营枚举
+        formid / itype / 中文名 / 英文名 / 有无引导目标 / 是否需要靠近 / 阵营枚举 / 同伴好感度任务
 
-    ★ 第 23 轮：倒数第三列是「有没有引导目标」（1/0）——界面据此决定能不能导航。
-    ★ 第 46 轮：倒数第二列 = 「全部候选都非常驻」（需要靠近才加载目标）。
+    ★ 第 23 轮：倒数第四列是「有没有引导目标」（1/0）——界面据此决定能不能导航。
+    ★ 第 46 轮：倒数第三列 = 「全部候选都非常驻」（需要靠近才加载目标）。
       第 65 轮补上 —— 此前内嵌回退载荷缺这列，AS3 会把阵营列误读成它。
-    ★ 第 65 轮（任务专属图标）：最后一列 = 原版 UI 阵营枚举（-1 = 无阵营），
+    ★ 第 65 轮（任务专属图标）：倒数第二列 = 原版 UI 阵营枚举（-1 = 无阵营），
       界面据此显示主线/势力专属图标。
+    ★★ 第 74 轮（同伴好感度任务）：最后一列 = 「同伴任务」（1/0）—— 界面在描述里
+      提示「需要一定好感度才能接取」；旧载荷缺列 ⇒ false（不提这回事）。
     """
     lines = ["SAQ1", f"T\t{title_zh}\t{title_en}"]
     for r in rows:
@@ -182,9 +186,11 @@ def build_payload(rows: list[dict], title_zh: str = "可接任务", title_en: st
         has_target = "1" if int(r.get("cand_count", 0)) else "0"
         approach = "1" if r.get("needs_approach") else "0"
         faction = int(r.get("faction", -1))
+        companion = "1" if int(r.get("companion", -1)) >= 0 else "0"
         lines.append(
             f'Q\t{fid}\t{r["itype"]}\t{sanitize_name(r["name_zh"])}'
             f'\t{sanitize_name(r["name_en"])}\t{has_target}\t{approach}\t{faction}'
+            f'\t{companion}'
         )
     return "\n".join(lines) + "\n"
 
@@ -237,6 +243,39 @@ def load_guide_targets(path: Path) -> dict[int, dict]:
         return {}
     raw = json.loads(path.read_text(encoding="utf-8"))
     return {int(k): v for k, v in raw.items()}
+
+
+def load_companions(path: Path) -> list[dict]:
+    """★★ 第 74 轮：同伴好感度任务（tools/esm/gen_companion_quests.py 生成）。
+
+    这些任务（COM_Quest_<同伴>_Q01 / _Commitment）只能由同伴主任务
+    COM_Companion_<同伴> 的**好感度里程碑**带出来 ⇒ 运行时「固定显示」
+    （不做三类门槛过滤）+ 名字前缀同伴名 + 界面描述里提示好感度要求。
+    缺失 ⇒ 全部按「非同伴任务」处理（功能退化为普通任务，不会写错数据）。
+    """
+    if not path.exists():
+        print(f"（没有 {path} —— 同伴好感度任务不会被固定显示，"
+              f"先跑 tools/esm/gen_companion_quests.py）")
+        return []
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def companion_display_name(name: str, comp: str, sep_out: str) -> str:
+    """★ 第 74 轮：把同伴名放到任务名最前面。
+
+    两种形态（都要覆盖）：
+      · 承诺任务：官方名本来就是「承诺：巴雷特」/「Commitment: Barrett」
+        ⇒ 换位成「巴雷特：承诺」/「Barrett: Commitment」（同伴名已经在名里，不能重复加）；
+      · 个人任务：官方名是「违约」/「Breach of Contract」⇒ 直接加前缀。
+    sep_out = 输出用冒号（中文「：」/ 英文「: 」）。
+    """
+    for sep in ("：", ": ", ":"):
+        if sep in name:
+            head, _, tail = name.rpartition(sep)
+            tail = tail.strip()
+            if tail == comp and head.strip():
+                return f"{comp}{sep_out}{head.strip()}"
+    return f"{comp}{sep_out}{name}"
 
 
 def load_faction_types(path: Path) -> dict[str, dict[str, int]]:
@@ -350,6 +389,9 @@ def main() -> int:
     ap.add_argument("--chain-extra", default="ref/quest_chain_extra.json",
                     help="★★ 第 69 轮：链式门槛的扩展边（gen_quest_chain_extra.py 产物；"
                          "人工核实 + 构建期源码核验；缺失 ⇒ 只做编号链）")
+    ap.add_argument("--companions", default="ref/companion_quests.json",
+                    help="★★ 第 74 轮：同伴好感度任务（gen_companion_quests.py 产物；"
+                         "缺失 ⇒ 不标记，这类任务不会固定显示）")
     ap.add_argument("--out-header", default="plugin/src/SAQ_QuestTable.h")
     ap.add_argument("--out-json", default="ref/quest_table_debug.json")
     ap.add_argument("--out-as3", default="ui/missionmenu/saqdata/SaqEmbeddedPayload.inc")
@@ -438,6 +480,9 @@ def main() -> int:
             # ★ 第 65 轮（任务专属图标）：QUST 的 FTYP 关键字 -> 原版 UI 阵营枚举。
             #   -1 = 无阵营（界面按 iType 选 Activities/Misc/Missions 图标）。
             "faction": faction_of(q, fac_map),
+            # ★★ 第 74 轮（同伴好感度任务）：-1 = 不是；≥0 = kCompanionNames 下标。
+            #   真正的标记与名字前缀在下面 apply_companions 里统一做（要两遍）。
+            "companion": -1,
         }
         if not a.keep_internal:
             reason = filter_reason(row, raw_en, raw_zh)
@@ -451,6 +496,57 @@ def main() -> int:
 
     # 排序：master 下标升序（基础游戏在前 —— 列表里同名的以基础游戏为准），再按记录号
     rows.sort(key=lambda r: (master_idx[r["master"]], r["local"]))
+
+    # ★★ 第 74 轮（同伴好感度任务）：入口固定显示 + 名字前缀同伴名；后续（承诺任务）
+    #   补一条**启动边**（并入链式门槛 ⇒ 「前置没到就不显示」，见下方 chain_by_fid）。
+    #   数据 = ref/companion_quests.json（gen_companion_quests.py；对官方 Papyrus 源码
+    #   核验过「只能由好感度里程碑启动」）。名字前缀在这里做（**静态表 + 内嵌回退载荷
+    #   一起生效**，C++ 载荷直接取表里的名字）。
+    companions = load_companions(Path(a.companions))
+    comp_by_formid: dict[int, int] = {}
+    comp_pin_by_formid: dict[int, int] = {}
+    comp_followup: dict[int, list[dict]] = {}
+    for idx, g in enumerate(companions):
+        for cq in g["quests"]:
+            fid = int(cq["formid"])
+            comp_by_formid[fid] = idx
+            comp_pin_by_formid[fid] = 1 if cq.get("pin") else 0
+            fg = cq.get("followUpGate")
+            if fg:
+                comp_followup.setdefault(fid, []).append({
+                    "host_local": int(fg["hostLocal"]),
+                    "host_master": fg.get("hostMaster", "Starfield.esm"),
+                    "host_edid": fg["hostEdid"],
+                    "host_stage": int(fg["hostStage"]),
+                })
+    n_companion_quests = 0
+    for r in rows:
+        idx = comp_by_formid.get(int(r["formid"]))
+        if idx is None:
+            continue
+        g = companions[idx]
+        r["companion"] = idx
+        r["companion_pin"] = comp_pin_by_formid[int(r["formid"])]
+        r["name_zh"] = companion_display_name(r["name_zh"], g["nameZh"], "：")
+        r["name_en"] = companion_display_name(r["name_en"], g["nameEn"], ": ")
+        n_companion_quests += 1
+    unmarked = [f"0x{int(r['formid']):08X} {r['edid']}" for r in rows
+                if (r.get("edid") or "").startswith("COM_Quest_")
+                and int(r["formid"]) not in comp_by_formid]
+    if unmarked:
+        print(f"  !! 表里有 COM_Quest_ 前缀、但不在同伴表里的任务（不会固定显示）：{unmarked}")
+    n_pin = sum(1 for r in rows if int(r.get("companion_pin", 0)))
+    print(f"同伴好感度任务：{len(companions)} 位同伴 / {n_companion_quests} 条标记"
+          f"（入口 {n_pin} 条固定显示 + 后续 {n_companion_quests - n_pin} 条走链式门槛）")
+    for g in companions:
+        entries = [r["name_zh"] for r in rows if r.get("companion", -1) >= 0
+                   and companions[r["companion"]]["key"] == g["key"]
+                   and int(r.get("companion_pin", 0))]
+        follows = [r["name_zh"] for r in rows if r.get("companion", -1) >= 0
+                   and companions[r["companion"]]["key"] == g["key"]
+                   and not int(r.get("companion_pin", 0))]
+        print(f"  {g['nameZh']:<10}（{g['nameEn']}）：入口 {'、'.join(entries)}"
+              f"｜后续 {'、'.join(follows)}")
 
     # 引导目标（第 10 轮；★ 第 45 轮升级为「候选池」）：每条任务在世界里的
     # 「去哪里接」引用序列（gen_guide_targets.py 按质量排序 —— 有名字的 NPC >
@@ -551,7 +647,16 @@ def main() -> int:
     #   **全部链边都还没触发 ⇒ 隐藏**（详见 SAQ_QuestTable.h 的 kChainGates）。
     #   ★★ 第 69 轮：并入「扩展边」（gen_quest_chain_extra.py：非编号链路里同样形态的
     #   「收尾/流程启动下一个」—— Eleos 线、霓虹城帮派线等，见该工具头注释）。
-    chain_by_fid = merge_chain(load_chain(Path(a.chain)), load_chain(Path(a.chain_extra)))
+    #   ★★ 第 74 轮：再并入「同伴后续任务（承诺任务）的启动边」—— 与链式门槛共用同一套
+    #   判据（全部边都没触发 ⇒ 隐藏）：这是玩家要求的「链式关系的后续任务不要显示，
+    #   只显示入口任务」在同伴线上的落点（入口 = 个人任务，见上面的 companion_pin）。
+    chain_by_fid = merge_chain(
+        merge_chain(load_chain(Path(a.chain)), load_chain(Path(a.chain_extra))),
+        comp_followup)
+    if comp_followup:
+        n_fu = sum(len(v) for v in comp_followup.values())
+        print(f"同伴后续任务启动边：{len(comp_followup)} 条任务 / {n_fu} 条边"
+              f"（并入链式门槛 —— 前置没到就不显示）")
     q_master_by_local: dict[int, str] = {}
     for q in quests:
         q_master_by_local.setdefault(int(q["local"]), q["master"])
@@ -616,6 +721,9 @@ def main() -> int:
     lines.append("// ★ 第 65 轮（任务专属图标）：每行尾部的 faction = 原版 UI 阵营枚举")
     lines.append("//   （-1 = 无阵营；顺序见 Shared/FactionUtils.as，说明见 StaticQuestInfo 里的注释）——")
     lines.append("//   界面据此显示主线/各势力专属图标，和原版任务菜单一致。")
+    lines.append("// ★★ 第 74 轮（同伴好感度任务）：行尾两列 = companion（同伴下标，-1 = 不是）")
+    lines.append("//   + companionPin（1 = 「入口」同伴任务 ⇒ 固定显示 + 名字带同伴前缀）。")
+    lines.append("//   「后续」同伴任务（承诺任务，pin=0）照旧走链式门槛（前置没到不显示）。")
     lines.append("//")
     lines.append("// ★ 多 master（DLC）：表里存的是「master 下标 + 记录号(local)」，不是运行期 FormID ——")
     lines.append("//   高字节是加载顺序，只有运行时才知道（见 SAQ.cpp 的 MasterResolver）。")
@@ -683,6 +791,19 @@ def main() -> int:
     lines.append("\t\t//     5=BlackFleet 6=Constellation 7=TrackersAlliance 8=TerranArmada 9=Creations")
     lines.append("\t\t//   数据源：ref/faction_types.json（tools/esm/gen_faction_types.py）。")
     lines.append("\t\tstd::int8_t   faction;")
+    lines.append("\t\t// ★★ 第 74 轮（同伴好感度任务）：这条属于哪位同伴。")
+    lines.append("\t\t//   -1 = 不是同伴任务；>= 0 = kCompanionNamesZh/En 的下标（任务名前缀就是它）。")
+    lines.append("\t\t//   数据源：ref/companion_quests.json（tools/esm/gen_companion_quests.py；")
+    lines.append("\t\t//   名字从官方承诺任务名解析、启动路径对着官方 Papyrus 源码核验）。")
+    lines.append("\t\tstd::int8_t   companion;")
+    lines.append("\t\t// ★★ 第 74 轮：「**入口**同伴任务」= 个人任务（COM_Quest_<同伴>_Q01）—— 它是")
+    lines.append("\t\t//   这条线的第一环（由好感度里程碑直接启动）⇒ **固定显示**（不做进度 / INFO /")
+    lines.append("\t\t//   链式门槛过滤），界面按载荷第 8 列在描述里提示「需要一定好感度才能接取」。")
+    lines.append("\t\t//   1 = 是；0 = 否（不是同伴任务，或同伴线的**后续**任务 —— 承诺任务照旧走")
+    lines.append("\t\t//   链式门槛：前置好感度里程碑没到就不显示，见 kChainGates 里的同伴边）。")
+    lines.append("\t\t//   玩家要求：「把所有达到一定好感度才能接到的同伴任务固定在可接任务列表里」")
+    lines.append("\t\t//   + 「链式关系的后续任务还是不要显示，只显示入口任务」。")
+    lines.append("\t\tstd::uint8_t  companionPin;")
     lines.append("\t};")
     lines.append("")
     lines.append("\t// 进度门槛（第 35 轮，「游戏进度还不能让玩家接到 ⇒ 不显示」）：")
@@ -791,6 +912,24 @@ def main() -> int:
     lines.append("\t};")
     lines.append(f"\tinline constexpr std::size_t kGuideCandidateCount = {len(cand_flat)};")
     lines.append("")
+    lines.append("\t// ★★ 第 74 轮（同伴好感度任务）：同伴显示名（下标 = StaticQuestInfo::companion）——")
+    lines.append("\t//   中英各一份（界面按游戏语言选；静态表的名字已经带了这个前缀）。")
+    lines.append("\t//   数据源：ref/companion_quests.json（从官方「承诺：<同伴>」/「Commitment: <同伴>」")
+    lines.append("\t//   里解析而来 —— 不写死名字）。")
+    lines.append("\tinline constexpr const char* kCompanionNamesZh[] = {")
+    for g in companions:
+        lines.append(f'\t\t"{c_escape(g["nameZh"])}",')
+    if not companions:
+        lines.append('\t\t"",  // 占位（表为空时 MSVC 不允许零长数组）')
+    lines.append("\t};")
+    lines.append("\tinline constexpr const char* kCompanionNamesEn[] = {")
+    for g in companions:
+        lines.append(f'\t\t"{c_escape(g["nameEn"])}",')
+    if not companions:
+        lines.append('\t\t"",  // 占位（表为空时 MSVC 不允许零长数组）')
+    lines.append("\t};")
+    lines.append(f"\tinline constexpr std::size_t kCompanionCount = {len(companions)};")
+    lines.append("")
     lines.append(f"\tinline constexpr StaticQuestInfo kQuestTable[] = {{")
     for r in rows:
         flags = int(r.get("dnam_flags", 0))
@@ -802,7 +941,8 @@ def main() -> int:
             f' {int(r.get("chain_begin", 0))}u, {int(r.get("chain_count", 0))}u,'
             f' "{c_escape(r["guide_where_en"])}", "{c_escape(r["guide_where_zh"])}",'
             f' "{c_escape(r["name_en"])}", "{c_escape(r["name_zh"])}",'
-            f' {int(r.get("faction", -1))} }},'
+            f' {int(r.get("faction", -1))}, {int(r.get("companion", -1))},'
+            f' {int(r.get("companion_pin", 0))}u }},'
         )
     lines.append("\t};")
     lines.append(f"\tinline constexpr std::size_t kQuestTableSize = {len(rows)};")

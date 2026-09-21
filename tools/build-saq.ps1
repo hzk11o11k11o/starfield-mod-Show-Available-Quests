@@ -107,6 +107,13 @@ if (-not $SkipTable) {
     Step '1/6' '生成扩展链式边（gen_quest_chain_extra.py → ref\quest_chain_extra.json）'
     & python (Join-Path $root 'tools\esm\gen_quest_chain_extra.py') | Write-Host
     if ($LASTEXITCODE -ne 0) { throw "gen_quest_chain_extra.py 失败（exit $LASTEXITCODE）" }
+    # ★★ 第 74 轮：同伴好感度任务（固定显示的「入口」+「后续」的启动边）——
+    #   gen_companion_quests.py 扫官方 Papyrus 源码核验「只能由好感度里程碑启动」，
+    #   产物 ref\companion_quests.json 由 gen_quest_table.py 消费（标记 + 名字前缀 +
+    #   把「后续」（承诺任务）的启动边并入链式门槛）。
+    Step '1/6' '生成同伴好感度任务表（gen_companion_quests.py → ref\companion_quests.json）'
+    & python (Join-Path $root 'tools\esm\gen_companion_quests.py') | Write-Host
+    if ($LASTEXITCODE -ne 0) { throw "gen_companion_quests.py 失败（exit $LASTEXITCODE）" }
     Step '1/6' '生成静态任务表（gen_quest_table.py）'
     & python (Join-Path $root 'tools\esm\gen_quest_table.py') | Write-Host
     if ($LASTEXITCODE -ne 0) { throw "gen_quest_table.py 失败（exit $LASTEXITCODE）" }
