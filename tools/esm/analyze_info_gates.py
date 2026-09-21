@@ -1,7 +1,13 @@
 #!/usr/bin/env python3
-"""analyze_info_gates.py - 大项 D：对话侧「进度门槛」的正式数据生成。
+"""analyze_info_gates.py - 对话侧「进度门槛」的正式数据生成（★★ 第 78 轮：扩到 DLC）。
 
-数据来源：ref/info_gates.json（scan_info_gates.py 全表扫描产物）。
+数据来源（scan_info_gates.py 逐 master 扫描的产物）：
+    ref/info_gates.json                 基础游戏（Starfield.esm）
+    ref/info_gates_sfbgs00d.json        SFBGS00D.esm（自由航道更新）
+    ref/info_gates_sfbgs050.json        SFBGS050.esm（地球舰队）
+    ref/info_gates_shatteredspace.json  ShatteredSpace.esm（破碎空间）
+（缺哪个就跳过哪个；第 78 轮之前只做基础游戏 —— DLC 的对话条件没扫 ⇒ DLC 任务
+ 一条 INFO 门槛都没有 ⇒ 后续环节照常冒出来。）
 
 判据（保守，误藏最小化 —— 设计依据见 docs/08 与 docs/05 第二十二节）：
   * 任务的对话挂在它自己的 QUST children 组下；「任务运行中」的对话不能用来
@@ -13,6 +19,8 @@
     （任一 INFO 的条件全为真/不可判定 ⇒ 可能可用 ⇒ 显示）。
     「成对条件」（如 X==0 / X==1 各有一条 INFO）会自动豁免 —— 验证例：
     Com_Companion_Barrett（不隐藏）、大器晚成 / 亲爱的姐妹（与记录级 gate 一致）。
+  * 前置任务的 master 用**表里的 master 顺序**（kQuestMasters：Starfield.esm 永远排 0，
+    其余按名字排序）——与 gen_quest_table.py 的 master_idx 完全一致。
 
 用法：
     python tools/esm/analyze_info_gates.py          # 写 ref/info_gates_final.json
@@ -33,33 +41,53 @@ if hasattr(sys.stdout, "reconfigure"):
 ALLOWED_KINDS = ("入口", "中性")
 FUNC_TO_CHECK = {"GetQuestRunning": 0, "GetQuestCompleted": 1, "GetStageDone": 2}
 
+# ★★ 第 78 轮：四个 master 的扫描产物（缺文件 ⇒ 跳过）
+SCAN_FILES = (
+    "info_gates.json",
+    "info_gates_sfbgs00d.json",
+    "info_gates_sfbgs050.json",
+    "info_gates_shatteredspace.json",
+)
+
 
 def main() -> int:
-    raw = json.loads((REF / "info_gates.json").read_text(encoding="utf-8"))
     table = json.loads((REF / "quest_table_debug.json").read_text(encoding="utf-8"))
-    master_idx = {}
-    for q in table:
-        master_idx.setdefault(q.get("master") or "Starfield.esm", len(master_idx))
 
-    # quest -> info -> [条件]
-    per_quest: dict[int, dict[int, list]] = defaultdict(dict)
-    for g in raw["gates"]:
-        if g["kind"] not in ALLOWED_KINDS:
+    # master 顺序与 gen_quest_table.py 一致：Starfield.esm 永远排 0，其余按名字排序
+    masters = sorted({(q.get("master") or "Starfield.esm") for q in table},
+                     key=lambda m: (m.lower() != "starfield.esm", m.lower()))
+    master_idx = {m.lower(): i for i, m in enumerate(masters)}
+    print(f"master 顺序：{masters}")
+
+    # (master 小写, 记录号) -> {info -> [条件]}   —— 目标任务是本 DLC 自己的记录
+    per_quest: dict[tuple[str, int], dict[int, list]] = defaultdict(dict)
+    n_gate_raw = 0
+    for fn in SCAN_FILES:
+        p = REF / fn
+        if not p.exists():
+            print(f"  （没有 {fn} —— 跳过）")
             continue
-        if g["want"] not in (0, 1):
-            continue
-        if g["func"] not in FUNC_TO_CHECK:
-            continue
-        # 前置任务必须也在表里（master 可解析）—— 引用别的 master 的序列化在下面做
-        per_quest[g["quest"]].setdefault(g["info"], []).append(g)
+        raw = json.loads(p.read_text(encoding="utf-8"))
+        self_master = (raw.get("selfMaster") or "Starfield.esm").lower()
+        n_used = 0
+        for g in raw["gates"]:
+            if g["kind"] not in ALLOWED_KINDS:
+                continue
+            if g["want"] not in (0, 1):
+                continue
+            if g["func"] not in FUNC_TO_CHECK:
+                continue
+            key = (self_master, int(g["quest"]) & 0xFFFFFF)
+            per_quest[key].setdefault(g["info"], []).append(g)
+            n_used += 1
+        n_gate_raw += n_used
+        print(f"  {fn}: 参与判定的条件 {n_used} 条 / 任务 {len({k for k in per_quest})} 条（累计）")
 
     out = []
     n_skipped_empty = 0
     for q in table:
-        master = q.get("master") or "Starfield.esm"
-        if master != "Starfield.esm":
-            continue  # 本轮只做基础游戏（DLC 的 INFO 待后续扩展；保守：不判定）
-        infos = per_quest.get(q["formid"])
+        master = (q.get("master") or "Starfield.esm").lower()
+        infos = per_quest.get((master, int(q["local"]) & 0xFFFFFF))
         if not infos:
             continue
         if not all(v for v in infos.values()):
@@ -69,28 +97,40 @@ def main() -> int:
         for info_id, conds in sorted(infos.items()):
             cs = []
             for c in conds:
+                pre_master = (c.get("preMaster") or "Starfield.esm").lower()
+                if pre_master not in master_idx:
+                    continue  # 前置在表里没有 master（无法解析）⇒ 丢掉这条条件（保守）
                 cs.append({
                     "func": FUNC_TO_CHECK[c["func"]],
-                    "quest_master": 0,          # 前置任务目前全在 Starfield.esm
+                    "quest_master": master_idx[pre_master],
                     "quest_local": int(c["pre"]) & 0xFFFFFF,
                     "want": int(c["want"]),
                     "stage": int(c.get("stage", 0)) & 0xFFFF,
                 })
+            if not cs:
+                continue
             ser.append({"info": info_id, "conds": cs})
+        if not ser:
+            continue
         out.append({
             "formid": q["formid"],
-            "master": master,
+            "master": q.get("master") or "Starfield.esm",
             "edid": q["edid"],
             "nameZh": q.get("name_zh"),
             "infos": ser,
         })
 
     total_conds = sum(len(i["conds"]) for t in out for i in t["infos"])
-    print(f"INFO 门槛（大项 D）：{len(out)} 条任务 / "
+    per_master_n = defaultdict(int)
+    for t in out:
+        per_master_n[t["master"]] += 1
+    print(f"\nINFO 门槛：{len(out)} 条任务 / "
           f"{sum(len(t['infos']) for t in out)} 条参与判定的对话 / {total_conds} 条条件")
+    print("按 master：" + " ".join(f"{m}={n}" for m, n in sorted(per_master_n.items())))
     print(f"（另有 {n_skipped_empty} 条任务因「存在无条件的参与对话」被保守跳过）")
     for t in out:
-        print(f"  {t['nameZh'] or t['edid']:<24} [{t['edid']:<34} 0x{t['formid']:06X}] {len(t['infos'])} 条对话")
+        print(f"  {t['nameZh'] or t['edid']:<24} [{t['edid']:<34} "
+              f"0x{t['formid']:06X}] {len(t['infos'])} 条对话")
 
     path = REF / "info_gates_final.json"
     path.write_text(json.dumps(out, ensure_ascii=False, indent=1), encoding="utf-8")

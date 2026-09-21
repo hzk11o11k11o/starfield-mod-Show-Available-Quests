@@ -8,8 +8,8 @@
     },
     "ref/info_gates_final.json": {
       "desc": "INFO 门槛数据（analyze_info_gates.py）",
-      "sha256": "c7b39b0d9c5df297abe1363fbbee98f5b06f16f431b2d96b64c848cbe974b4d5",
-      "summary": "任务 60 / 对话 290 / 条件 341"
+      "sha256": "5da208b066bbf2acf3a85dc88acb65f1afa23de11f6f8fc09b164056ebf94ece",
+      "summary": "任务 80 / 对话 418 / 条件 492"
     },
     "ref/guide_targets.json": {
       "desc": "引导目标候选池（gen_guide_targets.py）",
@@ -38,8 +38,8 @@
     },
     "plugin/src/SAQ_QuestTable.h": {
       "desc": "静态任务表（gen_quest_table.py，DLL 编译进去）",
-      "sha256": "313527106c4ba6e28f3c0416a955aaa0f823a38a2f41379f196fecbd6f5f7767",
-      "summary": "任务 261 / 候选 924 / 进度门槛 9 / INFO对话 290 / INFO条件 341 / 链式边 63 / 同伴 4 / 势力入口 4"
+      "sha256": "d4696e4544f8592e819149c3e5080d3b264a3a070cec352ae7cdf3277c24d869",
+      "summary": "任务 261 / 候选 924 / 进度门槛 9 / INFO对话 418 / INFO条件 492 / 链式边 63 / 同伴 4 / 势力入口 4"
     },
     "ui/missionmenu/saqdata/SaqEmbeddedPayload.inc": {
       "desc": "内嵌回退载荷（gen_quest_table.py）",

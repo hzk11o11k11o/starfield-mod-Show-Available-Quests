@@ -150,3 +150,26 @@ medium / blueprint 档位探测不到（FormID 方案未验证）⇒ 表现为�
 * 以后要再加 master（比如玩家装了其它官方 Creation）：在
   `tools/esm/fetch_sources.py` 的 `SOURCES` 里加一行（esm + 字符串所在 ba2），
   跑一次 `build-saq.ps1` 即可 —— DLL 侧完全不用改（表里带 master 名）。
+
+## 六、第 78 轮：DLC 的「进度没到不显示」（对话条件 + 为什么没有 Papyrus 边）
+
+DLC 的**剧情后续**（破碎空间 虚妄的得诺者→…→栉比堡垒 / 地球舰队 失踪的华庭号→…）也属于
+「玩家还没到就接不到」的那一类。基础游戏靠 **Papyrus 源码里的启动边**（链式门槛，第 67~77 轮），
+但**官方 DLC 不发 .psc**：
+
+| 来源 | ShatteredSpace | SFBGS050（地球舰队） | 能不能当「启动边」证据 |
+| --- | --- | --- | --- |
+| `.psc` 源码（`Data\Scripts\Source\Base`） | ❌ 只有 `SFBGS00D` 等少数目录 | ❌ | — |
+| BA2 里的 **`.pex`** | ✅ 363 个 | ✅ 311 个 | ✗ 只能抽字符串表（`tools/re/pex_strings.py`）：MQ_Shell / DialogueHV* 与各 MQ **双向引用** ⇒ 定不出方向 |
+| QUST **记录级 CTDA** | ✅（`quests_all.json` 的 `ctda`） | ✅ | ✗ 只有 4 条任务有跨任务引用，且多为成对/非表内引用 |
+| **DIAL/INFO 条件**（对话侧） | ✅ | ✅ | ✅ **采用**：`scan_info_gates.py --esm <DLC> --self-master <名>` → `analyze_info_gates.py`（第 78 轮扩成多 master） |
+
+* **实现**：四个 master 各扫一份 `ref/info_gates*.json`（构建脚本在缺失时自动补扫）；
+  前置任务的 master 写进 `kInfoConds` 的第 2 列（kQuestMasters 下标）⇒ 运行时
+  `Masters::MakeFormID` 解析 ⇒ DLL 侧零改动。
+* **效果**（空存档模拟）：DLC 20 条任务有门槛，其中地球舰队的
+  失踪的华庭号 / 隐蔽入侵 / 生命之器 / 电力短缺 / 前哨三连会**真的被藏**；
+  破碎空间的 MQ02~MQ06 因参与对话里含「只带 want=0 的中性组」按既有规则放行
+  （保守 —— 详见 `docs/08` 十二·补二）。
+* **结论/边界**：破碎空间主线后续目前仍会显示 —— 想收口需要「实机推进 + harness 验证」
+  拿到真实的完成阶段，**不做猜测性门槛**（猜错 = 误藏，比误显更糟）。

@@ -93,9 +93,27 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--top", type=int, default=20)
     ap.add_argument("--esm", default=DEFAULT_ESM)
+    # ★★ 第 78 轮（DLC 的 INFO 门槛）：多 master 扫描 ——
+    #   每个 master 各扫一次、各写一份 info_gates*.json，由 analyze_info_gates.py 合并。
+    #   `--self-master` = 被扫文件对应的 master 名（默认 Starfield.esm）。
+    #   ★ 文件内的 FormID 形态：**该 DLC 自己的记录引用写 0x01xxxxxx**（它自己的
+    #   「本文件内 master 序号」= 1；Starfield.esm 的引用写 0x00xxxxxx）——
+    #   探针见本轮 docs；所以判「引用是不是本文件的任务」用原始 p1 直接查本文件任务集。
+    ap.add_argument("--out", default="ref/info_gates.json")
+    ap.add_argument("--self-master", default="Starfield.esm")
     a = ap.parse_args()
 
-    print(f"读 {a.esm} …")
+    # 基础游戏（Starfield.esm）的任务记录号集合 —— DLC 文件里引用 0x00xxxxxx 时用它判别。
+    base_locals: set[int] = set()
+    base_edid: dict[int, str] = {}
+    if (REF / "quests_all.json").exists():
+        for q in json.loads((REF / "quests_all.json").read_text(encoding="utf-8")):
+            if (q.get("master") or "Starfield.esm") == "Starfield.esm":
+                base_locals.add(int(q["local"]) & 0xFFFFFF)
+                if q.get("edid"):
+                    base_edid[int(q["local"]) & 0xFFFFFF] = q["edid"]
+
+    print(f"读 {a.esm} …（self-master={a.self_master}）")
     buf = Path(a.esm).read_bytes()
     head = struct.unpack_from("<I", buf, 4)[0]
     pos = 24 + head
@@ -182,21 +200,36 @@ def main() -> int:
             if not is_progress(c):
                 continue
             p1 = c["p1"]
-            if p1 == 0 or p1 == quest or (p1 >> 24) != 0 or p1 not in quests:
+            if p1 == 0 or p1 == quest:
                 continue
-            others.append(c)
+            # ★★ 第 78 轮：把引用解析成「(master 名, 记录号)」——
+            #   ① 命中本文件自己的任务集 ⇒ 本 DLC（DLC 里自己的记录是 0x01xxxxxx）；
+            #   ② 高字节 0 且低 24 位是基础游戏的任务 ⇒ Starfield.esm；
+            #   ③ 其余（别的 master / 非任务）⇒ 跳过（保守，不猜）。
+            if p1 in quests:
+                pre_master = a.self_master
+                pre_local = p1 & 0xFFFFFF
+                pre_edid = quest_edid.get(p1, "")
+            elif (p1 >> 24) == 0 and (p1 & 0xFFFFFF) in base_locals:
+                pre_master = "Starfield.esm"
+                pre_local = p1 & 0xFFFFFF
+                pre_edid = base_edid.get(p1 & 0xFFFFFF, "")
+            else:
+                continue
+            others.append((c, pre_master, pre_local, pre_edid))
 
         if others:
             kind_hist[kind] += 1
-            for c in others:
+            for (c, pre_master, pre_local, pre_edid) in others:
                 g = {
                     "info": info_id,
                     "quest": quest,
                     "questEDID": quest_edid.get(quest, ""),
                     "kind": kind,
                     "func": GATE_FUNCS[c["func"]],
-                    "pre": c["p1"],
-                    "preEDID": quest_edid.get(c["p1"], ""),
+                    "pre": pre_local,
+                    "preMaster": pre_master,
+                    "preEDID": pre_edid,
                     "want": 1 if c["cmp"] == 1.0 else 0,
                     "stage": (c["p2"] & 0xFFFF) if c["func"] == 0x003B else 0,
                 }
@@ -207,11 +240,12 @@ def main() -> int:
             "quest": quest,
             "edid": quest_edid.get(quest, ""),
             "kind": kind,
-            "others": [{"func": GATE_FUNCS[c["func"]], "pre": c["p1"],
-                        "preEDID": quest_edid.get(c["p1"], ""),
+            "others": [{"func": GATE_FUNCS[c["func"]], "pre": pre_local,
+                        "preMaster": pre_master,
+                        "preEDID": pre_edid,
                         "want": 1 if c["cmp"] == 1.0 else 0,
                         "stage": (c["p2"] & 0xFFFF) if c["func"] == 0x003B else 0}
-                       for c in others],
+                       for (c, pre_master, pre_local, pre_edid) in others],
         })
 
     print(f"├─ 带 CTDA 的 INFO：{n_ctda}")
@@ -244,8 +278,9 @@ def main() -> int:
             "conds": sorted(keys),
         })
 
-    out_path = REF / "info_gates.json"
+    out_path = REF / Path(a.out).name
     out_path.write_text(json.dumps({
+        "selfMaster": a.self_master,
         "infoTotal": len(infos),
         "infoWithCtda": n_ctda,
         "infoWithVmad": n_vmad,

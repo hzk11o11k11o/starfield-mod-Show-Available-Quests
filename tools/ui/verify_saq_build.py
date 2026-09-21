@@ -1605,9 +1605,12 @@ def main() -> int:
         all_ok &= not bad_first
 
         # ★★ 第 48 轮（大项 D）：INFO 门槛（对话侧条件）—— 数据侧完整性：
-        #   ① 结构/数组存在；② 计数与实测对齐（290 条对话 / 341 条条件）；
-        #   ③ 全部对话与全部任务的切片不越界；④ 有门槛任务数 = 60；
-        #   ⑤ 实测样本「大器晚成」（0x00270717）的门槛 = 「孤立无援」（0x0027071B）完成。
+        #   ① 结构/数组存在；② 计数与**数据源**对齐（第 78 轮起不写死：基础游戏 60 条
+        #   之外又并入 DLC —— SFBGS00D 2 / SFBGS050 7 / ShatteredSpace 11）；
+        #   ③ 全部对话与全部任务的切片不越界；④ 有门槛任务数 = 数据源条数；
+        #   ⑤ 实测样本「大器晚成」（0x00270717）的门槛 = 「孤立无援」（0x0027071B）完成；
+        #   ⑥ 第 78 轮新增样本：DLC 的跨 master 前置（失踪的华庭号 ← 地球舰队侵袭@75、
+        #      栉比堡垒 ← 破碎空间 LC06@940）。
         for name, needle in {
             "INFO 门槛结构 StaticInfoGroup": "struct StaticInfoGroup",
             "INFO 门槛数组 kInfoGroups": "kInfoGroups[] = {",
@@ -1633,11 +1636,22 @@ def main() -> int:
                 n_info_tasks += 1
                 if info_group_total >= 0 and begin + count > info_group_total:
                     n_oob_t += 1
-        ok = (info_cond_total == 341 and len(g_rows) == 290 and n_oob_g == 0
-              and n_info_tasks == 60 and n_oob_t == 0)
+        #   ★★ 第 78 轮：期望值改为从 ref/info_gates_final.json **现算**（DLC 并入门槛后
+        #   条数会变；写死会掩盖漏跑生成器的情形 —— 与链式门槛同一纪律）。
+        exp_tasks = exp_groups = exp_conds = None
+        igp = ROOT / "ref" / "info_gates_final.json"
+        if igp.exists():
+            ig_data = json.loads(igp.read_text(encoding="utf-8"))
+            exp_tasks = len(ig_data)
+            exp_groups = sum(len(t["infos"]) for t in ig_data)
+            exp_conds = sum(len(i["conds"]) for t in ig_data for i in t["infos"])
+        ok = (exp_conds is not None and info_cond_total == exp_conds
+              and len(g_rows) == exp_groups and n_oob_g == 0
+              and n_info_tasks == exp_tasks and n_oob_t == 0)
         print(("OK  " if ok else "MISS") +
-              f" 静态表 · INFO 门槛完整（对话 {len(g_rows)} 条 / 条件 {info_cond_total} 条 / "
-              f"有门槛任务 {n_info_tasks} / 切片越界 {n_oob_g + n_oob_t}）")
+              f" 静态表 · INFO 门槛完整（对话 {len(g_rows)}/{exp_groups} 条 / "
+              f"条件 {info_cond_total}/{exp_conds} 条 / 有门槛任务 {n_info_tasks}/{exp_tasks} / "
+              f"切片越界 {n_oob_g + n_oob_t}）")
         all_ok &= ok
         m_bot = re.search(
             r"\{\s*0x00270717u,\s*\d+u,\s*\d+u,\s*0x[0-9A-F]+u,"
@@ -1653,6 +1667,17 @@ def main() -> int:
         print(("OK  " if ok_bot else "MISS") +
               " 静态表 · 大器晚成 INFO 门槛（孤立无援 0x0027071B 完成）")
         all_ok &= ok_bot
+        # ★★ 第 78 轮（DLC 的 INFO 门槛）：两个跨 master 样本 ——
+        #   ① 失踪的华庭号（SFTER_MQ01）← 地球舰队侵袭（SFTER_MQIntro，master 2）@75 完成；
+        #   ② 栉比堡垒（SFBGS001_MQ06）← 破碎空间 LC06（master 3）@940 完成。
+        #   （这两条就在 kInfoConds 里，形态 = { 记录号, master, check, want, stage }。）
+        for label, needle in (
+                ("失踪的华庭号 ← 地球舰队侵袭@75（master 2）", "{ 0x0000599Fu, 2u, 2u, 1u, 75u },"),
+                ("栉比堡垒 ← 破碎空间 LC06@940（master 3）", "{ 0x0001D3C6u, 3u, 2u, 1u, 940u },"),
+        ):
+            hit = needle in blob
+            print(("OK  " if hit else "MISS") + f" 静态表 · DLC INFO 门槛样本（{label}）")
+            all_ok &= hit
 
         # ★★ 第 67 轮：任务链门槛（编号任务链的启动边）—— 数据侧完整性：
         #   ① 结构/数组存在；② 边数/有边任务数与**两个数据源**（编号链 + 第 69 轮的扩展边）

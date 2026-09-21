@@ -82,7 +82,24 @@ if (-not $SkipTable) {
     # ★ 大项 D（第 48 轮）：INFO 门槛（对话侧条件）——
     #   ref\info_gates.json 由 scan_info_gates.py 全表扫 Starfield.esm 的 DIAL/INFO 得到
     #   （约 1 分钟；只在需要刷新对话数据时手动跑：python tools\esm\scan_info_gates.py）。
-    #   这里只做交叉分析（快）：info_gates.json + 候选表 → ref\info_gates_final.json。
+    #   ★★ 第 78 轮：**DLC 的 INFO 也要扫**（DLC 任务以前一条 INFO 门槛都没有 ⇒ 主线
+    #   后续照常冒出来）。四个 master 各扫一份（各约 20~60 秒）——**文件缺失时才扫**
+    #   （刷新：删掉 ref\info_gates*.json 再跑；或按脚本头的参数手动跑）。
+    $infoScans = @(
+        @{ esm = (Join-Path $dataDir 'Starfield.esm');       master = 'Starfield.esm';      out = 'info_gates.json' },
+        @{ esm = (Join-Path $dataDir 'SFBGS00D.esm');        master = 'SFBGS00D.esm';       out = 'info_gates_sfbgs00d.json' },
+        @{ esm = (Join-Path $dataDir 'SFBGS050.esm');        master = 'SFBGS050.esm';       out = 'info_gates_sfbgs050.json' },
+        @{ esm = (Join-Path $dataDir 'ShatteredSpace.esm');  master = 'ShatteredSpace.esm'; out = 'info_gates_shatteredspace.json' }
+    )
+    foreach ($sc in $infoScans) {
+        $rawOut = Join-Path $root ("ref\" + $sc.out)
+        if (Test-Path $rawOut) { continue }
+        Step '1/6' ("扫对话条件（" + $sc.master + " → ref\" + $sc.out + "，约 20~60 秒）")
+        & python (Join-Path $root 'tools\esm\scan_info_gates.py') --esm $sc.esm `
+            --self-master $sc.master --out $sc.out | Write-Host
+        if ($LASTEXITCODE -ne 0) { throw "scan_info_gates.py（$($sc.master)）失败（exit $LASTEXITCODE）" }
+    }
+    #   这里只做交叉分析（快）：四份 info_gates*.json + 候选表 → ref\info_gates_final.json。
     Step '1/6' '生成 INFO 门槛（analyze_info_gates.py → ref\info_gates_final.json）'
     & python (Join-Path $root 'tools\esm\analyze_info_gates.py') | Write-Host
     if ($LASTEXITCODE -ne 0) { throw "analyze_info_gates.py 失败（exit $LASTEXITCODE）" }
