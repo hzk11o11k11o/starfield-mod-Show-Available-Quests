@@ -1,4 +1,4 @@
-# Nexus 上传素材（v0.1.5）
+# Nexus 上传素材（v0.1.6）
 
 > 用途：复制下面内容到 Nexus 的 mod 页。Summary 填「名称/摘要」栏，
 > Description 填「描述」栏（Nexus 描述框可用 BBCode，纯文本换行也正常）。
@@ -126,6 +126,10 @@ Please include SFSE\Plugins\SAQ_ShowAvailableQuests.log, install method (MO2 / m
 
 ## 更新日志（Changelog）
 
+### v0.1.6（2026-09-22）
+- 改进：**同伴好感度任务**条目的说明文案更明确 —— 这类任务会在好感度达到一定水平后**自动开始**（不需要跑去找人接取），描述末尾的引导说明同步改为「引导到这位同伴当前所在的位置」；好感度靠带这位同伴一起冒险提升
+- 其它：内部测试与验证设施更新（不影响游戏内行为；发布包仍不包含任何测试代码）
+
 ### v0.1.5（2026-09-21）
 - 新增：**「地球地标」系列任务**（10 条：阿波罗 / 开罗 / 迪拜 / 香港 / 伦敦 / 洛杉矶 / 纽约 / 大阪 / 上海 / 圣路易斯）现在会出现在列表里 —— 它们各对应一本**可以拾取 / 购买的书**，描述里写明「去哪拿哪本书」；点一下即可导航到那本书（或卖书的商人），拿到书任务即开始
 - 改进：可接任务总数 261 → 271（+10 条地标任务）；其中 54 条暂无导航目标（界面如实提示）
@@ -165,7 +169,7 @@ Please include SFSE\Plugins\SAQ_ShowAvailableQuests.log, install method (MO2 / m
 
 | 项 | 说明 |
 | --- | --- |
-| 上传包 | `dist\SAQ-ShowAvailableQuests-0.1.5.zip`（由 `tools\package-saq.ps1` 生成；会先以发布构建重编 DLL —— 包里不含任何 harness/测试代码） |
+| 上传包 | `dist\SAQ-ShowAvailableQuests-0.1.6.zip`（由 `tools\package-saq.ps1` 生成；会先以发布构建重编 DLL —— 包里不含任何 harness/测试代码） |
 | 测试功能 | 包内**不含任何测试资产**（用例文件 / 结果 JSON），配置强制为「正常玩」的默认值（ini `[Test] Mode=0 / Harness=0`）；发布 DLL 不含 harness 编译 —— 由打包脚本 + `verify_saq_build.py` 三层校验把守 |
 | 版本号 | 三处一致：`plugin\xmake.lua`、`plugin\src\main.cpp`、`meta.ini` |
 | 依赖声明 | Nexus 上标注 SFSE 为必需依赖（版本 0.2.21+） |
