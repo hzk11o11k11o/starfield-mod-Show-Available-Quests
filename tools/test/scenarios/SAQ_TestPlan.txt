@@ -355,9 +355,12 @@ step = guide.clear
 ;       更强的「faction 与帧名逐行一致」由离线检查保证（verify 的图标映射表：
 ;       全部 (type,faction) 组合 -> 13 个实际帧），运行时这半段就是原版
 ;       SetFactionIcon → GetQuestIconLabel 的固定逻辑。
-;    ③ ui.select 深藏不露（0x00009136，Crimson Fleet）后日志里应能看到
-;       `0x9136:2/5=BlackFleet` —— **记录性核对点**（该条若在存档里已完成会被
-;       过滤，不设硬断言；实机/日志里人工核对）。
+;    ③ （第 71 轮变更）原「记录性核对：选中深藏不露（0x9136）」已退役 ——
+;       该条的启动边（UC02@860 → CF01）第 71 轮收进链式门槛后，**存档没开
+;       深红舰队线时它本来就不该出现在列表里**（17:04 实测：链式名单含它、
+;       `ui.select` 报 `err|notfound` —— 那正是玩家报告「深藏不露不该显示」
+;       的修复目标）。BlackFleet 帧的正确性由 verify 的离线图标映射表
+;       （icon_label(5,2)==BlackFleet）保证。
 ;
 ;  ★ 图标帧清单（13 个，SWF sprite 实测）：Activities / Misc / Missions / None +
 ;    BlackFleet / FreestarCollective / HouseVaruun / RyujinIndustries / UnitedColonies /
@@ -375,9 +378,6 @@ step = note === 等首屏渲染 + 界面报告轮询（变化即记）写进日�
 step = wait 1500
 step = note === 图标帧自检：已渲染行的 <uID>:<type>/<faction>=<帧名> ===
 step = assert.ui icon=\[0x[0-9a-f]+:[0-4]/-?[0-9]+=[A-Za-z]+ timeout=8000
-step = note === 记录性核对：选中深藏不露（Crimson Fleet=5）→ 期望 0x9136:2/5=BlackFleet ===
-step = ui.select 0x00009136
-step = wait 1200
 step = menu.close
 
 ; ----------------------------------------------------------------------------
@@ -519,10 +519,15 @@ step = menu.close
 ;      推进 01 只放行 02；03 的前置（02@10000）仍未触发 ⇒ 继续被藏）。
 ;
 ;  拆三条：
-;    ① `[case:r71_chain_cf]`（A1）：CF 终局四条回滚 ⇒ 全在「链式没到」名单里
-;       （★ 其中「深藏不露」的边 = UC02@860 —— 断言成立的前提是**本存档的先锋队线
-;       没做到 UC02@860**（当前测试存档如此）；若将来存档已推进过那里，这条断言
-;       会 FAIL —— 那是存档状态变化，不是产品回归）；
+;    ① `[case:r71_chain_cf]`（A1）：CF 终局四条回滚 ⇒ 每条都必须**被藏**；
+;       ★ 前提 1：「深藏不露」的边 = UC02@860 —— 断言成立的前提是**本存档的
+;       先锋队线没做到 UC02@860**（当前测试存档如此）；若将来存档已推进过那里，
+;       这条断言会 FAIL —— 那是存档状态变化，不是产品回归；
+;       ★★ 前提 2：「遗产的结局」被 **INFO 门槛先藏**（对话条件引用前置
+;       `0x00178B1E` 未完成）⇒ 它不进链式判定、**不在「链式没到」名单里** ——
+;       17:04 实测栽过一次（期望不可达，产品全对）。断言按「被**任一**门槛藏」写：
+;       `(INFO没到|链式没到): .*遗产的结局[…]`（玩家的可见性结论一致：藏了
+;       就不显示）；
 ;    ② `[case:r71_chain_redtape]`（A2）：火星城官僚三连回滚 ⇒ 02/03 都在名单里；
 ;    ③ `[case:r71_chain_redtape_pass]`（B）：推进 01 到收尾 stage 10000
 ;       （fragment 只做 `City_CY_RedTape02.Start()`，无世界副作用）⇒ 02 不再被藏、
@@ -531,7 +536,7 @@ step = menu.close
 ;  ★ 只动这几条任务自己的状态；不传送、不开星图、不读档；各用例自清场。
 ; ----------------------------------------------------------------------------
 [case:r71_chain_cf]
-desc = 第 71 轮：链式门槛全量审计（A1）—— CF 终局四条在「链式没到」名单里
+desc = 第 71 轮：链式门槛全量审计（A1）—— CF 终局四条都被藏（含 INFO 门槛先藏的「遗产的结局」）
 step = note === 准备：CF 终局四条回滚（宝藏号的结局/遗产的结局/夺回曾经/博士的命令）===
 step = ping
 step = quest.reset 0x001B41D0
@@ -539,11 +544,11 @@ step = quest.reset 0x001EF7F1
 step = quest.reset 0x001BB164
 step = quest.reset 0x001B6246
 step = wait 2500
-step = note === 前置没做 ⇒ 四条都必须出现在「链式没到」名单里（= 被藏）===
+step = note === 前置没做 ⇒ 四条都必须被藏（链式名单为主；遗产的结局由 INFO 先藏）===
 step = menu.open
 step = assert.log 推送成功 scope=prev timeout=12000
 step = assert.log 链式没到: .*宝藏号的结局\[0x001B41D0 scope=case timeout=3000
-step = assert.log 链式没到: .*遗产的结局\[0x001EF7F1 scope=case timeout=3000
+step = assert.log (INFO没到|链式没到): .*遗产的结局\[0x001EF7F1 scope=case timeout=3000
 step = assert.log 链式没到: .*夺回曾经\[0x001BB164 scope=case timeout=3000
 step = assert.log 链式没到: .*博士的命令\[0x001B6246 scope=case timeout=3000
 step = note === 「深藏不露」：边 = UC02@860（前提：本存档先锋队线未到 860）===

@@ -1060,6 +1060,8 @@ def main() -> int:
                             "r67_chain", "r67_chain_pass",
                             # ★★ 第 69 轮：链式门槛扩展边（霓虹城帮派线 A/B 两条）
                             "r69_chain_extra", "r69_chain_extra_pass",
+                            # ★★ 第 71 轮：链式门槛全量入边审计（CF 线 / 火星城官僚线 A/B）
+                            "r71_chain_cf", "r71_chain_redtape", "r71_chain_redtape_pass",
                             "r62_reload_observe"):
                     all_ok &= check(f"用例计划 · [case:{cid}]", plan_text.encode(),
                                     f"[case:{cid}]".encode())
@@ -1095,6 +1097,28 @@ def main() -> int:
                 all_ok &= check("用例计划 · r69 扩展链式边放行断言（assert.nolog）",
                                 plan_text.encode(),
                                 "assert.nolog 链式没到:.*展示力量 scope=case".encode())
+                # ★★ 第 71 轮（链式门槛全量入边审计）：r71 三条用例的断言。
+                #   ★ 17:04 会话实测修正（第 72 轮）：「遗产的结局」被 **INFO 门槛先藏**
+                #   （对话条件引用前置 0x00178B1E 未完成）⇒ 不进链式判定、不在
+                #   「链式没到」名单里 —— 旧断言（只在链式名单里找它）期望不可达、
+                #   假 FAIL（产品全对）。断言按「被任一门槛藏」写 + 反向检查挡旧写法。
+                all_ok &= check("用例计划 · r71 CF 四条断言（链式没到 · 宝藏号的结局）",
+                                plan_text.encode(),
+                                "assert.log 链式没到: .*宝藏号的结局\\[0x001B41D0 scope=case".encode())
+                all_ok &= check("用例计划 · r71 遗产的结局断言（任一门槛藏 INFO|链式）",
+                                plan_text.encode(),
+                                "assert.log (INFO没到|链式没到): .*遗产的结局\\[0x001EF7F1 scope=case".encode())
+                gone = "assert.log 链式没到: .*遗产的结局\\[0x001EF7F1" not in plan_text
+                print(("OK  " if gone else "MISS") +
+                      " 用例计划 · 旧「遗产的结局只在链式名单」写法已替换(反向检查)")
+                all_ok &= gone
+                # ★ 第 72 轮（r65_icons 实测）：原「记录性核对：选中深藏不露」退役 ——
+                #   深藏不露的启动边（UC02@860 → CF01）收进链式门槛后，存档没开深红
+                #   舰队线时它被藏（ui.select 报 notfound = 修复生效，不是用例缺陷）。
+                gone = "step = ui.select 0x00009136" not in plan_text
+                print(("OK  " if gone else "MISS") +
+                      " 用例计划 · r65 旧「选中深藏不露」记录步骤已退役(反向检查)")
+                all_ok &= gone
                 # 反向检查：15:43 会话里那条未知步骤 `ui.state`（老驱动器只 WARN + 丢步 ⇒ 用例
                 #   照样 PASS）已删；新驱动器对解析失败直接判 FAIL（见 SAQ_Test.cpp v69）。
                 gone_state = "step = ui.state" not in plan_text
