@@ -342,6 +342,16 @@ HARNESS_STRINGS = (
     ("harness 用例收尾清星图", "harness：用例收尾：星图还开着"),
     ("失败带 SWF 指纹", "SWF 指纹"),
     ("旧版 SWF 判定文案", "游戏加载的还是旧版 SWF"),
+    # ★★ 第 56 轮（09:22 会话实测出的两个**驱动器**缺陷，都不在产品侧）——
+    #   两条都只存在于 SAQ_Test*.cpp ⇒ 发布构建里必须一条都不见（同一张表反向检查）：
+    #   ① 日志窗口起点曾被 `CompleteStep` 随 StepState 一起清 0 ⇒ 所有 `scope=prev`
+    #      断言退化成「整个环形缓冲」（假 PASS：匹配本会话最早那几行；r48 的假 FAIL
+    #      报文「窗口从 idx 0 起」也是它）。用**驱动器版本串**做判据 —— 与 SWF 的
+    #      `stamp=` 同一个道理：日志里有没有这一串，是「跑的是不是修好的那版」的唯一判据。
+    #   ② 传送（MoveTo）的回执要等 cell 加载（实测 4.3 秒）⇒ 传送单独给 20 秒窗口，
+    #      否则「传送成功」会被判 FAIL（本例最危险的一类：假 FAIL 掩盖了用例前提已成立）。
+    ("harness 驱动器版本串", "驱动器 v56：日志窗口按步保留 / 传送 20 秒窗口"),
+    ("传送回执等待窗口文案", "传送等回执最多"),
 )
 
 
@@ -879,6 +889,16 @@ def main() -> int:
                 gone = "引导请求： timeout=" not in plan_text
                 print(("OK  " if gone else "MISS") +
                       " 用例计划 · 旧「引导请求」断言（不带 scope）已替换(反向检查)")
+                all_ok &= gone
+                # ★★ 第 56 轮：smoke 的「脚本已应用」断言必须**不带裸「引导确认」** ——
+                #   「引导确认：菜单还开着」只是说「还没应用、不会判失败」，不是证据；
+                #   09:22 会话这一条就是靠在整段缓冲里翻到它才过的（假 PASS）。
+                all_ok &= check("用例计划 · smoke 引导已生效断言（不带裸「引导确认」）",
+                                plan_text.encode(),
+                                "assert.log 引导已生效|引导延迟生效 scope=prev".encode())
+                gone = "引导已生效|引导延迟生效|引导确认" not in plan_text
+                print(("OK  " if gone else "MISS") +
+                      " 用例计划 · 旧宽松断言（带裸「引导确认」）已替换(反向检查)")
                 all_ok &= gone
             else:
                 print(f"MISS 缺少用例计划 {plan_src}")

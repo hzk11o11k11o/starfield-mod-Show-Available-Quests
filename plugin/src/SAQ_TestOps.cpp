@@ -177,6 +177,13 @@ namespace SAQ::Test
 			if (idx < from) {
 				continue;
 			}
+			// ★★ 第 56 轮：断言只认**产品日志** —— harness 自己的行（`harness：…`）会原样
+			//   复述它刚匹配到的正则与命中行（`[PASS] assert.log 引导已生效…` 这一句里
+			//   就带着「引导已生效」四个字），留着会被后续断言当成「命中」的回声
+			//   （09:22 会话 r26 的最后一条断言就这么过的）。
+			if (line.find("harness：") != std::string::npos) {
+				continue;
+			}
 			if (std::regex_search(line, re)) {
 				a_line = line;
 				return true;

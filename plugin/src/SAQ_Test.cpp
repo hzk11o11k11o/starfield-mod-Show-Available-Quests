@@ -37,6 +37,12 @@ namespace SAQ::Test
 		constexpr const char* kMenuName = "BSMissionMenu";
 		constexpr std::uint64_t kDefaultStepTimeoutMs = 5000;
 		constexpr std::uint64_t kCommandAckTimeoutMs = 3000;   // 命令通道（脚本一拍 0.5 秒）
+		// ★★ 第 56 轮：传送（MoveTo）的回执要**等 cell 加载完**才算完 —— 脚本是在 MoveTo
+		//   返回之后才写 TestResult/TestAck 的。09:22 会话实测：两次 teleport 的回执分别在
+		//   提交后 4.3 s / 4.5 s 才到（Papyrus 侧 `结果=0`，传送确实成功），而 3 秒窗口把
+		//   两条用例判成 FAIL（还让「teleport 之后玩家在哪」这条用例前提变成假象）。
+		//   ⇒ 传送单独给 20 秒（冷加载余量），其余命令保持 3 秒（脚本没跑时要快速失败）。
+		constexpr std::uint64_t kTeleportAckTimeoutMs = 20000;
 		constexpr std::uint64_t kReadyCheckIntervalMs = 500;
 		constexpr std::size_t   kEvidenceMaxLines = 60;
 
@@ -322,12 +328,14 @@ namespace SAQ::Test
 		}
 
 		// 断言的日志窗口起点（见 SAQ_Test.h 的 `scope=` 说明）。
+		// ★★ 第 56 轮：打点为 0（= 环形缓冲开头）时退到**本用例起点** —— 绝不允许
+		//   「窗口起点 0」这种退化：那等于拿整段缓冲区做断言（假 PASS 的来源，见 CompleteStep）。
 		std::size_t EffectiveLogFrom(const Step& a_step)
 		{
 			switch (a_step.logScope) {
-			case LogScope::kPrev: return g_prevMark;
+			case LogScope::kPrev: return g_prevMark != 0 ? g_prevMark : g_caseMark;
 			case LogScope::kCase: return g_caseMark;
-			default:              return g_cur.logMark;
+			default:              return g_cur.logMark != 0 ? g_cur.logMark : g_caseMark;
 			}
 		}
 
@@ -535,9 +543,14 @@ namespace SAQ::Test
 				return false;
 			}
 
-			// 命令类步骤：回执超时常量与步骤超时取小（避免「脚本没跑」时白等 5 秒以上）
+			// 命令类步骤：回执超时常量与步骤超时取小（避免「脚本没跑」时白等 5 秒以上）。
+			// ★ 第 56 轮：传送例外 —— MoveTo 的等待窗口由 cell 加载决定，见 kTeleportAckTimeoutMs。
 			if (a_step.kind == Kind::kCmd) {
-				a_step.timeoutMs = std::min(a_step.timeoutMs, kCommandAckTimeoutMs);
+				if (a_step.op == Op::kTeleport) {
+					a_step.timeoutMs = kTeleportAckTimeoutMs;
+				} else {
+					a_step.timeoutMs = std::min(a_step.timeoutMs, kCommandAckTimeoutMs);
+				}
 			}
 			return true;
 		}
@@ -816,7 +829,14 @@ namespace SAQ::Test
 				REX::INFO("harness：  [PASS] {}（{} ms）{}", step.raw, sr.elapsedMs,
 					a_detail.empty() ? "" : " —— " + a_detail);
 				++g_stepIdx;
+				// ★★ 第 56 轮修复（09:22 会话实测）：**不能**把 logMark 一起清 0 ——
+				//   下一步开跑时会做 `g_prevMark = g_cur.logMark` ⇒ 0 ⇒ 所有 `scope=prev`
+				//   断言退化成「整个环形缓冲」：既会匹配到本会话最早那几行（假 PASS，
+				//   r26/r47/r48/r44 四条用例都中招），又会把早就翻篇的行当成「不该出现」
+				//   （r48 的假 FAIL，报文里那句「窗口从 idx 0 起」就是它）。
+				const auto keepMark = g_cur.logMark;
 				g_cur = StepState{};
+				g_cur.logMark = keepMark;
 				if (g_stepIdx >= g_cases[g_caseIdx].steps.size()) {
 					FinishCase(true, {});
 				}
@@ -1060,6 +1080,12 @@ namespace SAQ::Test
 					g_cur.kickDetail = detail;
 					g_cur.deadlineMs = now + step.timeoutMs;
 					REX::INFO("harness：  提交命令 {}", detail);
+					// ★ 第 56 轮：传送的等待窗口写明白（回执要等 cell 加载，实测约 4 秒）——
+					//   以后再看日志就知道「这一步为什么等这么久」。
+					if (step.op == Op::kTeleport) {
+						REX::INFO("harness：  传送等回执最多 {} ms（MoveTo 要等 cell 加载完成，实测约 4 秒）",
+							step.timeoutMs);
+					}
 					return false;
 				}
 				std::int32_t code = 0;
@@ -1153,7 +1179,12 @@ namespace SAQ::Test
 		g_harnessReady = false;
 		g_active = false;
 		g_readyWarned = false;
-		REX::INFO("harness：已启用（{} 个用例）—— 等脚本通道就绪后自动开跑", g_cases.size());
+		// ★ 第 56 轮：带上**驱动器版本串** —— 与 SWF 的 `stamp=` 同一个道理：日志里有没有
+		//   这一串，是「跑的是不是修好窗口 bug 的那版驱动器」的唯一判据（旧版会把
+		//   断言窗口起点清 0 ⇒ 假 PASS/假 FAIL）。
+		REX::INFO("harness：已启用（{} 个用例；驱动器 v56：日志窗口按步保留 / 传送 20 秒窗口）"
+				  " —— 等脚本通道就绪后自动开跑",
+			g_cases.size());
 	}
 
 	namespace
