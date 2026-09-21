@@ -57,6 +57,10 @@ namespace SAQ::Test
 		//   ⇒ 传送后加一道「落地静默期」：
 		//     ① 加载画面（LoadingMenu/FaderMenu）必须**先消失**，再连续静默 1.5 秒；
 		//     ② 距回执至少 3.5 秒。
+		//   ★ 第 59 轮补充（11:04 会话 r47/r45 假 FAIL）：这三条判据必须**每 Tick**推进
+		//     （读到回执只算「登记」）—— `Poll` 是一次性消费，把检查绑在「读到回执那一
+		//     Tick」会让它之后再也跑不到（只打了一行「传送落地中」就被 deadline 误报成
+		//     没有回执）。见 kCmd case 里的解耦实现。
 		constexpr std::uint64_t kTeleportSettleCleanMs = 1500;
 		constexpr std::uint64_t kTeleportMinGapMs = 3500;
 		// 落地静默期的上限：超了说明加载画面一直没结束 ⇒ 判这一步 FAIL 并标记「游戏端
@@ -192,10 +196,12 @@ namespace SAQ::Test
 			std::size_t   logMark{};
 			bool          kicked{};
 			std::string   kickDetail;
-			// ★★ 第 58 轮：传送步骤的「落地静默期」状态（见 kTeleportSettleCleanMs）。
+			// ★★ 第 58 轮：传送步骤的「落地静默期」状态（见 kTeleportSettleCleanMs）；
+			//   ★ 第 59 轮：settleAckDetail = 回执文案（静默期完成时把它并进步骤结果）。
 			std::uint64_t settleAckAtMs{};       // 收到回执的时刻（静默期从它起算）
 			std::uint64_t settleCleanSinceMs{};  // 「没见过加载画面」这段连续时间的起点
 			bool          settleNoted{};         // 已记过一行「传送落地中」
+			std::string   settleAckDetail;       // 回执文案（第 59 轮）
 		};
 		StepState g_cur;
 
@@ -1222,52 +1228,73 @@ namespace SAQ::Test
 							LogSince(g_cur.logMark, kEvidenceMaxLines));
 						return true;
 					}
+					if (step.op != Op::kTeleport) {
+						CompleteStep(true, detail, {});
+						return true;
+					}
 					// ★★ 第 58 轮：传送的「落地静默期」（见 kTeleportSettleCleanMs 的说明）。
 					//   回执 = cell 加载完成，但加载画面/黑幕可能还在 —— 这一步要等
 					//   「加载菜单消失 + 连续静默 1.5 秒 + 距回执 ≥3.5 秒」才算真正做完。
-					if (step.op == Op::kTeleport) {
-						if (g_cur.settleAckAtMs == 0) {
-							g_cur.settleAckAtMs = now;
-						}
-						if (AnyLoadingMenuOpen()) {
-							g_cur.settleCleanSinceMs = 0;
-							if (!g_cur.settleNoted) {
-								g_cur.settleNoted = true;
-								// 注意措辞：这里不能用「还开着：」这个串 —— 第 48 轮的反向
-								// 检查把「星图：等待中（…还开着：无）」列为必须消失的旧文案。
-								REX::INFO("harness：  传送落地中（回执已到，但加载画面还没关：{}）"
-										  "—— 等它关掉再推进下一步（第 58 轮：紧接着再传送会卡死）",
-									OpenMenusSummary());
-							}
-						} else if (g_cur.settleCleanSinceMs == 0) {
-							g_cur.settleCleanSinceMs = now;
-						}
-						const bool cleanLongEnough = g_cur.settleCleanSinceMs != 0 &&
-							now - g_cur.settleCleanSinceMs >= kTeleportSettleCleanMs;
-						const bool gapLongEnough = now - g_cur.settleAckAtMs >= kTeleportMinGapMs;
-						if (cleanLongEnough && gapLongEnough) {
-							CompleteStep(true, detail, {});
-							return true;
-						}
-						if (now - g_cur.settleAckAtMs >= kTeleportSettleMaxMs) {
-							const auto menus = OpenMenusSummary();
-							MarkStuck(std::format("传送已回执，但加载画面一直没有结束（{} ms；"
-												  "此刻打开的菜单：{}）",
-								now - g_cur.settleAckAtMs, menus));
-							CompleteStep(false, std::format("传送已回执，但加载画面一直没有结束（疑似卡在加载画面；"
-															"此刻打开的菜单：{}）",
-														 menus),
-								LogSince(g_cur.logMark, kEvidenceMaxLines));
-							return true;
-						}
-						return false;  // 落地静默期未满：不推进（也不消耗 deadline）
+					//
+					//   ★★ 第 59 轮（11:04 会话 r47/r45 两条假 FAIL 的真因）：**静默期检查
+					//   必须与「读到回执」解耦** —— `Poll` 是一次性消费（读到后 g_busy=false，
+					//   之后永远返回 0），v58 把整套静默期逻辑写在 `rc==1` 分支里 ⇒ 回执那
+					//   一 Tick 之后再也检查不到「加载画面已关」（实测那条日志只有一行），
+					//   20 秒 deadline 一到就误报「命令没有回执」——而那些用例的传送其实
+					//   完全正常（回执 4.4/4.9 秒就到、超时瞬间菜单列表 = 无；Papyrus 侧
+					//   两次 `MoveTo` 都 `结果=0`）。⇒ 这里只**登记**回执（时刻 + 文案），
+					//   静默期检查移到下面，**每 Tick** 都跑。
+					if (g_cur.settleAckAtMs == 0) {
+						g_cur.settleAckAtMs = now;
+						g_cur.settleAckDetail = detail;
 					}
-					CompleteStep(true, detail, {});
-					return true;
 				}
 				if (rc < 0) {
 					CompleteStep(false, "通道不可用：" + detail, LogSince(g_cur.logMark, kEvidenceMaxLines));
 					return true;
+				}
+				// ★★ 落地静默期（第 58 轮引入 / 第 59 轮解耦）：回执已到 ⇒ **每 Tick** 推进 ——
+				//   「加载画面消失 + 连续 1.5 秒 + 距回执 ≥3.5 秒」才算真正做完；加载画面
+				//   25 秒还没结束 ⇒ 判卡在加载画面（MarkStuck，剩余用例转 SKIP）。
+				//   这一段在 deadline 检查**之前** ⇒ 回执到了之后「没有回执」的 20 秒窗口
+				//   立即失效（它只负责「等回执」那一段）。
+				if (step.op == Op::kTeleport && g_cur.settleAckAtMs != 0) {
+					if (AnyLoadingMenuOpen()) {
+						g_cur.settleCleanSinceMs = 0;
+						if (!g_cur.settleNoted) {
+							g_cur.settleNoted = true;
+							// 注意措辞：这里不能用「还开着：」这个串 —— 第 48 轮的反向
+							// 检查把「星图：等待中（…还开着：无）」列为必须消失的旧文案。
+							REX::INFO("harness：  传送落地中（回执已到，但加载画面还没关：{}）"
+									  "—— 等它关掉再推进下一步（第 58 轮：紧接着再传送会卡死）",
+								OpenMenusSummary());
+						}
+					} else if (g_cur.settleCleanSinceMs == 0) {
+						g_cur.settleCleanSinceMs = now;
+					}
+					const bool cleanLongEnough = g_cur.settleCleanSinceMs != 0 &&
+						now - g_cur.settleCleanSinceMs >= kTeleportSettleCleanMs;
+					const bool gapLongEnough = now - g_cur.settleAckAtMs >= kTeleportMinGapMs;
+					if (cleanLongEnough && gapLongEnough) {
+						CompleteStep(true,
+							std::format("{}；落地静默期完成（回执后 {} ms，加载画面已关 {} ms）",
+								g_cur.settleAckDetail, now - g_cur.settleAckAtMs,
+								now - g_cur.settleCleanSinceMs),
+							{});
+						return true;
+					}
+					if (now - g_cur.settleAckAtMs >= kTeleportSettleMaxMs) {
+						const auto menus = OpenMenusSummary();
+						MarkStuck(std::format("传送已回执，但加载画面一直没有结束（{} ms；"
+											  "此刻打开的菜单：{}）",
+							now - g_cur.settleAckAtMs, menus));
+						CompleteStep(false, std::format("传送已回执，但加载画面一直没有结束（疑似卡在加载画面；"
+														"此刻打开的菜单：{}）",
+													 menus),
+							LogSince(g_cur.logMark, kEvidenceMaxLines));
+						return true;
+					}
+					return false;  // 落地静默期未满：不推进（也不消耗 deadline）
 				}
 				if (now >= g_cur.deadlineMs) {
 					// ★★ 第 58 轮：超时的时候必须把**现场**写下来 —— 「此刻打开的菜单」是
@@ -1365,8 +1392,10 @@ namespace SAQ::Test
 		// ★ 第 56 轮：带上**驱动器版本串** —— 与 SWF 的 `stamp=` 同一个道理：日志里有没有
 		//   这一串，是「跑的是不是修好窗口 bug 的那版驱动器」的唯一判据（旧版会把
 		//   断言窗口起点清 0 ⇒ 假 PASS/假 FAIL）。
-		REX::INFO("harness：已启用（{} 个用例；驱动器 v58：传送落地静默期 / 加载画面证据 / 卡死自动中止"
-				  "（沿用 v57 的 ~0x 参数写回 / 清场延迟复查 / 日志窗口按步保留 / 传送 20 秒窗口））"
+		REX::INFO("harness：已启用（{} 个用例；驱动器 v59：落地静默期每 Tick 推进（与回执消费解耦）"
+				  " / 落地完成证据（回执后 ms + 加载画面已关 ms） / 20 秒窗口只管等回执"
+				  "（沿用：~0x 参数写回 / 清场延迟复查 / 日志窗口按步保留 / 传送 20 秒窗口 /"
+				  " 加载画面证据 / 卡死自动中止））"
 				  " —— 等脚本通道就绪后自动开跑",
 			g_cases.size());
 	}
