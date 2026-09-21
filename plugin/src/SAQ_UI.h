@@ -25,7 +25,19 @@ namespace SAQ
 	struct QuestEntry
 	{
 		std::uint32_t formID{};   // FormID（运行期值：master 前缀 | 记录号）
-		std::int32_t  type{};     // AS3：QuestUtils.AVAILABLE_QUEST_TYPE = 6
+		// 任务类型（原版 QuestUtils 枚举：0=Activities 1=Main 2=Factions 3=Misc 4=Mission）。
+		// ★ 第 65 轮（任务专属图标）：此前统一推 6（AVAILABLE_QUEST_TYPE）⇒ 界面里
+		//   所有条目的图标都是「任务」那一个；现在推**真实类型**，界面才能像原版一样
+		//   区分活动 / 杂项 / 任务 / 势力（势力图标由下面的 faction 决定）。
+		// ★ 任务板入口仍用 100（kEntryQuestType，非原版枚举）——界面识别它换文案，
+		//   并在显示层折叠回「任务」图标。
+		std::int32_t  type{};
+		// ★ 第 65 轮（任务专属图标）：原版 UI 的阵营枚举（= SWF 里 FactionUtils 的顺序，
+		//   -1 = 无阵营）——由 QUST 的 FTYP 关键字离线映射（gen_faction_types.py）。
+		//   界面把它原样传给原版 MissionsListEntry.SetFactionIcon(iFaction, iType)，
+		//   图标即与原版任务菜单完全一致（势力徽记 / 活动 / 杂项 / 任务）。
+		//   详情面板（MissionInfo）也会用它显示阵营名与彩色图标。
+		std::int32_t  faction{-1};
 		// ★ 第 23 轮：这条任务有没有「引导目标」（静态表的 candCount > 0，第 45 轮起为候选池）。
 		//   界面据此把「能不能导航」变成看得见的信息：无目标的条目点击时不发请求
 		//   （避免「亮起→瞬间回滚」的闪烁）、描述里写明原因、SET COURSE 按钮置灰。

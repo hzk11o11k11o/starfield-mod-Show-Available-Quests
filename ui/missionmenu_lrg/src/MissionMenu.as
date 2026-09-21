@@ -631,7 +631,11 @@ package
                         // ★★ 第 46 轮（大项 B）：第 6 列 = 「全部候选都非常驻」
                         //   （远处一定取不到、必须靠近目标区域）—— 描述里提前告知玩家。
                         //   旧载荷 / 内嵌回退数据缺这列 ⇒ false（不提这回事）。
-                        "bSaqNeedsApproach":_loc7_.length >= 6 ? _loc7_[5] == "1" : false
+                        "bSaqNeedsApproach":_loc7_.length >= 6 ? _loc7_[5] == "1" : false,
+                        // ★★ 第 65 轮（任务专属图标）：第 7 列 = 原版 UI 阵营枚举
+                        //   （-1 = 无阵营；离线由 QUST 的 FTYP 关键字映射）。
+                        //   旧载荷 / 旧内嵌数据缺这列 ⇒ NaN ⇒ SaqSafeFaction 折成 -1。
+                        "iFaction":_loc7_.length >= 7 ? parseInt(_loc7_[6]) : FactionUtils.FACTION_NONE
                      });
                   }
                }
@@ -646,18 +650,38 @@ package
       // 字段必须**覆盖引擎推的 QuestData 条目所拥有的一切**：UI 各处会直接读，
       // 少一个就可能抛 Error #1010（实测 MissionInfo.UpdateMissionInfo 会读
       // `param1.sDescription.length`，所以哪怕没有简介也必须给空串）。
-      // 原始类型 -> UI 能安全渲染的类型。
-      // 原版 QuestUtils.GetQuestIconLabel 只对「活动(0)/杂项(3)/任务(4)」返回真实图标名，
-      // 派系(2)/主线(1) 会落到 default -> "None"，而 FactionSymbols 里未必有 "None" 这一帧
-      // —— gotoAndStop 找不到帧会抛异常，把整行（甚至整列表）的渲染带崩。
-      // 静态表里存在的就是 0/2/3/4，所以只把 2 归一成 4（派系任务按「任务」图标显示）。
+      // 原始类型 -> UI 能安全渲染的类型（只折叠我们自己的扩展值）。
+      //
+      // ★★ 第 65 轮（任务专属图标）修订：原版图标 sprite（MissionVisuals.FactionSymbols.
+      //   Icons_mc）实测解析出 13 帧 —— Activities / Misc / Missions / None + 9 个阵营帧
+      //   （BlackFleet / FreestarCollective / HouseVaruun / RyujinIndustries / UnitedColonies /
+      //    TrackersAlliance / Constellation / TerranArmada / Creations）。
+      //   原版枚举 0..4 **全部**能安全 gotoAndStop（此前担心的「None 帧不存在」不成立），
+      //   所以不再把派系(2)/主线(1) 归一成 4：真实类型 + 真实阵营 = 与原版任务菜单一致的图标。
+      //   只有我们自己的扩展值（100 = 任务板入口，见 SAQ_ENTRY_TYPE）折叠回「任务」图标，
+      //   保持入口条目既有视觉。
       private static function SaqSafeType(param1:int) : int
       {
-         if(param1 == QuestUtils.ACTIVITY_QUEST_TYPE || param1 == QuestUtils.MISC_QUEST_TYPE || param1 == QuestUtils.MISSION_QUEST_TYPE)
+         if(param1 == QuestUtils.ACTIVITY_QUEST_TYPE || param1 == QuestUtils.MAIN_QUEST_TYPE || param1 == QuestUtils.FACTION_QUEST_TYPE || param1 == QuestUtils.MISC_QUEST_TYPE || param1 == QuestUtils.MISSION_QUEST_TYPE)
          {
             return param1;
          }
          return QuestUtils.MISSION_QUEST_TYPE;
+      }
+      
+      // ★★ 第 65 轮（任务专属图标）：阵营枚举的边界收敛。
+      //   合法值 = -1（无阵营）或 0..9（FactionUtils 枚举顺序）；范围外 / NaN
+      //   （旧载荷缺列时 parseInt 得到 NaN）⇒ 折成 -1（界面按 iType 选图标）。
+      //   为什么要范围检查：这两个值会直接交给原版函数（GetQuestIconLabel 的
+      //   gotoAndStop、MissionInfo.GetQuestColorIcon 的 getDefinitionByName）——
+      //   「协议演进 / 数据串列」产生的越界值不应该带着疑问进原版代码。
+      private static function SaqSafeFaction(param1:int) : int
+      {
+         if(param1 >= FactionUtils.FACTION_PARADISO && param1 <= FactionUtils.FACTION_CREATIONS)
+         {
+            return param1;
+         }
+         return FactionUtils.FACTION_NONE;
       }
       
       // 我们的条目带的「目标（阶段）」：一条静态文案。字段按 MissionsListEntry.SetEntryText /
@@ -673,6 +697,8 @@ package
             "uIndex":0,
             "uInstanceID":0,
             "iType":SaqSafeType(param1.iType),
+            // 子项不是任务条目（无 aObjectives 的条目走 Objective 分支，不调用
+            // SetFactionIcon）——阵营保持 -1，避免「子项也带势力徽记」这种原版没有的视觉。
             "iFaction":FactionUtils.FACTION_NONE,
             // ★ 第 27 轮：入口条目（任务板）的子项名不同 —— 它不是「任务」而是「入口」。
             "sName":param1.iType == SAQ_ENTRY_TYPE
@@ -780,7 +806,11 @@ package
             "uID":param1.uID,
             "uInstanceID":0,
             "iType":SaqSafeType(param1.iType),
-            "iFaction":FactionUtils.FACTION_NONE,
+            // ★★ 第 65 轮（任务专属图标）：真实阵营（-1 = 无阵营）—— 列表图标
+            //   （MissionsListEntry.SetFactionIcon → GetQuestIconLabel）与右侧详情面板
+            //   的阵营名 / 彩色图标（MissionInfo → FactionUtils.GetFactionName /
+            //   GetQuestColorIcon）都用它，显示效果与原版任务菜单一致。
+            "iFaction":SaqSafeFaction(param1.iFaction),
             "sName":this.SaqUseChinese() ? param1.sNameZh : param1.sNameEn,
             // ★ 第 27 轮：入口条目（任务板）的描述用专门文案（第 2 个参数）。
             "sDescription":this.SaqDescriptionText(param1.bSaqHasTarget != false, param1.iType == SAQ_ENTRY_TYPE, param1.bSaqNeedsApproach == true),
@@ -1036,7 +1066,9 @@ package
          //   指纹写进本报告 ⇒ 日志里一眼看出游戏加载的是哪一版 SWF：
          //     有 `stamp=50` = 本次构建；没有 = 旧版（**完全重启游戏**后才会更新）。
          //   ★ 以后每改一次 SWF，就把这个数字 +1（verify 检查 `stamp=` 是否存在）。
-         _loc8_ += " stamp=53";
+         //   ★ 第 65 轮（任务专属图标）：stamp 54 —— 载荷加第 7 列（阵营），
+         //     列表图标改为与原版一致（真实 iType + iFaction）。
+         _loc8_ += " stamp=54";
          // ★★ 第 51 轮：入口自检（ep=）—— 见 SaqEntryProbe 的说明。
          //   位置在 stamp 之后、其余字段之前：报告有长度上限，这个字段是当前排查
          //   「测试入口调不到」问题的关键证据，必须优先保下来。
@@ -1077,6 +1109,15 @@ package
          //   但 qdata 最多 12 条 —— 若报告被长度上限截断，先保 qdata（玩家可对照的名字），
          //   drop 只是纯 uID 十六进制（通常 0~5 条），实际几乎不会被截到。
          _loc8_ += " drop[" + this.SaqDropCount + "]=[" + this.SaqDropList + "]";
+         // ★★ 第 65 轮（任务专属图标）：图标帧自检 —— 已渲染行的 factionIcon 帧名
+         //   （`0x<uID>:<帧名>` 最多 6 条，见 MissionsList.SAQ_IconProbe 的说明）。
+         //   数据列对了 ≠ 帧真的切过去了（索引错位 / 帧名拼错 / sprite 结构变化都会
+         //   停在第 1 帧）—— 实机日志里的 `icon=[0x…:Constellation,…]` 是图标真的
+         //   按原版规则画出来的证据。
+         if(this.MissionsList_mc != null)
+         {
+            _loc8_ += " icon=[" + this.MissionsList_mc.SAQ_IconProbe() + "]";
+         }
          return _loc8_;
       }
       

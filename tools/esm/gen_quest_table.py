@@ -1,13 +1,16 @@
 #!/usr/bin/env python3
-"""gen_quest_table.py - 生成插件内嵌的静态任务表（master + 记录号 -> 中/英文名 + 类型）。
+"""gen_quest_table.py - 生成插件内嵌的静态任务表（master + 记录号 -> 中/英文名 + 类型 + 阵营）。
 
 输入：
     ref/quests_all.json                     quest_dump.py 的多 master 导出（Starfield.esm + 各 DLC）
     ref/strings/strings/<master>_en.strings        每个 master 一份字符串表（名字里带 FULL 的字符串 ID）
     ref/strings/strings/<master>_zhhans.strings    master 名小写去掉扩展名，与游戏内 strings 文件同名
+    ref/faction_types.json                  ★ 第 65 轮：QUST 的 FTYP 关键字 -> 原版 UI 阵营枚举
+                                            （gen_faction_types.py 生成；缺失 ⇒ 全部按无阵营）
 输出：
     plugin/src/SAQ_QuestTable.h             C++ 静态数组（多 master）
     ref/quest_table_debug.json              同样的数据（便于人工核对）
+    ui/missionmenu/saqdata/SaqEmbeddedPayload.inc   SWF 内嵌回退载荷（列序与 C++ 完全一致）
 
 ★ 多 master（第 17 轮，DLC 支持）：
     每条任务记 **master 名 + 记录号（local）**，不记运行期 FormID —— 运行期 FormID 的
@@ -162,16 +165,26 @@ def sanitize_name(s: str) -> str:
 
 
 def build_payload(rows: list[dict], title_zh: str = "可接任务", title_en: str = "Available") -> str:
-    """与 C++ 侧 BuildPayloadUtf8 完全同格式的载荷（AS3 内嵌回退用）。
+    """与 C++ 侧 BuildPayloadUtf8 **完全同格式**的载荷（AS3 内嵌回退用）。
 
-    ★ 第 23 轮：最后一列是「有没有引导目标」（1/0）——界面据此决定这条条目能不能导航。
+    列序 = C++ 的 Q 行，**必须逐列对齐**（AS3 解析按列号取值，错一列后果严重）：
+        formid / itype / 中文名 / 英文名 / 有无引导目标 / 是否需要靠近 / 阵营枚举
+
+    ★ 第 23 轮：倒数第三列是「有没有引导目标」（1/0）——界面据此决定能不能导航。
+    ★ 第 46 轮：倒数第二列 = 「全部候选都非常驻」（需要靠近才加载目标）。
+      第 65 轮补上 —— 此前内嵌回退载荷缺这列，AS3 会把阵营列误读成它。
+    ★ 第 65 轮（任务专属图标）：最后一列 = 原版 UI 阵营枚举（-1 = 无阵营），
+      界面据此显示主线/势力专属图标。
     """
     lines = ["SAQ1", f"T\t{title_zh}\t{title_en}"]
     for r in rows:
         fid = r["formid"] if isinstance(r["formid"], int) else int(r["formid"], 16)
         has_target = "1" if int(r.get("cand_count", 0)) else "0"
+        approach = "1" if r.get("needs_approach") else "0"
+        faction = int(r.get("faction", -1))
         lines.append(
-            f'Q\t{fid}\t{r["itype"]}\t{sanitize_name(r["name_zh"])}\t{sanitize_name(r["name_en"])}\t{has_target}'
+            f'Q\t{fid}\t{r["itype"]}\t{sanitize_name(r["name_zh"])}'
+            f'\t{sanitize_name(r["name_en"])}\t{has_target}\t{approach}\t{faction}'
         )
     return "\n".join(lines) + "\n"
 
@@ -226,6 +239,35 @@ def load_guide_targets(path: Path) -> dict[int, dict]:
     return {int(k): v for k, v in raw.items()}
 
 
+def load_faction_types(path: Path) -> dict[str, dict[str, int]]:
+    """阵营映射（tools/esm/gen_faction_types.py 生成；没有 ⇒ 全部按无阵营）。
+
+    ★ 第 65 轮（任务专属图标）：键 = (master 文件名, FTYP 的文件内十六进制)。
+    C++ 载荷与内嵌载荷的阵营列都来自这里（见 faction_of）。
+    """
+    if not path.exists():
+        print(f"（没有 {path} —— 任务阵营为空，先跑 tools/esm/gen_faction_types.py）")
+        return {}
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    out: dict[str, dict[str, int]] = {}
+    for master, rows in raw.items():
+        if master.startswith("_"):
+            continue
+        out[master] = {k: int(v["faction"]) for k, v in rows.items()}
+    return out
+
+
+def faction_of(q: dict, fac_map: dict[str, dict[str, int]]) -> int:
+    """QUST 的 FTYP（文件内 FormID）-> 原版 UI 阵营枚举；无 FTYP / 查不到 ⇒ -1。
+
+    枚举顺序见 ui/missionmenu/src/Shared/FactionUtils.as（0=Paradiso … 6=Constellation …）。
+    """
+    ft = q.get("ftyp")
+    if ft is None:
+        return -1
+    return fac_map.get(q["master"], {}).get(f"{int(ft):08X}", -1)
+
+
 def load_gates(path: Path) -> dict[int, list[dict]]:
     """进度门槛表（tools/esm/analyze_ctda.py 生成；没有 ⇒ 不做条件过滤）。
 
@@ -269,6 +311,8 @@ def main() -> int:
                     help="进度门槛（analyze_ctda.py 产物；决定「进度没到不显示」）")
     ap.add_argument("--info-gates", default="ref/info_gates_final.json",
                     help="★ 大项 D：对话侧 INFO 门槛（analyze_info_gates.py 产物）")
+    ap.add_argument("--factions", default="ref/faction_types.json",
+                    help="★ 第 65 轮：任务阵营（gen_faction_types.py 产物；缺失 ⇒ 全无阵营）")
     ap.add_argument("--out-header", default="plugin/src/SAQ_QuestTable.h")
     ap.add_argument("--out-json", default="ref/quest_table_debug.json")
     ap.add_argument("--out-as3", default="ui/missionmenu/saqdata/SaqEmbeddedPayload.inc")
@@ -311,6 +355,9 @@ def main() -> int:
         strings[m] = (load_strings(en_file), load_strings(zh_file))
         print(f"  {m}: 字符串表 {key}_*.strings（en {len(strings[m][0])} / zh {len(strings[m][1])} 条）")
 
+    # ★ 第 65 轮（任务专属图标）：阵营映射（FTYP 关键字 -> UI 枚举）
+    fac_map = load_faction_types(Path(a.factions))
+
     rows = []
     skipped_no_type = 0
     skipped_main = 0
@@ -351,6 +398,9 @@ def main() -> int:
             "name_zh": name_zh,
             "dnam": q.get("dnam", ""),
             "dnam_flags": dnam_flags(q.get("dnam", "")),
+            # ★ 第 65 轮（任务专属图标）：QUST 的 FTYP 关键字 -> 原版 UI 阵营枚举。
+            #   -1 = 无阵营（界面按 iType 选 Activities/Misc/Missions 图标）。
+            "faction": faction_of(q, fac_map),
         }
         if not a.keep_internal:
             reason = filter_reason(row, raw_en, raw_zh)
@@ -389,6 +439,9 @@ def main() -> int:
             ok_cands.append(c)
         r["cand_begin"] = len(cand_flat)
         r["cand_count"] = len(ok_cands)
+        # ★ 第 65 轮：内嵌回退载荷要跟 C++ 的 Q 行**逐列对齐** —— 这里补算
+        #   「全部候选都非常驻」（判据与 C++ 的 AllCandidatesNonPersistent 相同）。
+        r["needs_approach"] = bool(ok_cands) and all(not c.get("persistent") for c in ok_cands)
         r["guide_kind"] = ok_cands[0].get("kind", "") if ok_cands else ""
         r["guide_where_en"] = (ok_cands[0].get("whereEn") or "").strip() if ok_cands else ""
         r["guide_where_zh"] = (ok_cands[0].get("whereZh") or "").strip() if ok_cands else ""
@@ -458,6 +511,15 @@ def main() -> int:
 
     per_master = Counter(r["master"] for r in rows)
     print("按 master：" + " ".join(f"{m}={per_master[m]}" for m in masters))
+
+    # ★ 第 65 轮（任务专属图标）：阵营分布（人工核对「势力任务有没有拿到图标」）
+    fac_names = {0: "Paradiso", 1: "UnitedColonies", 2: "RyujinIndustries", 3: "HouseVaruun",
+                 4: "Freestar", 5: "BlackFleet", 6: "Constellation", 7: "TrackersAlliance",
+                 8: "TerranArmada", 9: "Creations"}
+    fac_count = Counter(r["faction"] for r in rows)
+    print("任务阵营：" + " ".join(
+        f"{fac_names.get(k, ('无阵营' if k < 0 else f'未知{k}'))}={v}"
+        for k, v in sorted(fac_count.items())))
     kind_count: dict[str, int] = {}
     for r in rows:
         if r["guide_kind"]:
@@ -479,6 +541,9 @@ def main() -> int:
     lines.append("//")
     lines.append("// itype 与 AS3 侧 Shared.QuestUtils 的枚举一致：")
     lines.append("//   0=Activities 1=Main 2=Factions 3=Misc 4=Mission")
+    lines.append("// ★ 第 65 轮（任务专属图标）：每行尾部的 faction = 原版 UI 阵营枚举")
+    lines.append("//   （-1 = 无阵营；顺序见 Shared/FactionUtils.as，说明见 StaticQuestInfo 里的注释）——")
+    lines.append("//   界面据此显示主线/各势力专属图标，和原版任务菜单一致。")
     lines.append("//")
     lines.append("// ★ 多 master（DLC）：表里存的是「master 下标 + 记录号(local)」，不是运行期 FormID ——")
     lines.append("//   高字节是加载顺序，只有运行时才知道（见 SAQ.cpp 的 MasterResolver）。")
@@ -526,6 +591,16 @@ def main() -> int:
     lines.append("\t\tconst char*   whereZh;")
     lines.append("\t\tconst char*   nameEn;")
     lines.append("\t\tconst char*   nameZh;")
+    lines.append("\t\t// ★ 第 65 轮（任务专属图标）：原版 UI 的阵营枚举（iFaction）——")
+    lines.append("\t\t//   由 QUST 的 FTYP 关键字（FactionType*）映射而来，-1 = 无阵营。")
+    lines.append("\t\t//   界面用它 + type 决定列表图标（Shared.QuestUtils.GetQuestIconLabel）：")
+    lines.append("\t\t//     type=活动 → \"Activities\"；有阵营 → 阵营徽记；")
+    lines.append("\t\t//     type=杂项/任务 → \"Misc\" / \"Missions\"；其余 → \"None\"。")
+    lines.append("\t\t//   枚举顺序 = ui/missionmenu/src/Shared/FactionUtils.as：")
+    lines.append("\t\t//     0=Paradiso 1=UnitedColonies 2=RyujinIndustries 3=HouseVaruun 4=Freestar")
+    lines.append("\t\t//     5=BlackFleet 6=Constellation 7=TrackersAlliance 8=TerranArmada 9=Creations")
+    lines.append("\t\t//   数据源：ref/faction_types.json（tools/esm/gen_faction_types.py）。")
+    lines.append("\t\tstd::int8_t   faction;")
     lines.append("\t};")
     lines.append("")
     lines.append("\t// 进度门槛（第 35 轮，「游戏进度还不能让玩家接到 ⇒ 不显示」）：")
@@ -616,7 +691,8 @@ def main() -> int:
             f' {int(r.get("cond_begin", 0))}u, {int(r.get("cond_count", 0))}u,'
             f' {int(r.get("info_group_begin", 0))}u, {int(r.get("info_group_count", 0))}u,'
             f' "{c_escape(r["guide_where_en"])}", "{c_escape(r["guide_where_zh"])}",'
-            f' "{c_escape(r["name_en"])}", "{c_escape(r["name_zh"])}" }},'
+            f' "{c_escape(r["name_en"])}", "{c_escape(r["name_zh"])}",'
+            f' {int(r.get("faction", -1))} }},'
         )
     lines.append("\t};")
     lines.append(f"\tinline constexpr std::size_t kQuestTableSize = {len(rows)};")

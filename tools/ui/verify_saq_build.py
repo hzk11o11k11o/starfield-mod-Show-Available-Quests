@@ -154,6 +154,19 @@
               排队后侦测「又回到主菜单且通道未就绪」⇒ WARN（读档失败不再静默）。
            本脚本检查：驱动器版本串 v63 + 「主菜单已稳定 / 自动读档似乎失败了」两条文案
            + 产品侧「例行认领 / 候选复算暂缓」文案 + 反向检查（v62 及更早不在）。
+  第 65 轮（任务专属图标）：列表图标与原版任务菜单对齐 ——
+           ① 数据：QUST 的 FTYP 关键字 -> 原版 UI 阵营枚举（tools/esm/gen_faction_types.py
+              → ref/faction_types.json → StaticQuestInfo.faction，-1 = 无阵营）；
+           ② 协议：payload 的 Q 行追加第 7 列「阵营」（DLL 与内嵌回退数据逐列对齐）；
+           ③ 界面：条目带**真实** iType + iFaction（SaqSafeFaction 收敛边界），
+              原版 MissionsListEntry.SetFactionIcon / MissionInfo 直接消费 ——
+              活动/杂项/任务/各势力徽记与原版完全一致（图标 sprite Icons_mc 实测 13 帧，
+              含 None，解析见 tools/ui 的 SWF 帧探针）。
+           本脚本检查：SWF 的 SaqSafeFaction + stamp=54 + 静态表阵营列完整性
+           （表行尾 faction 值域 -1..9 / 有阵营任务数 74 / 样本「深藏不露」=BlackFleet）。
+  第 65 轮注：内嵌回退载荷此前缺「需要靠近」列（第 46 轮加的 C++ 列没同步进
+           gen_quest_table.py 的内嵌数据）——本轮补齐并逐列对齐，否则阵营列会被
+           AS3 当成「需要靠近」读（协议纪律：新列只能追加在最后）。
 
 用法：python tools/ui/verify_saq_build.py [--release|--dev]
 """
@@ -643,6 +656,17 @@ def main() -> int:
         # ★ 第 48 轮：诊断标签的 NaN 兜底 —— 子项（「前往接取地点」）没有 uID，
         #   旧写法会打出「0xNaN@…」，新写法给「「名字」(子项)」。
         "子项标签": "(子项)".encode(),
+        # ★★ 第 65 轮（任务专属图标）：阵营列的边界收敛函数（NaN / 越界 -> -1）——
+        #   这个名字只可能来自本轮新代码（SaqParsePayload 解析第 7 列 +
+        #   SaqBuildEntry 用真实 iType/iFaction 喂原版 SetFactionIcon）。
+        "阵营边界函数 SaqSafeFaction": b"SaqSafeFaction",
+        # ★★ 第 65 轮：构建指纹（本轮 = 54）——**以后每改一次 SWF 都要 +1 并同步这里**。
+        "构建指纹 stamp=54": b"stamp=54",
+        # ★★ 第 65 轮：图标帧自检 —— SAQ_Report 的 icon= 字段 + MissionsList.SAQ_IconProbe。
+        #   数据层对了 ≠ 图标帧真的切过去了（索引错位 / 帧名拼错 / sprite 结构变化都会
+        #   停在第 1 帧）；实机日志里的 `icon=[0x…:Constellation,…]` 是图标真的画出来的证据。
+        "图标帧探针函数": b"SAQ_IconProbe",
+        "报告字段 icon=": b" icon=[",
         }
     swf_paths = [
         ROOT / "ui/missionmenu/build/missionmenu.swf",
@@ -692,6 +716,21 @@ def main() -> int:
             print(("OK  " if ok else "MISS")
                   + f" {p.parent.parent.name} · 入口已挂 root：{fn}（出现 {cnt} 次，需 ≥2 = 定义 + 挂载）")
             all_ok &= ok
+
+    # ★★ 第 65 轮（任务专属图标）：图标帧探针必须进 MissionsList 的 patch
+    #   （它是 SWF 里 MissionsList 类的直接上游 —— 定义在列表内部才拿得到 entryList/clip）。
+    for ml in [ROOT / "ui/missionmenu/patch/MissionsList.as",
+               ROOT / "ui/missionmenu_lrg/patch/MissionsList.as"]:
+        if not ml.exists():
+            print(f"MISS 缺少产物 {ml}（先跑构建）")
+            all_ok = False
+            continue
+        ml_text = ml.read_text(encoding="utf-8", errors="replace")
+        cnt = ml_text.count("SAQ_IconProbe")
+        ok = cnt >= 1
+        print(("OK  " if ok else "MISS")
+              + f" {ml.parent.parent.name} · 图标探针已进列表 patch：SAQ_IconProbe（{cnt} 次）")
+        all_ok &= ok
 
     dll = ROOT / "plugin/build/windows/x64/releasedbg/SAQ_ShowAvailableQuests.dll"
     release_mode = force_release
@@ -987,9 +1026,14 @@ def main() -> int:
             if plan_src.exists():
                 plan_text = plan_src.read_text(encoding="utf-8", errors="replace")
                 for cid in ("smoke", "r26_menu_idle", "r44_starmap", "r45_candidates",
-                            "r47_board_marker", "r48_info_gate", "r62_reload_observe"):
+                            "r47_board_marker", "r48_info_gate", "r65_icons",
+                            "r62_reload_observe"):
                     all_ok &= check(f"用例计划 · [case:{cid}]", plan_text.encode(),
                                     f"[case:{cid}]".encode())
+                # ★★ 第 65 轮（任务专属图标）：r65 用例的图标断言必须走**界面报告**
+                #   （assert.ui —— icon= 字段是 SAQ_Report 的实时值，比日志断言更直接）。
+                all_ok &= check("用例计划 · r65 图标断言（assert.ui icon=）",
+                                plan_text.encode(), "assert.ui icon=\\[0x".encode())
                 plan_deployed = MO2_MOD / "SFSE/Plugins/SAQ_TestPlan.txt"
                 if plan_deployed.exists():
                     same = plan_deployed.read_bytes() == plan_src.read_bytes()
@@ -1357,6 +1401,87 @@ def main() -> int:
         print(("OK  " if ok_bot else "MISS") +
               " 静态表 · 大器晚成 INFO 门槛（孤立无援 0x0027071B 完成）")
         all_ok &= ok_bot
+
+        # ★★ 第 65 轮（任务专属图标）：阵营列（表行尾的 faction）—— 数据侧完整性：
+        #   ① 行数 = kQuestTableSize；② 值域 -1..9（-1 = 无阵营；界面另有边界收敛，
+        #      但数据本身必须是干净的枚举）；③ 有阵营任务数与实测对齐（74 条：
+        #      UC 19 / Ryujin 16 / HouseVaruun 8 / Freestar 10 / BlackFleet 12 /
+        #      Constellation 3 / TerranArmada 6）；④ 实测样本「深藏不露」
+        #      （0x00009136，Crimson Fleet 任务）= 5。
+        fac_rows = re.findall(r'",\s*(-?\d+)\s*\},', region)
+        table_size = _num_after(blob, "kQuestTableSize = ")
+        n_with_fac = sum(1 for v in fac_rows if int(v) >= 0)
+        fac_ok = (len(fac_rows) == table_size and table_size > 0
+                  and all(-1 <= int(v) <= 9 for v in fac_rows)
+                  and n_with_fac == 74)
+        print(("OK  " if fac_ok else "MISS") +
+              f" 静态表 · 阵营列完整（行 {len(fac_rows)}/{table_size} / 有阵营 {n_with_fac} /"
+              f" 值域 -1..9）")
+        all_ok &= fac_ok
+        m_fac = re.search(r"\{\s*0x00009136u,.*?,\s*(-?\d+)\s*\},", blob)
+        ok_fac = m_fac is not None and int(m_fac.group(1)) == 5
+        print(("OK  " if ok_fac else "MISS") +
+              " 静态表 · 样本「深藏不露」阵营（Crimson Fleet = 5）")
+        all_ok &= ok_fac
+
+        # ★★ 第 65 轮（任务专属图标）：**图标映射表** —— 「数据 -> 图标帧」永不落空。
+        #
+        #   界面最终执行的映射链（复刻自 SWF 源码，两侧都要复刻才对得上）：
+        #     SaqSafeType（非原版枚举 -> 4）→ SaqSafeFaction（越界 -> -1）
+        #       → QuestUtils.GetQuestIconLabel(faction, type) → gotoAndStop(帧名)
+        #   这里用表里**实际存在的** (type, faction) 组合跑一遍，断言每一个结果帧名
+        #   都在 Icons_mc 实际存在的 13 个帧里（帧清单 = SWF sprite 解析，见 docs/02）：
+        #     Activities / Misc / Missions / None / BlackFleet / FreestarCollective /
+        #     HouseVaruun / RyujinIndustries / UnitedColonies / TrackersAlliance /
+        #     Constellation / TerranArmada / Creations
+        #   ⇒ 保证任何数据都不会让 gotoAndStop 找不到帧（那会抛异常把整行渲染带崩）。
+        icon_frames = {
+            "Activities", "Misc", "Missions", "None", "BlackFleet", "FreestarCollective",
+            "HouseVaruun", "RyujinIndustries", "UnitedColonies", "TrackersAlliance",
+            "Constellation", "TerranArmada", "Creations",
+        }
+        fac_frame = {0: "None", 1: "UnitedColonies", 2: "RyujinIndustries", 3: "HouseVaruun",
+                     4: "FreestarCollective", 5: "BlackFleet", 6: "Constellation",
+                     7: "TrackersAlliance", 8: "TerranArmada", 9: "Creations"}
+
+        def saq_safe_type(tp: int) -> int:
+            return tp if tp in (0, 1, 2, 3, 4) else 4
+
+        def saq_safe_faction(fac: int) -> int:
+            return fac if 0 <= fac <= 9 else -1
+
+        def icon_label(fac: int, tp: int) -> str:
+            tp = saq_safe_type(tp)
+            fac = saq_safe_faction(fac)
+            if tp == 0:
+                return "Activities"
+            if fac != -1:
+                return fac_frame[fac]
+            if tp == 3:
+                return "Misc"
+            if tp == 4:
+                return "Missions"
+            return "None"
+
+        tf_pairs = {(int(m.group(1)), int(m.group(2))) for m in re.finditer(
+            r"\{\s*0x[0-9A-F]+u,\s*\d+u,\s*(\d+)u,\s*0x[0-9A-F]+u,.*?,\s*(-?\d+)\s*\},", region)}
+        tf_bad = sorted(p for p in tf_pairs if icon_label(p[1], p[0]) not in icon_frames)
+        ok_icon = not tf_bad and len(tf_pairs) > 0
+        print(("OK  " if ok_icon else "MISS") +
+              f" 静态表 · 图标映射永不落空（{len(tf_pairs)} 个 (type,faction) 组合"
+              + (f"；越界：{tf_bad}" if tf_bad else "，全部命中 13 个实际帧") + "）")
+        all_ok &= ok_icon
+        probe_icon = (icon_label(5, 2) == "BlackFleet"      # 深藏不露（Crimson Fleet）
+                      and icon_label(-1, 0) == "Activities"  # 活动
+                      and icon_label(-1, 3) == "Misc"        # 杂项
+                      and icon_label(-1, 4) == "Missions"    # 任务
+                      and icon_label(6, 2) == "Constellation"  # 星座组织
+                      and icon_label(-1, 100) == "Missions"    # 入口（100 -> 4）
+                      and icon_label(99, 2) == "None")          # 越界阵营 -> None（不崩）
+        print(("OK  " if probe_icon else "MISS") +
+              " 静态表 · 图标映射关键通路（BlackFleet/Activities/Misc/Missions/"
+              "Constellation/入口折叠/越界兜底）")
+        all_ok &= probe_icon
     else:
         print(f"MISS 缺少 {table_h}")
         all_ok = False

@@ -81,7 +81,11 @@ namespace SAQ
 	namespace
 	{
 		constexpr const char* kMenuName = "BSMissionMenu";  // 原版任务菜单
-		constexpr std::int32_t kAvailableQuestType = 6;     // AS3：QuestUtils.AVAILABLE_QUEST_TYPE
+		// ★ 第 65 轮（任务专属图标）：不再使用 AS3 的 AVAILABLE_QUEST_TYPE(6) 当 type ——
+		//   payload 的 type 列改推**真实任务类型**（0=活动 2=派系 3=杂项 4=任务），
+		//   界面才能像原版一样区分图标（势力图标另由 faction 列决定）。
+		//   「只出现在我们 tab」由 bSaqAvailable 标记 + 掩码判定，与 type 无关
+		//   （见 MissionsList.EntryFilterCompare_Impl）。
 
 		// ★ 第 27 轮：无限任务入口（任务板）—— payload 的 type 列用这个值，AS3 侧据此
 		//   换文案（子项「前往任务板」+ 专用描述），普通任务不会用到 100。
@@ -755,6 +759,8 @@ namespace SAQ
 				QuestEntry entry;
 				entry.formID = boardID;
 				entry.type = kEntryQuestType;  // AS3：入口条目（子项/描述换文案）
+				// 入口不是任务：没有阵营（界面把 type=100 折叠回「任务」图标显示）。
+				entry.faction = -1;
 				entry.hasGuideTarget = (st.target != 0);
 				entry.nameZh = e.nameZh;
 				entry.nameEn = e.nameEn;
@@ -967,7 +973,11 @@ namespace SAQ
 
 				QuestEntry entry;
 				entry.formID = row.formID;
-				entry.type = kAvailableQuestType;  // 统一放到我们的 tab
+				// ★ 第 65 轮（任务专属图标）：type 推真实任务类型（此前推 6「可接任务」
+				//   统一值）—— 界面按它 + faction 选图标，与原版任务菜单一致。
+				entry.type = info.type;
+				// ★ 第 65 轮：阵营枚举（-1 = 无阵营）—— 势力任务的专属图标靠它。
+				entry.faction = info.faction;
 				// ★ 第 23 轮：把「有没有引导目标」也推给界面（能不能导航要看得见）
 				// ★ 第 45 轮：判据换成候选池（candCount > 0 等价于旧 guideRefLocal != 0）。
 				entry.hasGuideTarget = info.candCount != 0;

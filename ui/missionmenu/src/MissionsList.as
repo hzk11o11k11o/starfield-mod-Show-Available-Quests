@@ -6,6 +6,7 @@ package
    import Shared.GlobalFunc;
    import Shared.PlatformUtils;
    import Shared.QuestUtils;
+   import flash.display.MovieClip;
    import flash.events.Event;
    import flash.events.MouseEvent;
    
@@ -422,6 +423,47 @@ package
             }
             _loc2_++;
          }
+      }
+      
+      // ★★ 第 65 轮（任务专属图标）：图标帧自检 —— 报出**已渲染行**的
+      //   `<uID(hex)>:<iType>/<iFaction>=<图标帧名>`（最多 6 条，`,` 连接）。
+      //   SAQ_Report 的 icon= 字段用它；日志示例：
+      //     icon=[0x351a:3/-1=Misc,0x9136:2/5=BlackFleet]
+      //   —— 左半是载荷数据、右半是真实渲染的帧名，一眼可比对（faction=5 就该出 BlackFleet）。
+      //
+      // 为什么需要：载荷里的 iType/iFaction 对了 ≠ 图标帧真的切过去了 ——
+      // 索引错位 / 帧名拼错 / sprite 结构变化都会让 Icons_mc 停在第 1 帧，而数据层
+      // 完全看不出来。本函数把「数据 → 真实渲染的帧名」对起来。
+      // 只报已渲染的行（不在可视区的行 FindClipForEntry 为 null，跳过）。
+      public function SAQ_IconProbe() : String
+      {
+         var _loc1_:Array = new Array();
+         try
+         {
+            var _loc2_:int = 0;
+            while(_loc2_ < entryCount && _loc1_.length < 6)
+            {
+               var _loc3_:Object = entryList[_loc2_];
+               if(_loc3_ != null && _loc3_.bSaqAvailable === true && _loc3_.hasOwnProperty("aObjectives"))
+               {
+                  var _loc4_:MissionsListEntry = this.FindClipForEntry(_loc2_) as MissionsListEntry;
+                  if(_loc4_ != null)
+                  {
+                     var _loc5_:MovieClip = _loc4_.factionIcon;
+                     if(_loc5_ != null)
+                     {
+                        _loc1_.push("0x" + Number(_loc3_.uID).toString(16) + ":" + Number(_loc3_.iType) + "/" + Number(_loc3_.iFaction) + "=" + _loc5_.currentLabel);
+                     }
+                  }
+               }
+               _loc2_++;
+            }
+         }
+         catch(e:Error)
+         {
+            return _loc1_.join(",") + "(ex)";  // 诊断函数绝不能让菜单崩
+         }
+         return _loc1_.join(",");
       }
       
       override public function onEntryRollover(param1:Event) : *

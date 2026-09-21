@@ -336,7 +336,53 @@ step = menu.hide GalaxyStarMapMenu timeout=8000
 step = guide.clear
 
 ; ----------------------------------------------------------------------------
-;  用例 7：第 62 轮（大项 I）—— 自动读档（**指定存档**）
+;  用例 7：第 65 轮（任务专属图标）—— 列表图标帧自检
+;
+;  目的 = 图标是第 65 轮的核心交付，但它是**渲染层**的事
+;        （MissionVisuals.FactionSymbols.Icons_mc.currentLabel）——载荷数据对
+;        ≠ 帧真的切过去了（索引错位 / 帧名拼错 / sprite 结构变化都会让 sprite
+;        停在第 1 帧，而数据层完全看不出来）。
+;
+;        本用例切到「可接任务」tab、等首屏渲染完，断言界面报告（SAQ_Report）
+;        的 icon= 字段——格式 `<uID(hex)>:<iType>/<iFaction>=<帧名>`：
+;          icon=[0x351a:3/-1=Misc,0x9136:2/5=BlackFleet]
+;        左半 = 载荷数据、右半 = 真实渲染的帧名（见 MissionsList.SAQ_IconProbe）。
+;
+;  ★ 判据（PASS 线）：
+;    ① 推送成功（不是内嵌回退数据 —— 那条链不经过 C++ 的阵营列）；
+;    ② 界面报告里出现 icon= 字段且至少一条已渲染行格式正确
+;       （type 已在 0..4 折叠 / faction -1..9 / 帧名非空）。
+;       更强的「faction 与帧名逐行一致」由离线检查保证（verify 的图标映射表：
+;       全部 (type,faction) 组合 -> 13 个实际帧），运行时这半段就是原版
+;       SetFactionIcon → GetQuestIconLabel 的固定逻辑。
+;    ③ ui.select 深藏不露（0x00009136，Crimson Fleet）后日志里应能看到
+;       `0x9136:2/5=BlackFleet` —— **记录性核对点**（该条若在存档里已完成会被
+;       过滤，不设硬断言；实机/日志里人工核对）。
+;
+;  ★ 图标帧清单（13 个，SWF sprite 实测）：Activities / Misc / Missions / None +
+;    BlackFleet / FreestarCollective / HouseVaruun / RyujinIndustries / UnitedColonies /
+;    TrackersAlliance / Constellation / TerranArmada / Creations。
+;  ★ 本用例不改世界状态（只开菜单 + 选中条目），位置随意。
+; ----------------------------------------------------------------------------
+[case:r65_icons]
+desc = 第 65 轮（任务专属图标）：tab 列表图标帧自检（数据 -> 渲染帧名）
+step = ping
+step = wait 2500
+step = menu.open
+step = assert.log 推送成功 scope=prev timeout=12000
+step = ui.tab
+step = note === 等首屏渲染 + 界面报告轮询（变化即记）写进日志 ===
+step = wait 1500
+step = note === 图标帧自检：已渲染行的 <uID>:<type>/<faction>=<帧名> ===
+step = assert.ui icon=\[0x[0-9a-f]+:[0-4]/-?[0-9]+=[A-Za-z]+ timeout=8000
+step = note === 记录性核对：选中深藏不露（Crimson Fleet=5）→ 期望 0x9136:2/5=BlackFleet ===
+step = ui.select 0x00009136
+step = wait 1200
+step = ui.state
+step = menu.close
+
+; ----------------------------------------------------------------------------
+;  用例 8：第 62 轮（大项 I）—— 自动读档（**指定存档**）
 ;
 ;  目的 = 把「读档 / 加载窗口」引入 harness —— 候选降级观察期（第 49 轮补丁②）那半段
 ;        「目标 cell 未加载 ⇒ 候选取不到 ⇒ 先保持 20 秒 ⇒ 降级」一直只能靠人工读档触发

@@ -86,6 +86,12 @@ if (-not $SkipTable) {
     Step '1/6' '生成 INFO 门槛（analyze_info_gates.py → ref\info_gates_final.json）'
     & python (Join-Path $root 'tools\esm\analyze_info_gates.py') | Write-Host
     if ($LASTEXITCODE -ne 0) { throw "analyze_info_gates.py 失败（exit $LASTEXITCODE）" }
+    # ★ 第 65 轮（任务专属图标）：任务阵营映射 —— QUST 的 FTYP 关键字（FactionType*）
+    #   -> 原版 UI 阵营枚举（FactionUtils 顺序）。需要原始 ESM（读 KYWD 组），
+    #   产物 ref\faction_types.json 由 gen_quest_table.py 消费（写进静态表与内嵌载荷）。
+    Step '1/6' '生成任务阵营映射（gen_faction_types.py → ref\faction_types.json）'
+    & python (Join-Path $root 'tools\esm\gen_faction_types.py') | Write-Host
+    if ($LASTEXITCODE -ne 0) { throw "gen_faction_types.py 失败（exit $LASTEXITCODE）" }
     Step '1/6' '生成静态任务表（gen_quest_table.py）'
     & python (Join-Path $root 'tools\esm\gen_quest_table.py') | Write-Host
     if ($LASTEXITCODE -ne 0) { throw "gen_quest_table.py 失败（exit $LASTEXITCODE）" }
