@@ -79,6 +79,14 @@ namespace SAQ::Test
 		//   harness 通道的「1→2」回写靠的就是这个轮询节拍。最多唤醒 4 次（每次间隔 3 秒）。
 		constexpr std::uint64_t kSaveLoadWakeIntervalMs = 3000;
 		constexpr std::uint32_t kSaveLoadWakeMax = 4;
+		// ★★ 第 62 轮补（用户实测反馈 12:21 会话）：**主菜单自动读档**（ini [Test] AutoLoad）。
+		//   为什么需要：游戏停在「按任意键继续 / 主菜单」时游戏世界还没加载 ⇒ Papyrus
+		//   脚本实例不存在 ⇒ harness 的「1→2」握手永远等不到（日志停在「等脚本回写 2」，
+		//   玩家看不出任何动静）。这里在主菜单阶段直接用 save.load 的原语替玩家读档 ——
+		//   整个自测流程只剩「启动游戏 + 按任意键」。
+		constexpr const char*   kMainMenuName = "MainMenu";
+		constexpr std::uint64_t kAutoLoadRetryIntervalMs = 3000;
+		constexpr std::uint32_t kAutoLoadMaxAttempts = 10;  // ≈30 秒（等列表构建 / 引擎状态）
 		// 连续多少次「命令无回执」就判定游戏端卡死（若此刻有加载画面，1 次就够）。
 		constexpr int kStuckAbortTimeouts = 2;
 		constexpr std::uint64_t kReadyCheckIntervalMs = 500;
@@ -234,6 +242,11 @@ namespace SAQ::Test
 		int         g_consecutiveTimeouts{};
 		bool        g_stuckAbort{};
 		std::string g_stuckReason;
+
+		// ★★ 第 62 轮补：主菜单自动读档的状态（见 TryAutoLoadFromMainMenu）
+		bool          g_autoLoadDone{};
+		std::uint64_t g_autoLoadCheckMs{};
+		std::uint32_t g_autoLoadAttempts{};
 
 		// ----------------------------------------------------------------
 		//  小工具
@@ -1612,8 +1625,8 @@ namespace SAQ::Test
 		// ★ 第 56 轮：带上**驱动器版本串** —— 与 SWF 的 `stamp=` 同一个道理：日志里有没有
 		//   这一串，是「跑的是不是修好窗口 bug 的那版驱动器」的唯一判据（旧版会把
 		//   断言窗口起点清 0 ⇒ 假 PASS/假 FAIL）。
-		REX::INFO("harness：已启用（{} 个用例；驱动器 v61：自动读档（save.list / save.load ——"
-				  " BGSSaveLoadManager 排队读档 + 加载静默期 + 通道重新就绪）"
+		REX::INFO("harness：已启用（{} 个用例；驱动器 v62：主菜单自动读档（ini [Test] AutoLoad）"
+				  " + save.list / save.load（BGSSaveLoadManager 排队读档 + 加载静默期 + 通道重新就绪）"
 				  "（沿用：guide.probe / ~0x 参数写回 / 清场延迟复查 / 日志窗口按步保留 /"
 				  " 传送 20 秒窗口 / 落地静默期每 Tick 推进 / 加载画面证据 / 卡死自动中止））"
 				  " —— 等脚本通道就绪后自动开跑",
@@ -1643,6 +1656,52 @@ namespace SAQ::Test
 			}
 			g_wantHarness = true;
 			LoadPlan();
+			return true;
+		}
+
+		// ★★ 第 62 轮补：主菜单自动读档（见常量 kMainMenuName 的说明）。
+		//   返回 true = 本拍已经做过事（调用方直接 return）。
+		//   行为：只在「主菜单开着」（= 玩家在标题界面、世界还没加载）时动手；ini
+		//   `[Test] AutoLoad` 给了存档名子串就排队读它；排队成功即停手（游戏会开始加载 ⇒
+		//   进世界 ⇒ 脚本实例起来 ⇒ 通道就绪 ⇒ 用例自动开跑）。失败（列表没构建）每 3 秒
+		//   重试，最多 10 次；放弃时打一行 WARN 提示手动读档。
+		bool TryAutoLoadFromMainMenu()
+		{
+			if (g_autoLoadDone) {
+				return false;
+			}
+			// 先查菜单（便宜），再读 ini（1 秒缓存）—— 不在主菜单时这一整个功能零开销。
+			if (!MenuIsOpen(kMainMenuName)) {
+				return false;
+			}
+			const auto now = NowMs();
+			if (now - g_autoLoadCheckMs < kAutoLoadRetryIntervalMs) {
+				return false;
+			}
+			g_autoLoadCheckMs = now;
+			const std::string target = AutoLoadSaveName();
+			if (target.empty()) {
+				return false;  // ini 没配置（或玩家删了值）—— 什么都不做
+			}
+			std::string detail;
+			if (QueueLoadSaveByName(target, detail)) {
+				g_autoLoadDone = true;
+				REX::INFO("harness：主菜单自动读档已排队 —— {}（游戏随后自动进入该存档，用例会自动开跑）",
+					detail);
+				return true;
+			}
+			if (++g_autoLoadAttempts <= kAutoLoadMaxAttempts) {
+				if (g_autoLoadAttempts == 1) {
+					REX::INFO("harness：主菜单自动读档：存档列表还没就绪（{}）—— 每 {} ms 重试",
+						detail, kAutoLoadRetryIntervalMs);
+				}
+				return true;
+			}
+			if (g_autoLoadAttempts == kAutoLoadMaxAttempts + 1) {
+				g_autoLoadDone = true;
+				REX::WARN("harness：主菜单自动读档放弃（试了 {} 次）—— 请手动读一个存档，用例会自动开跑：{}",
+					kAutoLoadMaxAttempts, detail);
+			}
 			return true;
 		}
 	}
@@ -1687,6 +1746,11 @@ namespace SAQ::Test
 			}
 			// ① 等脚本把通道置成「就绪」（SAQ_TestHarness 由 1 → 2），见 SAQ_TestOps.h 的协议说明
 			if (!g_harnessReady) {
+				// ★★ 第 62 轮补：主菜单阶段的**自动读档**（见 TryAutoLoadFromMainMenu 的说明）——
+				//   放在节流之前（它自带 3 秒节流；不在主菜单时零开销）。
+				if (TryAutoLoadFromMainMenu()) {
+					return;
+				}
 				const auto now = NowMs();
 				if (now - g_lastReadyCheckMs < kReadyCheckIntervalMs) {
 					return;

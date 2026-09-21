@@ -135,6 +135,12 @@
            本脚本检查：驱动器版本串 v61 + 存档列表诊断/读档排队/读档完成/唤醒脚本四条
            文案 + 两个 op 名 + 反向检查（v60 及更早不在）+ 用例计划（r62 用例在、
            **只用用户指定的存档** Save7_3AB5A2FA）。
+  第 62 轮补（用户实测反馈 12:21 会话：游戏停在「按任意键继续 / 主菜单」时 harness 一直
+           等脚本通道 —— 世界没加载、脚本实例不存在）：**主菜单自动读档** —— ini
+           `[Test] AutoLoad`（存档名子串，空 = 关）；驱动器在主菜单阶段用 save.load 的原语
+           替玩家读档（每 3 秒重试、最多 10 次；成功/放弃都写日志）。
+           本脚本检查：驱动器版本串 v62 + 「主菜单自动读档已排队 / 放弃」两条文案
+           + 反向检查（v61 及更早不在）。
 
 用法：python tools/ui/verify_saq_build.py [--release|--dev]
 """
@@ -406,7 +412,9 @@ HARNESS_STRINGS = (
     # ★★ 第 62 轮（大项 I）：自动读档 —— 新 op `save.list`（BGSSaveLoadManager 只读诊断）
     #   与 `save.load`（排队读档 → 加载静默期 → 通道重新就绪 → 叫不醒就开菜单唤醒脚本）。
     ("harness 驱动器版本串",
-     "驱动器 v61：自动读档（save.list / save.load"),
+     "驱动器 v62：主菜单自动读档（ini [Test] AutoLoad）"),
+    ("harness 主菜单自动读档文案", "主菜单自动读档已排队"),
+    ("harness 主菜单自动读档放弃文案", "主菜单自动读档放弃"),
     ("harness 候选可得性探针文案", "候选可得性："),
     ("harness 探针 op 名", "guide.probe"),
     ("harness 存档列表诊断文案", "单例=OK built="),
@@ -941,8 +949,9 @@ def main() -> int:
             # 反向检查（第 58~62 轮）：旧驱动器版本串不应再出现 —— 日志里那串
             #   「驱动器 v61：…」是「跑的是不是这一版驱动器」的唯一判据（同 SWF stamp=）。
             gone = ("驱动器 v57".encode() not in blob and "驱动器 v58".encode() not in blob and
-                    "驱动器 v59".encode() not in blob and "驱动器 v60".encode() not in blob)
-            print(("OK  " if gone else "MISS") + " DLL · 旧驱动器版本串 v57~v60 已替换(反向检查)")
+                    "驱动器 v59".encode() not in blob and "驱动器 v60".encode() not in blob and
+                    "驱动器 v61".encode() not in blob)
+            print(("OK  " if gone else "MISS") + " DLL · 旧驱动器版本串 v57~v61 已替换(反向检查)")
             all_ok &= gone
             # ★★ 第 54 轮：用例计划本身也该被查 —— 历史判据（第 26/44~48 轮）落成用例后，
             #   最怕的是「源码改了没部署」或「用例被误删」。这里只查**开发模式**：

@@ -703,6 +703,39 @@ namespace SAQ::Test
 		return queuedOk;
 	}
 
+	// ★★ 第 62 轮补：ini [Test] AutoLoad（见头文件说明）。
+	//   与 ReadIniHarness 同一策略：1 秒缓存（改 ini 不必重启游戏，下一拍就生效）。
+	std::string AutoLoadSaveName()
+	{
+		static std::uint64_t s_cachedAtMs = 0;
+		static std::string   s_cached;
+		const auto           now = NowMs();
+		if (s_cachedAtMs != 0 && now - s_cachedAtMs < kIniCacheMs) {
+			return s_cached;
+		}
+		s_cachedAtMs = now;
+		s_cached.clear();
+		if (const auto dir = PluginDir(); !dir.empty()) {
+			const auto path = (dir / L"SAQ_ShowAvailableQuests.ini").wstring();
+			wchar_t    buf[256]{};
+			::GetPrivateProfileStringW(L"Test", L"AutoLoad", L"", buf,
+				static_cast<DWORD>(std::size(buf)), path.c_str());
+			// 存档名是 ASCII（如 Save7_3AB5A2FAM…）；宽字符直接窄化 —— 出现非 ASCII
+			// 一律当作没配置（防手滑输入中文按键名，静默失败比报错难查）。
+			for (const wchar_t w : buf) {
+				if (w == L'\0') {
+					break;
+				}
+				if (w > 0x7F) {
+					s_cached.clear();
+					return s_cached;
+				}
+				s_cached += static_cast<char>(w);
+			}
+		}
+		return s_cached;
+	}
+
 	// ==================================================================
 	//  UI 测试驱动（实现在 SAQ_UI.cpp —— 那里有桥的解析与 Invoke 校验）
 	// ==================================================================

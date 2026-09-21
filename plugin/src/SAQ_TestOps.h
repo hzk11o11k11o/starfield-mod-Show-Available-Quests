@@ -149,6 +149,13 @@ namespace SAQ::Test
 	std::string SaveGameListSummary();   // 一行诊断：单例 / built / count / 前几个存档名（save.list）
 	bool QueueLoadSaveByName(const std::string& a_nameSubstring, std::string& a_detail);
 
+	// ★★ 第 62 轮补（用户实测反馈 12:21 会话）：「按任意键继续 / 主菜单」阶段**游戏世界
+	//   还没加载** ⇒ Papyrus 脚本实例不存在 ⇒ harness 的「1→2」握手永远等不到
+	//   （日志停在「等脚本回写 2」，玩家看不出任何动静）。这里提供 ini
+	//   `[Test] AutoLoad`（存档名子串；空 = 关闭）：驱动器在**主菜单阶段**自动替玩家
+	//   读档，让整个自测流程只剩「启动游戏 + 按任意键」。
+	std::string AutoLoadSaveName();
+
 	// ------------------------------------------------------------------
 	//  UI 测试驱动（调 AS3 的 SAQ_TestDrive*，见 MissionMenu.as）
 	//

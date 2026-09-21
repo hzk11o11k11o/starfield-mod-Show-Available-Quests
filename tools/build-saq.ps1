@@ -27,7 +27,12 @@ param(
     # 用途：① tools\package-saq.ps1 用它做「构建 + 部署 → 校验 → 打包」的构建入口；
     #       ② 想「像玩家一样」跑一遍时用。
     # 回到开发构建：不带 -Release 跑一次（默认 saq_harness=y），或加 -Harness（测试版）。
-    [switch]$Release
+    [switch]$Release,
+    # ★★ 第 62 轮补：主菜单自动读档（harness）—— 写进部署 ini 的 [Test] AutoLoad。
+    #   填了之后：启动游戏 → 按任意键到主菜单 → 插件**自动读这个存档**并自动开跑用例
+    #   （连「手动读档」都省了）。留空 = 保持 ini 已有值（不自动读档）。
+    #   例：-Harness -AutoLoad Save7_3AB5A2FA
+    [string]$AutoLoad = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -306,24 +311,32 @@ if (-not $SkipDeploy) {
             $newKeys += '; 用例文件（相对插件目录）—— 见 tools\test\scenarios'
             $newKeys += 'Plan=SAQ_TestPlan.txt'
         }
+        # ★★ 第 62 轮补：主菜单自动读档 —— 存档名子串（空 = 关）。只补键、不改值。
+        if ($iniText -notmatch '(?m)^\s*AutoLoad\s*=') {
+            $newKeys += '; ★★ 第 62 轮：主菜单自动读档（存档名子串；空 = 关）—— 启动游戏按任意键后自动读它再跑用例'
+            $newKeys += 'AutoLoad='
+        }
         if ($newKeys.Count -gt 0) {
-            $lines = $iniText -split "`r`n"
-            $testIdx = -1
-            for ($i = 0; $i -lt $lines.Count; $i++) {
-                if ($lines[$i].Trim() -eq '[Test]') { $testIdx = $i; break }
-            }
-            if ($testIdx -ge 0) {
-                $head = @($lines[0..$testIdx])
-                $tail = if ($testIdx + 1 -lt $lines.Count) { @($lines[($testIdx + 1)..($lines.Count - 1)]) } else { @() }
-                $lines = $head + $newKeys + $tail
+            # ★★ 第 62 轮补踩坑（实机症状：AutoLoad 落到文件末尾的**第二个 [Test] 段**里）：
+            #   老实现用 `-split "`r`n"` 定位 [Test] 行 —— 而模板 ini 是**LF 换行**
+            #   ⇒ 整个文件被当成一行、找不到 [Test] ⇒ 走「追加到末尾」分支，于是出现
+            #   重复段（Windows 的 INI 读取对重复段行为不可依赖 ⇒ 键可能读不到）。
+            #   现在改用 regex 在**第一个** [Test] 行后插入（对 LF / CRLF 都安全）。
+            $insert = ($newKeys -join "`r`n")
+            if ($iniText -match '(?m)^\s*\[Test\]\s*$') {
+                $iniText = $iniText -replace '(?m)^(\s*\[Test\]\s*)$', "`$1`r`n$insert"
             } else {
-                $lines = @($lines) + @('[Test]') + $newKeys
+                $iniText = $iniText.TrimEnd() + "`r`n[Test]`r`n$insert`r`n"
             }
-            $iniText = ($lines -join "`r`n")
             $iniChanged = $true
         }
         if ($Harness) {
             $iniText = [regex]::Replace($iniText, '(?m)^\s*Harness\s*=.*$', 'Harness=1')
+            $iniChanged = $true
+        }
+        if ($AutoLoad -ne '') {
+            # 键一定已存在（上面 newKeys 补过）；这里强制写入指定存档子串。
+            $iniText = [regex]::Replace($iniText, '(?m)^\s*AutoLoad\s*=.*$', "AutoLoad=$AutoLoad")
             $iniChanged = $true
         }
         if ($iniChanged) {
