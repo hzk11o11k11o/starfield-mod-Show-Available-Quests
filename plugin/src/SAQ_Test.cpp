@@ -135,6 +135,17 @@ namespace SAQ::Test
 		//   菜单关闭处理完，再开下一条（否则下一条的 `ping` 可能撞上「游戏仍暂停」）。
 		std::uint64_t g_nextCaseAtMs{};
 		constexpr std::uint64_t kInterCaseDelayMs = 700;
+		// ★★ 第 57 轮：清场**延迟复查** —— 只在上一条用例「可能触发星图」（按过 R）时才开窗口。
+		//   为什么需要：R（XButton）链路的星图由脚本在「菜单关闭后 1~1.5 秒」才打开，而用例
+		//   结束时清场当时它还没出现 ⇒ 星图落在下一条用例开头（游戏暂停 ⇒ 脚本定时器冻结
+		//   ⇒ `ping` 超时 3 秒被判 FAIL）。09:35 会话实证：smoke 18.315 结束、星图 18.495
+		//   才打开 ⇒ r26 第一条 `ping` 超时 —— 产品侧完全正确（第 55 轮的清场救不了这种
+		//   「清场跑得比星图打开早」的时序）。
+		//   窗口行为：一旦观察到星图/任务菜单打开 ⇒ 关掉并**提前结束**窗口；一直没出现
+		//   ⇒ 等满窗口（覆盖脚本「第 2 次尝试」才成功的情形）。窗口没结束就不开下一条。
+		bool          g_caseStarMapRisk{};
+		std::uint64_t g_cleanupRecheckUntilMs{};
+		constexpr std::uint64_t kCleanupRecheckWindowMs = 4000;
 		bool        g_harnessReady{};
 		bool        g_readyWarned{};
 		bool        g_active{};
@@ -504,6 +515,11 @@ namespace SAQ::Test
 						a_error = "uID 解析失败：" + a_step.text;
 						return false;
 					}
+					// ★★ 第 57 轮修：这里**必须把解析值写回 a_step.formId** —— 漏了这一行，
+					//   ResolveStepFormID 拿到的是 0 ⇒ 报「静态表里没有记录号 0x000000」。
+					//   09:35 会话实证：`ui.selectchild ~0x0008EBDC`（营救机器人）因此 FAIL，
+					//   而同一条 `quest.reset ~0x0008EBDC` 正常（那条走 needFormID 分支）。
+					a_step.formId = uid;
 					a_step.text.clear();  // 运行期值由 ResolveStepFormID 补上
 				} else if ((op == "ui.select" || op == "ui.selectchild" || op == "ui.expand") &&
 						   a_step.text.rfind("0x", 0) == 0) {
@@ -763,6 +779,36 @@ namespace SAQ::Test
 					REX::INFO("harness：用例收尾：星图还开着 —— 已请求关闭（{}）", detail);
 				}
 			}
+			// ★★ 第 57 轮：本用例按过 R（请求过星图）⇒ 开一段延迟复查窗口 —— 星图很可能
+			//   在清场**之后**才真的打开（见 g_cleanupRecheckUntilMs 的注释）。
+			if (g_caseStarMapRisk) {
+				g_cleanupRecheckUntilMs = NowMs() + kCleanupRecheckWindowMs;
+			}
+		}
+
+		// ★★ 第 57 轮：延迟复查的一次检查（由 Tick 每帧调用，直到窗口结束）。
+		//   返回语义：无（窗口是否结束由 g_cleanupRecheckUntilMs 表达）。
+		void CleanupRecheck()
+		{
+			std::string detail;
+			bool closedStarMap = false;
+			if (MenuIsOpen("GalaxyStarMapMenu")) {
+				if (SetMenuOpenByName("GalaxyStarMapMenu", false, detail)) {
+					REX::INFO("harness：用例收尾复查：星图在清场后才打开 —— 已请求关闭（{}）", detail);
+					closedStarMap = true;
+				}
+			}
+			if (MissionMenuIsOpen()) {
+				if (SetMenuOpen(false, detail)) {
+					REX::INFO("harness：用例收尾复查：任务菜单还开着 —— 已请求关闭（{}）", detail);
+					closedStarMap = true;
+				}
+			}
+			// 星图既然已经出现过并被关掉，就没有「稍后再打开」的可能了 —— 提前结束窗口，
+			// 别白等（脚本一次引导只开一次星图）。
+			if (closedStarMap || NowMs() >= g_cleanupRecheckUntilMs) {
+				g_cleanupRecheckUntilMs = 0;
+			}
 		}
 
 		void FinishCase(bool a_ok, const std::string& a_reason)
@@ -797,6 +843,7 @@ namespace SAQ::Test
 			g_caseIdx = a_index;
 			g_stepIdx = 0;
 			g_cur = StepState{};
+			g_caseStarMapRisk = false;  // ★ 第 57 轮：延迟复查窗口的触发标记，按用例清零
 			g_caseStartedMs = NowMs();
 			// ★ 第 54 轮：`scope=case` 的窗口起点（本用例第一行日志之前）；
 			//   同时把 g_cur.logMark 也钉在这里 —— 否则第一步的 `scope=prev` 会退化成
@@ -974,6 +1021,12 @@ namespace SAQ::Test
 					}
 					std::string reply;
 					const bool ok = InvokeUiTestDrive(fn, arg, reply);
+					// ★★ 第 57 轮：按 R（XButton）会请求星图 —— 它可能在**用例结束之后**
+					//   才真的打开（脚本节拍）⇒ 记下来给清场的延迟复查用（否则星图会留在
+					//   下一条用例开头，游戏暂停、`ping` 超时）。
+					if (ok && step.opName == "ui.key" && step.text == "XButton") {
+						g_caseStarMapRisk = true;
+					}
 					if (!ok) {
 						CompleteStep(false, std::format("{} 调用失败：{}", fn, reply),
 							LogSince(g_cur.logMark, kEvidenceMaxLines));
@@ -1182,8 +1235,8 @@ namespace SAQ::Test
 		// ★ 第 56 轮：带上**驱动器版本串** —— 与 SWF 的 `stamp=` 同一个道理：日志里有没有
 		//   这一串，是「跑的是不是修好窗口 bug 的那版驱动器」的唯一判据（旧版会把
 		//   断言窗口起点清 0 ⇒ 假 PASS/假 FAIL）。
-		REX::INFO("harness：已启用（{} 个用例；驱动器 v56：日志窗口按步保留 / 传送 20 秒窗口）"
-				  " —— 等脚本通道就绪后自动开跑",
+		REX::INFO("harness：已启用（{} 个用例；驱动器 v57：~0x 参数写回 / 清场延迟复查 / "
+				  "日志窗口按步保留 / 传送 20 秒窗口） —— 等脚本通道就绪后自动开跑",
 			g_cases.size());
 	}
 
@@ -1216,6 +1269,11 @@ namespace SAQ::Test
 
 	void Tick(bool a_menuOpen)
 	{
+		// ★★ 第 57 轮：延迟复查放在最前 —— `finishAll`（全部用例结束）之后也要跑到；
+		//   窗口结束后这里只剩一次时间戳比较（零开销）。
+		if (g_cleanupRecheckUntilMs != 0) {
+			CleanupRecheck();
+		}
 		if (g_finished) {
 			return;
 		}
@@ -1266,7 +1324,9 @@ namespace SAQ::Test
 			// ② 走完一条就开下一条（★ 第 55 轮：先等「用例间隔」—— 上一条的收尾清场
 			//    要一点时间才能让引擎真正关掉菜单/星图；不等的话下一条的 `ping` 可能
 			//    撞上「游戏仍暂停 ⇒ 脚本定时器冻结」而超时，看起来像被测功能坏了）。
-			if (NowMs() < g_nextCaseAtMs) {
+			// ★★ 第 57 轮：延迟复查窗口没结束就不开下一条（上一条可能触发过星图，
+			//   它会在清场之后才打开 —— 让它先出现、被关掉，再开下一条）。
+			if (g_cleanupRecheckUntilMs != 0 || NowMs() < g_nextCaseAtMs) {
 				return;
 			}
 			if (g_results.size() > g_caseIdx) {

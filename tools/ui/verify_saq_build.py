@@ -350,7 +350,15 @@ HARNESS_STRINGS = (
     #      `stamp=` 同一个道理：日志里有没有这一串，是「跑的是不是修好的那版」的唯一判据。
     #   ② 传送（MoveTo）的回执要等 cell 加载（实测 4.3 秒）⇒ 传送单独给 20 秒窗口，
     #      否则「传送成功」会被判 FAIL（本例最危险的一类：假 FAIL 掩盖了用例前提已成立）。
-    ("harness 驱动器版本串", "驱动器 v56：日志窗口按步保留 / 传送 20 秒窗口"),
+    # ★★ 第 57 轮（09:35 会话实测出的两个**驱动器**缺陷 + 一条清场时序）——
+    #   ① `ui.select/selectchild/expand` 的 `~0x…` 参数漏写回 `formId` ⇒ 被当成
+    #      记录号 0x000000（r45 的 `ui.selectchild ~0x0008EBDC` 假 FAIL）；
+    #   ② R 链路的星图由脚本在菜单关闭后 1~1.5 秒才打开 ⇒ 清场当时查不到它，
+    #      它会落在下一条用例开头（游戏暂停 ⇒ 脚本冻结 ⇒ `ping` 超时，r26 实证）。
+    #      修法 = 「按过 R 的用例」结束后开 **4 秒延迟复查窗口**（观察到就关、提前结束）。
+    ("harness 驱动器版本串",
+     "驱动器 v57：~0x 参数写回 / 清场延迟复查 / 日志窗口按步保留 / 传送 20 秒窗口"),
+    ("harness 清场延迟复查文案", "用例收尾复查：星图在清场后才打开"),
     ("传送回执等待窗口文案", "传送等回执最多"),
 )
 
@@ -899,6 +907,25 @@ def main() -> int:
                 gone = "引导已生效|引导延迟生效|引导确认" not in plan_text
                 print(("OK  " if gone else "MISS") +
                       " 用例计划 · 旧宽松断言（带裸「引导确认」）已替换(反向检查)")
+                all_ok &= gone
+                # ★★ 第 57 轮：三条实测修正的用例侧判据 —— 防「改回旧写法」再犯：
+                #   ① r47 切 tab 前必须等「推送成功」（否则撞上内嵌回退数据 202 条、
+                #      不含任务板入口 ⇒ ui.selectchild 报 err|notfound）；
+                #   ② r26 的 `引导确认：菜单还开着` 用 scope=case（与上一条断言同批行，
+                #      scope=prev 的窗口会被上一条断言消耗掉 —— 实测假 FAIL）；
+                #   ③ r48 的 `INFO没到:` 用 scope=case（统计与名单在**同一行**，同理）。
+                all_ok &= check("用例计划 · r47 切 tab 前等推送成功（scope=case）",
+                                plan_text.encode(), "assert.log 推送成功 scope=case".encode())
+                all_ok &= check("用例计划 · r26 引导确认断言（scope=case）",
+                                plan_text.encode(),
+                                "assert.log 引导确认：菜单还开着 scope=case".encode())
+                all_ok &= check("用例计划 · r48 INFO没到断言（scope=case）",
+                                plan_text.encode(),
+                                "assert.log INFO没到: .*无凭无据\\[0x00082D5A scope=case".encode())
+                gone = ("引导确认：菜单还开着 scope=prev" not in plan_text
+                        and "无凭无据\\[0x00082D5A scope=prev" not in plan_text)
+                print(("OK  " if gone else "MISS") +
+                      " 用例计划 · 旧的 scope=prev 写法（同批行断言）已替换(反向检查)")
                 all_ok &= gone
             else:
                 print(f"MISS 缺少用例计划 {plan_src}")

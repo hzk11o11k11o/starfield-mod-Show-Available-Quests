@@ -34,12 +34,28 @@
 ;      既会匹配到本会话最早那几行（**假 PASS**：r26/r44/r47/r48 四条用例都中招），
 ;      又会把早就翻篇的行当成「不该出现」（r48 的**假 FAIL**，报文里那句
 ;      「窗口从 idx 0 起」）。现在窗口起点按步保留，另有兜底（起点 0 ⇒ 退到用例起点）。
-;      判据：日志里那行 `harness：已启用（… 驱动器 v56：日志窗口按步保留 / 传送 20 秒窗口…）`。
+;      判据：日志里那行 `harness：已启用（… 驱动器 v57：…）`（v56 及更早 = 旧驱动器）。
 ;    · `teleport*` 步骤的回执要等 **cell 加载**才算完（实测 4.3 秒）⇒ 旧的 3 秒窗口把
 ;      「传送成功」判成 FAIL。驱动器现在给传送 **20 秒**（其余命令仍 3 秒）。
 ;    · `~0x…` = **记录号**（不是运行期 FormID）：DLC 任务的运行期高字节是加载顺序
 ;      （本机 SFBGS050 = 0x03，换机器可能不同）⇒ 用例里写 `~0x0008EBDC`，由驱动器
 ;      按静态表解析。基础游戏的任务（master 0）两种写法等价。
+;
+;  ★★ 第 57 轮（09:35 会话实测的**驱动/用例**问题，三件都已修 —— 产品侧全对）：
+;    · `ui.select/selectchild/expand` 的 `~0x…` 参数漏写回 ⇒ 被当成记录号 0x000000
+;      （r45 的 `ui.selectchild ~0x0008EBDC` 报「静态表里没有记录号 0x000000」）。
+;      驱动已修（v57）；用例写法不变。
+;    · **两条断言依赖同一批行时，第二条要写 `scope=case`** —— `scope=prev` 的窗口
+;      起点 = 上一步**开始**时刻，会被上一条断言「消耗」掉：同一 Tick 早先打印的行
+;      落在窗口之外（09:35 会话 r48 的 `INFO没到:` 与 r26 的 `引导确认：菜单还开着`
+;      两条断言就是因此假 FAIL）。
+;    · **开菜单后要等「推送成功」再动界面**（本机开菜单的第一次推送常因桥解析失败、
+;      0.8 秒后才重试成功）：不等就会撞上「列表还是内嵌回退数据（202 条、不含任务板
+;      入口）」⇒ `ui.selectchild` 报 `err|notfound`（09:35 会话 r47 的真因；证据 =
+;      界面报告 `src=embedded` / `raw=202`）。
+;    · 「按过 R（XButton）」的用例结束后，驱动器会开一段 **4 秒延迟复查窗口**：
+;      星图由脚本在菜单关闭后 1~1.5 秒才打开 —— 清场当时查不到它，它会落在下一条
+;      用例开头把游戏暂停（09:35 会话 r26 的 `ping` 因此超时 3 秒）。
 ;  ★ 本文件里的用例会**传送玩家**（teleport.entry）—— 它会改变你当前所在位置，
 ;    跑完想回到原处请自己读档。
 ; ============================================================================
@@ -107,7 +123,9 @@ step = ui.tab
 step = ui.selectchild 0x0006E0A1
 step = ui.key Accept
 step = assert.log 引导请求：沙布罗的解决方案 scope=prev timeout=6000
-step = assert.log 引导确认：菜单还开着 scope=prev timeout=6000
+; ★ 第 57 轮：第二条用 scope=case —— 它与上一条断言看的是同一批行（同一 Tick 打印），
+;   scope=prev 的窗口起点会被上一条断言消耗掉（否则假 FAIL）。
+step = assert.log 引导确认：菜单还开着 scope=case timeout=6000
 step = note === 菜单里停 27 秒：这一整段都不许出现「引导未生效」（第 26 轮判据）===
 step = assert.nolog 引导未生效 timeout=27000
 step = assert.menu open timeout=2000
@@ -143,6 +161,11 @@ step = wait 3000
 step = note === 开菜单：看入口统计（12 条全可导航、不可用 0）===
 step = menu.open
 step = assert.log 入口=12\(可导航 12｜marker [1-9]\d* 原板 \d+ 兜底 \d+ 不可用 0\) scope=prev timeout=12000
+; ★ 第 57 轮：**必须等 C++ 数据推送成功再切 tab** —— 「入口=12」那行是**收集阶段**
+;   打印的（推送之前），而开菜单的第一次推送常因桥解析失败、0.8 秒后才重试成功；
+;   不等就会撞上「列表还是内嵌回退数据（202 条、不含任务板入口）」⇒ ui.selectchild
+;   报 err|notfound（09:35 会话 r47 的真因；证据 = 界面报告 src=embedded / raw=202）。
+step = assert.log 推送成功 scope=case timeout=12000
 step = ui.tab
 step = note === 点「任务板 · 新亚特兰蒂斯城」（子项 =「前往任务板」）===
 step = ui.selectchild 0x0021001E
@@ -228,7 +251,9 @@ step = quest.reset 0x0022DAD6
 step = quest.reset 0x00082D5A
 step = menu.open
 step = assert.log INFO门槛=\d+\(过\d+/藏\d+/放行\d+/未知\d+\) scope=prev timeout=12000
-step = assert.log INFO没到: .*无凭无据\[0x00082D5A scope=prev timeout=3000
+; ★ 第 57 轮：第二条用 scope=case —— 统计与名单在**同一行**（同一次 menu.open 打印），
+;   scope=prev 的窗口会被上一条断言消耗掉 ⇒ 假 FAIL。
+step = assert.log INFO没到: .*无凭无据\[0x00082D5A scope=case timeout=3000
 step = note === B. 把前置推到位（StageDone 295 = 真）⇒ 门槛应放行 ===
 step = menu.close
 step = quest.start 0x0022DAD6
