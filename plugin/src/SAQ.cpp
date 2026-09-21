@@ -2084,6 +2084,70 @@ namespace SAQ
 			return out.empty() ? std::string{ "无" } : out;
 		}
 
+		// ★★ 第 62 轮补（用户实测 12:2x 会话「自动读档后游戏退回主菜单 + 跳出」）：
+		//   判定「游戏世界此刻能不能做例行工作」—— 主菜单 / 加载画面 / 过渡黑屏 = 不能。
+		//
+		//   起因：Tick 的「菜单关着」判定只查 BSMissionMenu ⇒ **主菜单（MainMenu）、
+		//   加载画面（LoadingMenu）、过渡黑屏（FaderMenu）**全被当成「菜单关着」，
+		//   而这三个窗口正是引擎卸载/重建世界数据的时刻（读档 / 换场景 / 回标题）。
+		//
+		//   证据链（三份日志对齐，12:30:52 会话 / 主线程 24240）：
+		//     · SAS_AlwaysScan 的菜单事件日志：
+		//         12:31:07.805 MainMenu opening（标题界面）
+		//         12:31:41.897 MainMenu closing → LoadingMenu opening（读档开始）
+		//         12:32:02.5 / 12:32:05.5 LoadingMenu closing（两段加载完成）
+		//         12:32:05.598 MainMenu opening（★ 读档结束又退回主菜单）
+		//         12:32:11 崩溃（Starfield_09-21-04-32.dmp）
+		//     · 本插件日志：12:31:44「静态表已就绪（菜单关着时预建，认领已有引导）」
+		//         + 12:32:04「引导状态对账…」—— 两句都落在 LoadingMenu 开着期间；
+		//     · 崩溃转储（12:30:08 / 12:32:11 两次现场完全一致）：
+		//         exe+0x1999E57 `mov eax,[rcx+0x20]`，rcx=0（空指针）、访问 0x20，
+		//         故障线程 = 文件 I/O 工作线程（栈上是 usvfs）——
+		//         典型的「世界重建中途引擎对象被拆掉、后续流程拿着空指针继续跑」。
+		//
+		//   ⇒ 世界未就绪时把「例行认领 / 候选复算」这类**成串的引擎查询**全部暂缓
+		//     （那是 261 次 LookupByID + TESDataHandler 遍历，读的都是引擎正在重建的表）。
+		//     它们本来就有 2 秒节流，等世界稳定后自然继续 —— 这些窗口里既没有 HUD
+		//     也没有任务菜单，玩家看不到任何差别。
+		//   ★ 只影响「产品侧的例行工作」：harness 的驱动器照跑（它要靠观察加载画面
+		//     判断 save.load 的完成）；引导确认（PollGuideVerify）也保留 —— 它是
+		//     时序敏感的（玩家点完引导可能立刻快速旅行），且以只读为主。
+		bool WorldBusyForUpkeep()
+		{
+			auto* ui = RE::UI::GetSingleton();
+			if (!ui) {
+				return true;  // 拿不到 UI 一律当作「忙」（宁可暂缓，不在这种状态下做查询）
+			}
+			// 注册名来源：exe 菜单名表（第 41/43 轮已在用这三个名字，见 OpenMenusSummary）。
+			static const RE::BSFixedString kBusyMenus[] = { "MainMenu", "LoadingMenu", "FaderMenu" };
+			for (const auto& name : kBusyMenus) {
+				if (ui->IsMenuOpen(name)) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		// 「世界未就绪 ⇒ 例行工作暂缓」只在**进入**这个状态时留一行（下次翻现场的第一证据）；
+		//   离开窗口时复位，下次读档/换场景还能再记一行。
+		bool g_worldBusyNoted = false;
+
+		void NoteWorldBusyEntered()
+		{
+			if (g_worldBusyNoted) {
+				return;
+			}
+			g_worldBusyNoted = true;
+			REX::INFO("读档 / 加载窗口（{} 开着）—— 例行认领 / 候选复算暂缓"
+					  "（第 62 轮补：不在引擎重建世界时做查询；窗口结束后自动恢复）",
+				OpenMenusSummary());
+		}
+
+		void ResetWorldBusyNote()
+		{
+			g_worldBusyNoted = false;
+		}
+
 		// 每帧调用（内部按 pending/到点自我短路，没请求时零开销）：
 		//   ① 星图一出现就记一行（带 R 后的秒数与尝试次数）；
 		//   ② 中途记一行「还开着哪些菜单」（卡在 PauseMenu = 游戏仍暂停 = 脚本定时器不走
@@ -3222,14 +3286,24 @@ namespace SAQ
 			} else if (wasOpen) {
 				OnMissionMenuClosed();
 			} else {
-				// ★ 第 32 轮：菜单关着时先做例行认领/对账 —— 玩家重启游戏后直接读档看 HUD
-				//   （不进菜单）时，只有这里能把「存档里遗留的引导」认领回来，让下面那句
-				//   动态更新把蓝点挪到板上。（函数内部按 2 秒自我节流。）
-				PollGuideUpkeep();
-				// ★ 第 31 轮：菜单关着时才算「入口条目的引导目标能不能更精确」
-				//   （玩家从远处选完就关菜单去赶路 —— 蓝点该在到达后自动上板）。
-				//   函数内部按 lastTargetCheckMs 自我节流，没在引导时零开销。
-				UpdateEntryGuideTarget();
+				// ★★ 第 62 轮补：先判「世界就绪」——「任务菜单没开」≠「游戏世界里」
+				//   （主菜单 / 加载画面 / 过渡黑屏也走这个分支，见 WorldBusyForUpkeep 的推导）。
+				//   读档窗口里引擎正在卸载/重建世界数据，例行认领/候选复算的成串引擎查询
+				//   会把半成品状态当正常数据用（12:31 会话实测：静态表预建落在读档窗口内，
+				//   读档随后失败退回主菜单，6 秒后引擎空指针崩溃）。
+				if (WorldBusyForUpkeep()) {
+					NoteWorldBusyEntered();
+				} else {
+					ResetWorldBusyNote();
+					// ★ 第 32 轮：菜单关着时先做例行认领/对账 —— 玩家重启游戏后直接读档看 HUD
+					//   （不进菜单）时，只有这里能把「存档里遗留的引导」认领回来，让下面那句
+					//   动态更新把蓝点挪到板上。（函数内部按 2 秒自我节流。）
+					PollGuideUpkeep();
+					// ★ 第 31 轮：菜单关着时才算「入口条目的引导目标能不能更精确」
+					//   （玩家从远处选完就关菜单去赶路 —— 蓝点该在到达后自动上板）。
+					//   函数内部按 lastTargetCheckMs 自我节流，没在引导时零开销。
+					UpdateEntryGuideTarget();
+				}
 			}
 
 			// ★ 第 17 轮：引导结果确认 —— **菜单关掉之后也要继续跑**

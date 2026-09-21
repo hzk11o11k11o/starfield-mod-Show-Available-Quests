@@ -87,6 +87,14 @@ namespace SAQ::Test
 		constexpr const char*   kMainMenuName = "MainMenu";
 		constexpr std::uint64_t kAutoLoadRetryIntervalMs = 3000;
 		constexpr std::uint32_t kAutoLoadMaxAttempts = 10;  // ≈30 秒（等列表构建 / 引擎状态）
+		// ★★ 第 62 轮补②（12:2x 实测：自动读档后游戏退回主菜单 + 跳出）：
+		//   主菜单**出现后先等一会儿**再排队。依据（SAS_AlwaysScan 的菜单事件日志，
+		//   同一个 12:30:52 会话）：主菜单 12:31:07.8 出现，而该插件自己的
+		//   「forms bound」直到 12:31:26 才打出来 —— 主菜单刚出来的十几秒里引擎还在
+		//   做初始化（插件数据 / Papyrus VM / 存档列表…）。过早排队会让读档请求一直
+		//   压在引擎的初始化窗口上（实测：12:31:09 排队，引擎 12:31:41.9 才关闭主菜单
+		//   开始读档）。等 5 秒既避开头几秒的初始化，又几乎不增加等待。
+		constexpr std::uint64_t kAutoLoadMinMenuAgeMs = 5000;
 		// 连续多少次「命令无回执」就判定游戏端卡死（若此刻有加载画面，1 次就够）。
 		constexpr int kStuckAbortTimeouts = 2;
 		constexpr std::uint64_t kReadyCheckIntervalMs = 500;
@@ -247,6 +255,12 @@ namespace SAQ::Test
 		bool          g_autoLoadDone{};
 		std::uint64_t g_autoLoadCheckMs{};
 		std::uint32_t g_autoLoadAttempts{};
+		// ★★ 第 62 轮补②：主菜单稳定性门槛 + 排队后的结果侦测（见 kAutoLoadMinMenuAgeMs
+		//   与 NoteAutoLoadOutcome）
+		std::uint64_t g_autoLoadMenuSeenMs{};    // 首次看到主菜单的时刻（0 = 此刻不在主菜单）
+		std::uint64_t g_autoLoadQueuedAtMs{};    // 排队成功时刻（0 = 还没排队）
+		bool          g_autoLoadLeftMainMenu{};  // 排队后主菜单**关过**（= 引擎真的开始处理读档）
+		bool          g_autoLoadOutcomeNoted{};  // 「读档失败」WARN 只打一次
 
 		// ----------------------------------------------------------------
 		//  小工具
@@ -1625,12 +1639,13 @@ namespace SAQ::Test
 		// ★ 第 56 轮：带上**驱动器版本串** —— 与 SWF 的 `stamp=` 同一个道理：日志里有没有
 		//   这一串，是「跑的是不是修好窗口 bug 的那版驱动器」的唯一判据（旧版会把
 		//   断言窗口起点清 0 ⇒ 假 PASS/假 FAIL）。
-		REX::INFO("harness：已启用（{} 个用例；驱动器 v62：主菜单自动读档（ini [Test] AutoLoad）"
-				  " + save.list / save.load（BGSSaveLoadManager 排队读档 + 加载静默期 + 通道重新就绪）"
+		REX::INFO("harness：已启用（{} 个用例；驱动器 v63：主菜单自动读档等主菜单稳定 {} ms 再排队"
+				  " + 排队失败侦测（回主菜单 ⇒ WARN） + save.list / save.load（BGSSaveLoadManager 排队读档"
+				  " + 加载静默期 + 通道重新就绪）"
 				  "（沿用：guide.probe / ~0x 参数写回 / 清场延迟复查 / 日志窗口按步保留 /"
 				  " 传送 20 秒窗口 / 落地静默期每 Tick 推进 / 加载画面证据 / 卡死自动中止））"
 				  " —— 等脚本通道就绪后自动开跑",
-			g_cases.size());
+			g_cases.size(), kAutoLoadMinMenuAgeMs);
 	}
 
 	namespace
@@ -1659,6 +1674,9 @@ namespace SAQ::Test
 			return true;
 		}
 
+		// ★★ 第 62 轮补②：排队后的结果侦测（定义在 TryAutoLoadFromMainMenu 之后）。
+		void NoteAutoLoadOutcome();
+
 		// ★★ 第 62 轮补：主菜单自动读档（见常量 kMainMenuName 的说明）。
 		//   返回 true = 本拍已经做过事（调用方直接 return）。
 		//   行为：只在「主菜单开着」（= 玩家在标题界面、世界还没加载）时动手；ini
@@ -1667,14 +1685,27 @@ namespace SAQ::Test
 		//   重试，最多 10 次；放弃时打一行 WARN 提示手动读档。
 		bool TryAutoLoadFromMainMenu()
 		{
+			// ★★ 第 62 轮补②：排队后的结果侦测 —— 与「还没排队」的流程分开，先跑
+			//   （它自带「只反映一次」的判据，见函数说明）。
 			if (g_autoLoadDone) {
+				NoteAutoLoadOutcome();
 				return false;
 			}
 			// 先查菜单（便宜），再读 ini（1 秒缓存）—— 不在主菜单时这一整个功能零开销。
 			if (!MenuIsOpen(kMainMenuName)) {
+				g_autoLoadMenuSeenMs = 0;  // 离开过主菜单 ⇒ 下次再来重新算「稳定」窗口
 				return false;
 			}
 			const auto now = NowMs();
+			// ★ 第 62 轮补②：主菜单**出现后先等 kAutoLoadMinMenuAgeMs**（见常量说明：
+			//   主菜单头几秒引擎还在初始化，过早排队会让读档请求压在初始化窗口上）。
+			if (g_autoLoadMenuSeenMs == 0) {
+				g_autoLoadMenuSeenMs = now;
+				return false;
+			}
+			if (now - g_autoLoadMenuSeenMs < kAutoLoadMinMenuAgeMs) {
+				return false;
+			}
 			if (now - g_autoLoadCheckMs < kAutoLoadRetryIntervalMs) {
 				return false;
 			}
@@ -1686,8 +1717,10 @@ namespace SAQ::Test
 			std::string detail;
 			if (QueueLoadSaveByName(target, detail)) {
 				g_autoLoadDone = true;
-				REX::INFO("harness：主菜单自动读档已排队 —— {}（游戏随后自动进入该存档，用例会自动开跑）",
-					detail);
+				g_autoLoadQueuedAtMs = now;
+				REX::INFO("harness：主菜单自动读档已排队（主菜单已稳定 {} ms）—— {}"
+						  "（游戏随后自动进入该存档，用例会自动开跑）",
+					now - g_autoLoadMenuSeenMs, detail);
 				return true;
 			}
 			if (++g_autoLoadAttempts <= kAutoLoadMaxAttempts) {
@@ -1703,6 +1736,36 @@ namespace SAQ::Test
 					kAutoLoadMaxAttempts, detail);
 			}
 			return true;
+		}
+
+		// ★★ 第 62 轮补②：自动读档**排队之后**的结果侦测（12:2x 实测补的现场判据）。
+		//
+		//   为什么需要：读档失败（引擎读完又退回主菜单）时，harness 只会安静地停在
+		//   「等脚本回写 2」—— 玩家看不出发生了什么（12:31 会话：12:32:05.598 主菜单
+		//   又出现、12:32:11 崩溃，日志里一个字都没有）。这里把它变成一行 WARN。
+		//
+		//   判据（为什么这三条）：
+		//     ① 排队后主菜单**关过** = 引擎真的开始处理这次排队（实测排队到关闭之间
+		//        可能隔着 ~30 秒 —— 引擎要等主菜单初始化完成，所以只看时间不够）；
+		//     ② 之后主菜单**又出现**，且命令通道从未就绪 ⇒ 读档没进世界（失败）；
+		//     ③ 通道已就绪 ⇒ 之前确实进过世界，后来回主菜单是玩家自己退出 —— 不报。
+		void NoteAutoLoadOutcome()
+		{
+			if (g_autoLoadOutcomeNoted || g_autoLoadQueuedAtMs == 0) {
+				return;
+			}
+			if (!MenuIsOpen(kMainMenuName)) {
+				g_autoLoadLeftMainMenu = true;
+				return;
+			}
+			if (!g_autoLoadLeftMainMenu || g_harnessReady) {
+				return;
+			}
+			g_autoLoadOutcomeNoted = true;
+			REX::WARN("harness：自动读档似乎失败了 —— 读档窗口结束后又回到主菜单，用例不会自动开跑"
+					  "（排队于 {} ms 前；若手动读同一个存档也退回主菜单，那是存档 / 引擎这次加载的问题，"
+					  "换一个存档名或用例文件里的 save.load 档位重试）",
+				NowMs() - g_autoLoadQueuedAtMs);
 		}
 	}
 

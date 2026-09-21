@@ -373,6 +373,9 @@ step = save.list
 step = guide.probe ~0x0008EBDC
 step = note === 排队读档：9/20 21:58 的现场存档（用户指定，唯一允许的存档）===
 step = save.load Save7_3AB5A2FA timeout=150000
+step = note === 第 62 轮补② 回归：读档窗口（上一步全程）不许出现「静态表（菜单关着时）预建」——
+step = note === 世界未就绪（主菜单 / LoadingMenu / FaderMenu）时例行认领与候选复算必须暂缓 ===
+step = assert.nolog 静态表已就绪（菜单关着时预建 scope=prev timeout=1000
 step = note === 读档后：存档列表 + 候选可得性（观察期现场记录）===
 step = save.list
 step = guide.probe ~0x0008EBDC
