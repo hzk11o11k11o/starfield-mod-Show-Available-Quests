@@ -1,4 +1,4 @@
-# Nexus 上传素材（v0.1.2）
+# Nexus 上传素材（v0.1.3）
 
 > 用途：复制下面内容到 Nexus 的 mod 页。Summary 填「名称/摘要」栏，
 > Description 填「描述」栏（Nexus 描述框可用 BBCode，纯文本换行也正常）。
@@ -124,6 +124,10 @@ Please include SFSE\Plugins\SAQ_ShowAvailableQuests.log, install method (MO2 / m
 
 ## 更新日志（Changelog）
 
+### v0.1.3（2026-09-21）
+- 修复：**读档过程中的一个稳定性问题** —— 极少数情况下，读档时插件仍在后台做例行刷新（查任务状态 / 校正导航目标），可能让读档失败退回主菜单，甚至导致游戏崩溃。现在**读档 / 加载画面期间会暂停这些后台工作**，读档完成后自动恢复（对正常游玩无任何影响）
+- 其它：内部测试与验证设施更新（不影响游戏内行为；发布包仍不包含任何测试代码）
+
 ### v0.1.2（2026-09-21）
 - 修复：极少数情况下关闭星图后它又被「残留的航线请求」重新弹开的问题
 - 修复：按 SET COURSE（R）后星图偶发被记为「第 2 次尝试」并重画航线焦点 —— 把重试等待窗口放宽到脚本实际应用时间，航线/焦点更稳定（玩家可见行为与 v0.1.1 基本一致）
@@ -145,7 +149,7 @@ Please include SFSE\Plugins\SAQ_ShowAvailableQuests.log, install method (MO2 / m
 
 | 项 | 说明 |
 | --- | --- |
-| 上传包 | `dist\SAQ-ShowAvailableQuests-0.1.2.zip`（由 `tools\package-saq.ps1` 生成；会先以发布构建重编 DLL —— 包里不含任何 harness/测试代码） |
+| 上传包 | `dist\SAQ-ShowAvailableQuests-0.1.3.zip`（由 `tools\package-saq.ps1` 生成；会先以发布构建重编 DLL —— 包里不含任何 harness/测试代码） |
 | 测试功能 | 包内**不含任何测试资产**（用例文件 / 结果 JSON），配置强制为「正常玩」的默认值（ini `[Test] Mode=0 / Harness=0`）；发布 DLL 不含 harness 编译 —— 由打包脚本 + `verify_saq_build.py` 三层校验把守 |
 | 版本号 | 三处一致：`plugin\xmake.lua`、`plugin\src\main.cpp`、`meta.ini` |
 | 依赖声明 | Nexus 上标注 SFSE 为必需依赖（版本 0.2.21+） |
