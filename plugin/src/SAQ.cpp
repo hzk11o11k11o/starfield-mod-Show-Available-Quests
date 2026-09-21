@@ -27,6 +27,7 @@
 #include "PCH.h"
 
 #include "SAQ.h"
+#include "SAQ_Decision.h"    // ★★ 第 64 轮（大项 K）：离线层决策纯函数（有单元测试）
 #include "SAQ_Guide.h"       // 引导通道（DLL ↔ ESM 的 GLOB ↔ SAQ_Main.psc）
 #include "SAQ_Masters.h"     // 「插件名 + 记录号」→ 运行期 FormID（DLC / 多 master）
 #include "SAQ_QuestCond.h"   // ★ 第 35 轮：进度门槛（「进度没到不显示」）
@@ -57,6 +58,7 @@
 
 #include <Windows.h>
 
+#include <algorithm>   // ★ 第 64 轮：std::min（候选池固定数组收集）
 #include <array>
 #include <atomic>
 #include <cstdint>
@@ -65,6 +67,7 @@
 #include <format>
 #include <fstream>
 #include <memory>
+#include <span>        // ★ 第 64 轮：离线层纯函数的输入（std::span）
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -384,6 +387,19 @@ namespace SAQ
 		//   也不在这场清单里。
 		// ------------------------------------------------------------------
 
+		// ★★ 第 64 轮（大项 K）：QuestRuntimeState → 离线层 RuntimeFlags
+		//   （「只挡已完成」的判据在 Decision::DecideRuntimeFilter，有单测）。
+		Decision::RuntimeFlags ToDecisionFlags(const QuestRuntimeState& a_state)
+		{
+			return Decision::RuntimeFlags{
+				.started = a_state.started,
+				.completed = a_state.completed,
+				.stopping = a_state.stopping,
+				.active = a_state.active,
+				.running = a_state.running,
+			};
+		}
+
 		// ★ 第 46 轮：候选池判定助手 —— 定义在下面的候选池区（`CandidateAt` 之后）。
 		//   ★ 第 47 轮改名 FirstCandidateNonPersistent（判据放宽），第 48 轮改回本名。
 		//   两处调用：① 这里的测试模式 6（筛「需要靠近」的任务）；② CollectAvailableQuests
@@ -392,20 +408,18 @@ namespace SAQ
 
 		bool PassesTestFilter(const StaticQuestInfo& a_info, int a_mode)
 		{
-			switch (a_mode) {
-			case 1:
-				return a_info.candCount != 0;   // ★ 第 45 轮：候选池代替旧的单目标字段
-			case 2:
-				return a_info.candCount == 0;
-			case 3:
-				return a_info.master != 0;
-			case 4:
-				return a_info.candCount != 0 && a_info.whereZh != nullptr && a_info.whereZh[0] != '\0';
-			case 6:
-				return AllCandidatesNonPersistent(a_info);   // ★ 第 46/48 轮：「需要靠近否则没反应」那一类
-			default:
-				return true;  // 0 / 未知值 = 不过滤
+			// ★ 第 64 轮（大项 K）：模式真值表移到离线层（Decision::PassesTestFilter，
+			//   有单测）；这里只把任务信息装成结构体。
+			//   注：needsApproach 只在模式 6 时计算（与抽取前的调用次数一致）。
+			Decision::TestFilterInput in{
+				.hasTarget = a_info.candCount != 0,   // ★ 第 45 轮：候选池代替旧的单目标字段
+				.isDlc = a_info.master != 0,
+				.hasNamedPlace = a_info.whereZh != nullptr && a_info.whereZh[0] != '\0',
+			};
+			if (a_mode == 6) {
+				in.needsApproach = AllCandidatesNonPersistent(a_info);
 			}
+			return Decision::PassesTestFilter(a_mode, in);
 			// 模式 5 不在这里处理：它在 CollectAvailableQuests 里让整段任务循环都不跑
 			// （只加入口条目），不依赖逐条判定。
 		}
@@ -849,7 +863,9 @@ namespace SAQ
 				//   分工修正：**「已接取」的判据只认玩家任务日志**（AS3 侧的 FilterKnownQuests，
 				//   用引擎推来的 QuestData 逐个比 uID）—— 那是显示层的权威数据。C++ 这层只挡
 				//   「已完成」：做过的任务不该再出现在「可接」里（可重复任务除外，见下一步计划）。
-				if (state.completed && state.vtableKnown) {
+				// ★ 第 64 轮（大项 K）：判据在离线层（Decision::DecideRuntimeFilter，有单测）。
+				if (Decision::DecideRuntimeFilter(ToDecisionFlags(state), state.vtableKnown) ==
+					Decision::RuntimeFilterVerdict::kHideCompleted) {
 					++hiddenByRuntime;
 					if (sampleCount < kMaxSamples) {
 						++sampleCount;
@@ -967,8 +983,9 @@ namespace SAQ
 
 			// 安全阀：虚表识别率太低 ⇒ 说明「0x114 这套判据在这台机器/这个版本上不成立」，
 			// 那就**不过滤**（只把证据写进日志），免得凭错误的对象把整个列表清空。
-			const auto recognizedPct = a_stats.live == 0 ? 100u : static_cast<unsigned>(a_stats.recognized * 100 / a_stats.live);
-			a_stats.filterApplied = recognizedPct >= 80;
+			// ★ 第 64 轮（大项 K）：识别率计算与 80 的门槛在离线层（有单测）。
+			a_stats.filterApplied = Decision::RuntimeFilterApplied(
+				Decision::RecognizedPct(a_stats.recognized, a_stats.live));
 			a_stats.hidden = a_stats.filterApplied ? hiddenByRuntime : 0;
 
 			// ★ 第 27 轮：追加「无限任务入口」（任务板）条目（见 AppendEntryRows）。
@@ -1372,7 +1389,10 @@ namespace SAQ
 		//   cell 未加载时这里也查不到（「原板」只在走进那个 cell 后才命中）。
 		// ==================================================================
 		// ★ 第 46 轮：候选 flags 的位定义（与 SAQ_QuestTable.h / gen_guide_targets.py 一致）。
-		constexpr std::uint8_t kGuideCandidatePersistent = 0x01;   // bit0 = 常驻引用
+		//   ★ 第 64 轮（大项 K）：位定义移到离线层（Decision::kCandidateFlagPersistent）。
+		//   候选池每条任务最多几个：生成器是「质量 top 6 + 最多 2 个常驻备胎」= 8，
+		//   这里放宽到 16（离线层 API 用固定数组收集，超限截断 —— 由 verify 的表检查兜底）。
+		constexpr std::size_t kMaxCandidatesPerQuest = 16;
 
 		const StaticGuideCandidate* CandidateAt(const StaticQuestInfo& a_info, std::uint8_t a_index)
 		{
@@ -1405,14 +1425,16 @@ namespace SAQ
 		// 第一候选：脚本会报状态 2，随后由换候选 / 等玩家靠近后的重发兜底。
 		std::uint8_t PickGuideCandidate(const StaticQuestInfo& a_info, bool& a_anyAlive)
 		{
-			a_anyAlive = false;
-			for (std::uint8_t i = 0; i < a_info.candCount; ++i) {
-				if (CandidateAlive(a_info, i)) {
-					a_anyAlive = true;
-					return i;
-				}
+			// ★ 第 64 轮（大项 K）：选择逻辑在离线层（Decision::PickCandidate，有单测）——
+			//   这里只做「逐个候选问引擎可得性」＋装数组。
+			bool alive[kMaxCandidatesPerQuest]{};
+			const auto n = std::min<std::size_t>(a_info.candCount, kMaxCandidatesPerQuest);
+			for (std::size_t i = 0; i < n; ++i) {
+				alive[i] = CandidateAlive(a_info, static_cast<std::uint8_t>(i));
 			}
-			return 0;
+			const auto pick = Decision::PickCandidate(std::span<const bool>(alive, n));
+			a_anyAlive = pick.anyAlive;
+			return pick.index;
 		}
 
 		// ★★ 第 46 轮（大项 B）／第 48 轮（定稿）：「需要靠近」判定 —— 这条任务的候选池里
@@ -1434,13 +1456,17 @@ namespace SAQ
 			if (a_info.candCount == 0) {
 				return false;  // 没有目标：那是「暂无导航目标」，与「需要靠近」是两回事
 			}
-			for (std::uint8_t i = 0; i < a_info.candCount; ++i) {
-				const auto* c = CandidateAt(a_info, i);
-				if (!c || (c->flags & kGuideCandidatePersistent) != 0) {
-					return false;  // 有任何一个常驻（或槽位异常）：保守判「不需要靠近」
-				}
+			// ★ 第 64 轮（大项 K）：判定在离线层（Decision::AllCandidatesNonPersistent，
+			//   有单测）—— 这里只收集候选 flags；槽位异常按「常驻」传入（保守）。
+			std::uint8_t flags[kMaxCandidatesPerQuest]{};
+			const auto n = std::min<std::size_t>(a_info.candCount, kMaxCandidatesPerQuest);
+			for (std::size_t i = 0; i < n; ++i) {
+				const auto* c = CandidateAt(a_info, static_cast<std::uint8_t>(i));
+				flags[i] = (!c || (c->flags & Decision::kCandidateFlagPersistent) != 0)
+					? Decision::kCandidateFlagPersistent
+					: 0;
 			}
-			return true;
+			return Decision::AllCandidatesNonPersistent(std::span<const std::uint8_t>(flags, n));
 		}
 
 		// ★ 第 45 轮：换候选（定义在下方 ReissueGuideIfScriptLost 之前）——
@@ -2750,7 +2776,9 @@ namespace SAQ
 			// ★ 第 11 轮修正：原来用 IsAlreadyEngaged（已开始 **或** 已完成）——「已开始」
 			//   会误伤 RAD05「全数到期」这类「引擎自启、玩家还没接」的任务：引导刚设上，
 			//   下次菜单一开就被这里自动取消。只有「已完成」是明确的「不再需要引导」。
-			if (!state.vtableKnown || !state.completed) {
+			//   ★ 第 64 轮（大项 K）：判据在离线层（Decision::IsCompletedConfirmed，
+			//   与「已完成 ⇒ 隐藏」同源、有单测）。
+			if (!Decision::IsCompletedConfirmed(ToDecisionFlags(state), state.vtableKnown)) {
 				return;
 			}
 			std::string detail;
@@ -2880,30 +2908,37 @@ namespace SAQ
 			// ★ 第 49 轮补丁：**降级要过观察期，升级立即执行**。
 			//   `best > candIndex` ⇔ 当前候选此刻取不到（best 只从可得的里挑，见 PickGuideCandidate）；
 			//   先保持通道不动，持续 kDowngradeHoldMs 仍取不到才换（依据见 kDowngradeHoldMs 注释）。
-			const bool currentAlive = anyAlive && best <= g_guide.candIndex;
-			if (!currentAlive) {
-				if (g_guide.downgradeSinceMs == 0) {
-					g_guide.downgradeSinceMs = now;
-					REX::INFO("候选复算：{}（0x{:08X}）当前候选 [{}]「{}」此刻取不到 —— 先保持"
-							  "（观察 {:.0f} 秒仍取不到才降级；读档 / 加载中常见）",
-						DisplayNameOf(g_guide.questFormID), g_guide.questFormID,
-						g_guide.candIndex + 1u, CandidateName(a_info, g_guide.candIndex),
-						static_cast<double>(kDowngradeHoldMs) / 1000.0);
-				}
-				if (!anyAlive || now - g_guide.downgradeSinceMs < kDowngradeHoldMs) {
-					return;  // 没有可降级的目标 / 观察期未满 ⇒ 通道保持不动
-				}
-			} else {
-				if (g_guide.downgradeSinceMs != 0) {
-					REX::INFO("候选复算：{}（0x{:08X}）当前候选 [{}]「{}」恢复可得 —— 观察结束（未降级）",
-						DisplayNameOf(g_guide.questFormID), g_guide.questFormID,
-						g_guide.candIndex + 1u, CandidateName(a_info, g_guide.candIndex));
-					g_guide.downgradeSinceMs = 0;
-				}
-				if (best == g_guide.candIndex) {
-					return;  // 已经是最优可得的
+			//   ★★ 第 64 轮（大项 K）：判据抽到**离线层**（Decision::DecideGuideRecalc，
+			//   有全组合单测）—— 这里按它给的动作执行副作用（日志 / 计时戳 / 换目标）。
+			const bool observing = g_guide.downgradeSinceMs != 0;
+			const bool observeElapsed =
+				observing && now - g_guide.downgradeSinceMs >= kDowngradeHoldMs;
+			const auto recalc = Decision::DecideGuideRecalc(
+				anyAlive, g_guide.candIndex, best, observing, observeElapsed);
+			if (recalc == Decision::GuideRecalcAction::kHoldIdle ||
+				recalc == Decision::GuideRecalcAction::kHoldObserving) {
+				return;  // 通道保持不动（已最优 / 观察中未满 / 没有任何可降级的目标）
+			}
+			if (recalc == Decision::GuideRecalcAction::kBeginObserve) {
+				g_guide.downgradeSinceMs = now;
+				REX::INFO("候选复算：{}（0x{:08X}）当前候选 [{}]「{}」此刻取不到 —— 先保持"
+						  "（观察 {:.0f} 秒仍取不到才降级；读档 / 加载中常见）",
+					DisplayNameOf(g_guide.questFormID), g_guide.questFormID,
+					g_guide.candIndex + 1u, CandidateName(a_info, g_guide.candIndex),
+					static_cast<double>(kDowngradeHoldMs) / 1000.0);
+				return;
+			}
+			if (recalc == Decision::GuideRecalcAction::kEndObserve ||
+				recalc == Decision::GuideRecalcAction::kEndObserveSwitch) {
+				REX::INFO("候选复算：{}（0x{:08X}）当前候选 [{}]「{}」恢复可得 —— 观察结束（未降级）",
+					DisplayNameOf(g_guide.questFormID), g_guide.questFormID,
+					g_guide.candIndex + 1u, CandidateName(a_info, g_guide.candIndex));
+				g_guide.downgradeSinceMs = 0;
+				if (recalc == Decision::GuideRecalcAction::kEndObserve) {
+					return;  // 恢复可得且已是最优 ⇒ 通道保持不动
 				}
 			}
+			// 到这里 = kEndObserveSwitch / kSwitchUpgrade / kSwitchDowngrade ⇒ 切换目标。
 			const auto bestID = CandidateFormID(a_info, best);
 			if (bestID == 0) {
 				return;

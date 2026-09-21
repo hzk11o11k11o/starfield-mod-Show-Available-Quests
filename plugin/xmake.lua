@@ -71,3 +71,31 @@ target("SAQ_ShowAvailableQuests", function()
         remove_files("src/SAQ_Test.cpp", "src/SAQ_TestOps.cpp")
     end
 end)
+
+-- ============================================================================
+--  ★★ 第 64 轮（大项 K）：**离线层单元测试** target。
+--
+--  只编译 src/SAQ_Decision.cpp + tests/*.cpp，**不链接 commonlibsf** ——
+--  毫秒级、零游戏：过滤 / 门槛 / 候选池 / 引导复算的决策组合在这里枚举断言
+--  （见 plugin/tests/SAQ_DecisionTests.cpp 顶部说明）；harness（引擎内用例）
+--  覆盖的是「引擎时序」，两者互补。
+--
+--  跑法（一键）：
+--      & ".\tools\test\run-decision-tests.ps1"
+--  或手动：
+--      cd plugin; xmake build SAQ_Tests; xmake run SAQ_Tests
+--
+--  说明：本 target 与 DLL target 共用 src/SAQ_Decision.cpp（同一份实现，
+--  不是复制品）—— 决策逻辑只有一处，测试测的就是产品用的那份。
+-- ============================================================================
+target("SAQ_Tests", function()
+    set_kind("binary")
+    -- 不参与默认构建：build-saq.ps1 显式构建 SAQ_ShowAvailableQuests，
+    -- 不受影响；要跑测试显式 `xmake build SAQ_Tests` / `xmake test`。
+    set_default(false)
+    set_languages("c++23")
+    set_encodings("utf-8")
+    add_files("src/SAQ_Decision.cpp", "tests/SAQ_DecisionTests.cpp")
+    add_includedirs("src", "tests")
+    add_tests("default")
+end)

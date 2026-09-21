@@ -2,6 +2,8 @@
 
 #include "SAQ_QuestState.h"
 
+#include "SAQ_Decision.h"   // ★ 第 64 轮（大项 K）：位推导（DeriveRuntimeFlags）
+
 #include "RE/T/TESForm.h"
 
 #include <Windows.h>
@@ -23,11 +25,8 @@ namespace SAQ
 		// 实测（rtti_slots.py）主虚表是 0x4BD80D8，次要是 0x4BD8410。
 		constexpr std::array<std::uintptr_t, 2> kTesQuestVtables{ 0x4BD80D8, 0x4BD8410 };
 
-		// 位含义（IsXxx 的实现反汇编结论）
-		constexpr std::uint32_t kFlagStarted = 1u << 0;
-		constexpr std::uint32_t kFlagCompleted = 1u << 1;
-		constexpr std::uint32_t kFlagStopping = 1u << 7;
-		constexpr std::uint32_t kFlagActive = 1u << 11;
+		// ★ 第 64 轮（大项 K）：标志位定义与推导公式移到离线层
+		//   （SAQ_Decision.h 的 kFlag* / DeriveRuntimeFlags —— 有全组合单元测试）。
 
 		struct RawFields
 		{
@@ -79,12 +78,19 @@ namespace SAQ
 			}
 		}
 
-		state.started = (raw.flags & kFlagStarted) != 0;
-		state.completed = (raw.flags & kFlagCompleted) != 0;
-		state.stopping = (raw.flags & kFlagStopping) != 0;
-		state.active = (raw.flags & kFlagActive) != 0;
-		// IsRunning 的完整判据：开始位 && 不在停止位 && 没有排队的启动数据 && 没有过渡标志
-		state.running = state.started && !state.stopping && raw.startPending == 0 && raw.stopFlag == 0;
+		// ★ 第 64 轮（大项 K）：位推导在离线层（Decision::DeriveRuntimeFlags）——
+		//   位含义（bit0/1/7/11）与 IsRunning 的完整判据在那里有全组合单元测试；
+		//   这里只负责「把字段读出来」。
+		const auto f = Decision::DeriveRuntimeFlags(Decision::RawQuestFields{
+			.flags = raw.flags,
+			.startPending = raw.startPending,
+			.stopFlag = raw.stopFlag,
+		});
+		state.started = f.started;
+		state.completed = f.completed;
+		state.stopping = f.stopping;
+		state.active = f.active;
+		state.running = f.running;
 
 		return state;
 	}

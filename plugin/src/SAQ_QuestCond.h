@@ -20,21 +20,16 @@
 #include <cstdint>
 #include <string>
 
+#include "SAQ_Decision.h"   // ★ 第 64 轮（大项 K）：三态 / 聚合结果类型来自离线层
+
 namespace SAQ
 {
-	enum class CondVerdict : std::uint8_t
-	{
-		kNoGates = 0,  // 没有门槛（condCount == 0）⇒ 正常显示
-		kPass,         // 有门槛且全部为真 ⇒ 显示
-		kFail,         // 有门槛且有假（进度没到）⇒ 隐藏
-		kUnknown,      // 求值不了 ⇒ 放行（保守）
-	};
-
-	struct CondEvalResult
-	{
-		CondVerdict verdict{ CondVerdict::kNoGates };
-		std::string detail;  // kFail / kUnknown 时给日志的简短说明
-	};
+	// ★★ 第 64 轮（大项 K）：三态枚举与求值结果类型移到**离线层**（SAQ_Decision.h）——
+	//   「一串三态怎么变成显示 / 隐藏 / 放行」的**聚合**语义在那里被单元测试钉死
+	//   （plugin/tests/SAQ_DecisionTests.cpp 的真值表 / 组合矩阵）；
+	//   本文件只负责**逐条查引擎**（LookupByID / IsStageDone / 读运行时状态）。
+	using CondVerdict = Decision::CondVerdict;
+	using CondEvalResult = Decision::GateDecision;
 
 	// a_condBegin / a_condCount 来自 StaticQuestInfo（kQuestConds[] 的切片）。
 	// 只在主线程调用（读引擎对象）。失败不清空缓存，无副作用。
@@ -54,5 +49,7 @@ namespace SAQ
 	//   * 切片越界等结构性异常 ⇒ kUnknown（放行）。
 	// 设计依据（为什么只收「入口类 + 中性类」对话、为什么忽略无事件条件的对话）
 	// 见 tools/esm/analyze_info_gates.py 头注释与 docs/08。
+	// ★ 第 64 轮（大项 K）：本函数只做「逐组求值」（组内短路），**组间聚合**在
+	//   Decision::DecideInfoGates（离线层，有单测）。
 	CondEvalResult EvaluateInfoGates(std::uint32_t a_groupBegin, std::uint8_t a_groupCount);
 }

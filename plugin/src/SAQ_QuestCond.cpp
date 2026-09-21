@@ -14,6 +14,7 @@
 #include <array>
 #include <cstddef>
 #include <format>
+#include <vector>
 
 namespace SAQ
 {
@@ -69,9 +70,11 @@ namespace SAQ
 		}
 
 		// 单条条件求值（进度门槛与 INFO 门槛共用）。
-		CondEvalResult EvalOneCond(const StaticCondGate& a_g)
+		// ★ 第 64 轮（大项 K）：产出离线层的 CondCheck（三态 + 说明）——
+		//   怎么把一串三态变成显示 / 隐藏 / 放行走 Decision（有单测），这里只管查引擎。
+		Decision::CondCheck EvalOneCond(const StaticCondGate& a_g)
 		{
-			CondEvalResult out;
+			Decision::CondCheck out;
 			const auto fid = Masters::MakeFormID(a_g.questMaster, a_g.questLocal);
 			const auto* form = fid ? RE::TESForm::LookupByID(fid) : nullptr;
 			if (!form) {
@@ -132,14 +135,15 @@ namespace SAQ
 			return out;
 		}
 
+		// ★ 第 64 轮（大项 K）：逐条求值（只读查询）→ **聚合**交给离线层纯函数
+		//   （Decision::DecideProgressGates —— 一条非 pass 即返回的语义与抽取前一致，
+		//   有单测）。与抽取前的唯一差别：求值阶段不再短路（多查几条只读条件，无副作用）。
+		std::vector<Decision::CondCheck> checks;
+		checks.reserve(a_condCount);
 		for (std::size_t i = 0; i < a_condCount; ++i) {
-			const auto r = EvalOneCond(kQuestConds[a_condBegin + i]);
-			if (r.verdict != CondVerdict::kPass) {
-				return r;  // kFail = 进度没到；kUnknown = 求值不了 ⇒ 放行
-			}
+			checks.push_back(EvalOneCond(kQuestConds[a_condBegin + i]));
 		}
-		out.verdict = CondVerdict::kPass;
-		return out;
+		return Decision::DecideProgressGates(checks, 0, static_cast<std::uint8_t>(checks.size()));
 	}
 
 	CondEvalResult EvaluateInfoGates(std::uint32_t a_groupBegin, std::uint8_t a_groupCount)
@@ -154,36 +158,33 @@ namespace SAQ
 			return out;
 		}
 
-		std::string firstFail;  // 第一条「已知为假」的条件描述（隐藏时给日志）
+		// ★ 第 64 轮（大项 K）：逐组求值（**组内短路**：找第一条 kFail 即停；某组没有
+		//   kFail ⇒ 该对话可能可用 ⇒ 后面的组也不必求值了）→ **组间聚合**交给离线层
+		//   纯函数（Decision::DecideInfoGates，有单测）。
+		std::vector<Decision::InfoGroupEval> evals;
+		evals.reserve(a_groupCount);
 		for (std::size_t i = 0; i < a_groupCount; ++i) {
 			const auto& grp = kInfoGroups[a_groupBegin + i];
 			if (grp.condBegin > kInfoCondCount || grp.condCount > kInfoCondCount - grp.condBegin) {
-				out.verdict = CondVerdict::kUnknown;
-				out.detail = "INFO 条件切片越界";
-				return out;
+				evals.push_back(Decision::InfoGroupEval{ .inRange = false });
+				break;  // 切片越界 ⇒ 整条 kUnknown（后面不用求值了）
 			}
-			bool knownFalse = false;
+			Decision::InfoGroupEval ev;
 			for (std::size_t j = 0; j < grp.condCount; ++j) {
 				const auto r = EvalOneCond(kInfoConds[grp.condBegin + j]);
 				if (r.verdict == CondVerdict::kFail) {
-					knownFalse = true;
-					if (firstFail.empty()) {
-						firstFail = r.detail;
-					}
+					ev.hasKnownFalse = true;
+					ev.firstFail = r.detail;
 					break;
 				}
 				// kPass / kUnknown 都继续：unknown 不算「已知为假」（保守 —— 可能可用）。
 			}
-			if (!knownFalse) {
-				// 这一条对话「没有已知为假的条件」⇒ 可能可用 ⇒ 这条任务不隐藏。
-				out.verdict = CondVerdict::kPass;
-				return out;
+			const bool possible = !ev.hasKnownFalse;
+			evals.push_back(std::move(ev));
+			if (possible) {
+				break;  // 这条对话可能可用 ⇒ 最终 kPass（与抽取前一致：不再求后面的组）
 			}
 		}
-
-		// 全部对话都至少有「一条已知为假」的条件 ⇒ 进度没到。
-		out.verdict = CondVerdict::kFail;
-		out.detail = firstFail.empty() ? "全部对话的条件都为假" : firstFail;
-		return out;
+		return Decision::DecideInfoGates(evals);
 	}
 }

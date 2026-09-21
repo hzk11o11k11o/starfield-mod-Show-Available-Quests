@@ -1,0 +1,45 @@
+{
+  "note": "数据管线黄金快照（tools/test/golden_snapshot.py 生成；有意的变更请 --update 并审查 diff）",
+  "items": {
+    "ref/ctda_gates.json": {
+      "desc": "进度门槛数据（analyze_ctda.py）",
+      "sha256": "cd788e1dd36a877202a68cc7d19ef07d36489846e47d24eaacd136aa8dc3b177",
+      "summary": "任务 9 / 条件 11"
+    },
+    "ref/info_gates_final.json": {
+      "desc": "INFO 门槛数据（analyze_info_gates.py）",
+      "sha256": "c7b39b0d9c5df297abe1363fbbee98f5b06f16f431b2d96b64c848cbe974b4d5",
+      "summary": "任务 60 / 对话 290 / 条件 341"
+    },
+    "ref/guide_targets.json": {
+      "desc": "引导目标候选池（gen_guide_targets.py）",
+      "sha256": "874c2e779295c899180fef84787a0fa53d20e18370475cdcbe418d74e7bacd75",
+      "summary": "任务 209 / 候选 931"
+    },
+    "ref/entry_targets.json": {
+      "desc": "任务板入口表（gen_entry_table.py）",
+      "sha256": "e93795583ebd56477df6cd53ca9786a4f3ab45594a65a16b939ea31018c82f00",
+      "summary": "条目 12"
+    },
+    "ref/board_markers.json": {
+      "desc": "新建常驻 marker（create_board_markers.py）",
+      "sha256": "5ccd9ff18379fc37abd2804edc8b1321500ab837428ef5d620a06f87306cd52d",
+      "summary": "marker 11"
+    },
+    "plugin/src/SAQ_QuestTable.h": {
+      "desc": "静态任务表（gen_quest_table.py，DLL 编译进去）",
+      "sha256": "00161be608a980ee875ff0705a1992a6fdaaba67850619d21b7625298971f036",
+      "summary": "任务 261 / 候选 931 / 进度门槛 9 / INFO对话 290 / INFO条件 341"
+    },
+    "plugin/src/SAQ_EntryTable.h": {
+      "desc": "入口条目表（gen_entry_table.py，DLL 编译进去）",
+      "sha256": "3962590fc7d88ab2b69072d29a293ad138f411f21c2fc2afe5febb6ec9d4410a",
+      "summary": "入口 12"
+    },
+    "esm/SAQ_ShowAvailableQuests.esm": {
+      "desc": "代理任务 ESM（patch_saq_esm.py 等，幂等补丁）",
+      "sha256": "b8c31bb50fcf687876391b9ca22f3b573c13aa779753466994c499aaff67575a",
+      "summary": "3947 B"
+    }
+  }
+}
