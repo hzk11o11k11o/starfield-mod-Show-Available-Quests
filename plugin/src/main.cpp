@@ -152,6 +152,16 @@ SFSE_PLUGIN_LOAD(const SFSE::LoadInterface* a_sfse)
 
 	REX::INFO("SAQ_ShowAvailableQuests v0.1.5 loading (SFSE build {})", SFSE::GetSFSEVersion());
 
+	// ★★ 第 84 轮（自动测试二跑复查）：结果 JSON 因**一处非法 UTF-8** 整体读不出来
+	//   （`check_results.py` 退出码 2 —— 判据通道失效，比单条用例 FAIL 严重得多）。
+	//   真因 = 日志/结果里的两处字节级截断/抄录：
+	//     ① `UI::EscapeForLog` 截「界面状态」报告时切在多字节字符中间；
+	//     ② 指针诊断的 RTTI 抄录把随机字节原样写进日志（含控制字符）。
+	//   两处都已修（截断走 `Decision::Utf8SafeCut` + RTTI 只留可打印 ASCII）。
+	//   这一行是**实机判据**：日志里出现它 ⇒ 跑的是第 84 轮之后的 DLL
+	//   （同时被 verify 当 DLL 特征串检查）。
+	REX::INFO("证据通道：日志/结果截断按 UTF-8 字符边界（第 84 轮）—— 不会再写入非法 UTF-8 字节");
+
 	if (auto* messaging = SFSE::GetMessagingInterface()) {
 		messaging->RegisterListener(OnMessage);
 	} else {

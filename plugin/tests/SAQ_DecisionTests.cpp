@@ -478,6 +478,80 @@ MT_TEST(测试过滤_模式真值表)
 	MT_CHECK_EQ(PassesTestFilter(6, TestFilterInput{}), false);
 }
 
+// ---------------------------------------------------------------- 8. UTF-8 安全截断
+//
+// 第 84 轮（自动测试二跑复查）：结果 JSON 解不出来（一处非法 UTF-8）⇒ 判据通道
+// 整体失效。真因 = 日志截断按字节切、切在多字节字符中间。这里把切点的边界语义
+// 枚举钉死（含反向验证：任何上限下切点都落在字符边界上）。
+
+namespace
+{
+	// true = a_text 的前 a_len 字节正好是若干个完整的 UTF-8 字符。
+	bool CutOnCharBoundary(std::string_view a_text, std::size_t a_len)
+	{
+		std::size_t i = 0;
+		while (i < a_len && i < a_text.size()) {
+			const auto b = static_cast<unsigned char>(a_text[i]);
+			if ((b & 0x80u) == 0) {
+				i += 1;
+			} else if ((b & 0xE0u) == 0xC0u) {
+				i += 2;
+			} else if ((b & 0xF0u) == 0xE0u) {
+				i += 3;
+			} else {
+				i += 4;
+			}
+		}
+		return i == a_len;
+	}
+}
+
+MT_TEST(UTF8截断_切点绝不落在多字节字符中间)
+{
+	// 基线：上限 0 = 不截断；上限 ≥ 原长 = 不截断
+	MT_CHECK_EQ(Utf8SafeCut("abc", 0), std::size_t{ 3 });
+	MT_CHECK_EQ(Utf8SafeCut("abc", 10), std::size_t{ 3 });
+	MT_CHECK_EQ(Utf8SafeCut("", 5), std::size_t{ 0 });
+	MT_CHECK_EQ(Utf8SafeCut("abcdef", 3), std::size_t{ 3 });
+	MT_CHECK_EQ(Utf8SafeCut("abcdef", 6), std::size_t{ 6 });
+
+	// 3 字节汉字：`中文` = 6 字节 —— 切在第二个字中间 ⇒ 回退到 3
+	constexpr std::string_view zh = "中文";
+	MT_CHECK_EQ(zh.size(), std::size_t{ 6 });
+	MT_CHECK_EQ(Utf8SafeCut(zh, 5), std::size_t{ 3 });
+	MT_CHECK_EQ(Utf8SafeCut(zh, 4), std::size_t{ 3 });
+	MT_CHECK_EQ(Utf8SafeCut(zh, 3), std::size_t{ 3 });
+	MT_CHECK_EQ(Utf8SafeCut(zh, 2), std::size_t{ 0 });  // 切在第一个字中间 ⇒ 0
+	MT_CHECK_EQ(Utf8SafeCut(zh, 1), std::size_t{ 0 });
+
+	// 混合：`a中` = 1 + 3 字节
+	constexpr std::string_view mix = "a中";
+	MT_CHECK_EQ(mix.size(), std::size_t{ 4 });
+	MT_CHECK_EQ(Utf8SafeCut(mix, 3), std::size_t{ 1 });
+	MT_CHECK_EQ(Utf8SafeCut(mix, 2), std::size_t{ 1 });
+	MT_CHECK_EQ(Utf8SafeCut(mix, 1), std::size_t{ 1 });
+
+	// 4 字节字符（U+1F600）：`ab` + 4 字节 = 6 字节
+	constexpr std::string_view emo = "ab\xF0\x9F\x98\x80";
+	MT_CHECK_EQ(emo.size(), std::size_t{ 6 });
+	MT_CHECK_EQ(Utf8SafeCut(emo, 5), std::size_t{ 2 });
+	MT_CHECK_EQ(Utf8SafeCut(emo, 3), std::size_t{ 2 });
+	MT_CHECK_EQ(Utf8SafeCut(emo, 6), std::size_t{ 6 });
+
+	// ★ 反向验证：真实文案（含中文 + 全角括号 + 箭头），所有上限下
+	//   ① 不超过上限；② 正好落在字符边界；③ 回退不超过一个字符（尽量贴近上限）。
+	const std::string line = "任务板 · 赛多尼亚（0x001DF853）→ 引用";
+	for (std::size_t cap = 0; cap <= line.size() + 2; ++cap) {
+		const std::size_t cut = Utf8SafeCut(line, cap);
+		MT_CHECK(cut <= line.size());
+		MT_CHECK(CutOnCharBoundary(line, cut));
+		if (cap != 0 && line.size() > cap) {
+			MT_CHECK(cut <= cap);
+			MT_CHECK(cut + 4 > cap);
+		}
+	}
+}
+
 // ----------------------------------------------------------------
 
 int main()

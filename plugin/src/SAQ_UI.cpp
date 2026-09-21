@@ -6,6 +6,10 @@
 //   （SAQ_Guide.cpp 的 GLOB 认领）——所以这里读它。EnsureChannel 有缓存，开销只是一次读。
 #include "SAQ_Guide.h"
 
+// ★★ 第 84 轮：`Decision::Utf8SafeCut` —— 日志/结果里的截断必须按字符边界
+//   （旧实现按字节切，实测把「追踪者联盟」切成 `追踪` + 半个 `者` ⇒ 结果 JSON 非法）。
+#include "SAQ_Decision.h"
+
 #include "RE/B/BSFixedString.h"
 #include "RE/I/IMenu.h"
 // 注意 include 顺序：ASMovieRootBase.h 不自包含（Value/Movie/FunctionHandler 都要先有），
@@ -222,10 +226,17 @@ namespace SAQ::UI
 				const auto td = ModuleBase() + static_cast<std::uintptr_t>(static_cast<std::uint32_t>(tdRva));
 				const auto* name = reinterpret_cast<const char*>(td + 0x10);  // MSVC：TD 的名字在 +0x10
 				for (std::size_t i = 0; i + 1 < sizeof(a_out); ++i) {
-					a_out[i] = name[i];
-					if (name[i] == '\0') {
+					const char raw = name[i];
+					if (raw == '\0') {
 						return true;
 					}
+					// ★★ 第 84 轮：只保留可打印 ASCII —— MSVC 修饰名本来就只有这些字符。
+					//   旧实现直接抄字节：指针误判（候选偏移刚好指着随机数据）时，读到的
+					//   乱码进了日志 —— 实测日志里出现 `0x160->H…`（非法 UTF-8，结果 JSON
+					//   因此整体不可解析）和控制字符（把一行诊断劈成好几行）。
+					//   非可打印字节换成 `.`（保留「这里有个字节」的信息量，且人眼可读）。
+					const auto b = static_cast<unsigned char>(raw);
+					a_out[i] = (b >= 0x20u && b < 0x7Fu) ? raw : '.';
 				}
 				a_out[sizeof(a_out) - 1] = '\0';
 				return true;
@@ -796,21 +807,29 @@ namespace SAQ::UI
 		// 日志转义：探针/回报读回来的字符串里带 \n \t（载荷本身就是多行的），
 		// 原样写进日志会把一行日志劈成好几行（第 7 轮日志就是三行拼一行），
 		// 这里统一转成可见的 \n \r \t。
+		//
+		// ★★ 第 84 轮修（自动测试二跑实证）：截断原来**按输出字节**数
+		//   （`out.size() >= a_maxLen`），会把多字节汉字切成半个 —— 实测结果 JSON 里
+		//   出现 `追踪` + `者` 的首字节 `0xE8` + `…`（非法 UTF-8）⇒ `check_results.py`
+		//   解码结果文件时当场抛错、22 条用例的结果一条也读不出来（判据通道失效）。
+		//   现在：① 截断走 `Decision::Utf8SafeCut`（切点回退到字符首字节 —— 绝不会
+		//   切出坏字节）；② 上限按**输入**字节数算（转义膨胀不再撞上限）。
 		std::string EscapeForLog(std::string_view a_text, std::size_t a_maxLen = 0)
 		{
+			const std::size_t take = Decision::Utf8SafeCut(a_text, a_maxLen);
+			const bool clipped = take < a_text.size();
 			std::string out;
-			out.reserve(a_text.size() + 8);
-			for (const char ch : a_text) {
-				if (a_maxLen && out.size() >= a_maxLen) {
-					out += "…";
-					break;
-				}
-				switch (ch) {
+			out.reserve(take + 8);
+			for (std::size_t i = 0; i < take; ++i) {
+				switch (a_text[i]) {
 				case '\n': out += "\\n"; break;
 				case '\r': out += "\\r"; break;
 				case '\t': out += "\\t"; break;
-				default: out += ch; break;
+				default: out += a_text[i]; break;
 				}
+			}
+			if (clipped) {
+				out += "…";
 			}
 			return out;
 		}
@@ -1250,7 +1269,10 @@ namespace SAQ::UI
 		// SAQ_Report 一次给出「解析几条/过滤后几条/列表几条/掩码/选中 tab/语言/标题」，
 		// 从此这一层在日志里就能闭环（SWF 还是旧版时会显示 fail，也能一眼看出）。
 		// ★ 第 19 轮：400 → 900（报告里现在还有 drop= 被过滤名单，别把它截掉）。
-		const std::string report = EscapeForLog(CallAs3NoArg(root, "_root.SAQ_Report"), 900);
+		// ★★ 第 84 轮：900 → 1500 —— 第 65/74/75/80 轮又往报告里加了
+		//   icon= / order= / pin= / rep= 探针，900 字节实测会在 qdata 名单中间截断
+		//   （qdata/drop 是「某条任务为什么没显示」的第一手证据，最不该被截）。
+		const std::string report = EscapeForLog(CallAs3NoArg(root, "_root.SAQ_Report"), 1500);
 
 		// 先把解析信息留一份 —— 失败时下面会 Reset()，缓存里的 detail 会被清掉。
 		const std::string bridgeDetail = bridge.detail;
@@ -1290,7 +1312,7 @@ namespace SAQ::UI
 		if (raw.find("=fail") != std::string::npos) {
 			return false;  // 路径不存在 / 调用失败（SWF 旧版或桥在换代的中间态）
 		}
-		a_report = EscapeForLog(raw, 900);  // ★ 第 19 轮：400 → 900（drop= 名单别被截掉）
+		a_report = EscapeForLog(raw, 1500);  // ★ 第 19 轮：400 → 900；★★ 第 84 轮：→ 1500（同上）
 		return true;
 	}
 

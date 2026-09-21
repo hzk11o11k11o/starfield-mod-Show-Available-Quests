@@ -1441,7 +1441,8 @@ def main() -> int:
                 # ★★ 第 80 轮（可重复 NPC 入口）：r80 用例的三条判据 ——
                 #   ① DLL 两类计数（`入口条目表=20 条（任务板 12 + 可重复 NPC 8）`）；
                 #   ② 界面 `rep=` 探针（8 条 + 名字前缀「（可重复）」进了载荷/解析）；
-                #   ③ 点邓肯·林奇 ⇒ 引导目标 = 新建常驻 marker（NPC marker 的实机判据）。
+                #   ③ 点邓肯·林奇 ⇒ 引导目标 = **精确目标**（第 84 轮改判：原板 / marker
+                #      二选一 —— 见下面的说明）。
                 #   ★★ 第 83 轮修正（22:52 会话这条断言的唯一 FAIL）：产品那行是**全角**
                 #      `（…）`，用例原来写成半角转义 `\)` ⇒ 正则合法但**永不匹配**；
                 #      同时把窗口从 `scope=prev` 改成 `scope=case`（该行由 menu.open 同一次
@@ -1452,9 +1453,21 @@ def main() -> int:
                 all_ok &= check("用例计划 · r80 界面 rep= 探针断言（8 条 + 名字前缀）",
                                 plan_text.encode(),
                                 "assert.ui rep=\\[8\\|0x214684=（可重复）贸易管理局 · 邓肯·林奇".encode())
-                all_ok &= check("用例计划 · r80 引导落常驻 marker 断言",
+                #   ★★ 第 84 轮改判（06:11 会话这条是唯一 FAIL，产品全对）：实测产品落
+                #      「**任务板自身（精确）**」（引用 0x00214684 = NPC 本人）—— 候选链
+                #      是「精确优先」（① 条目引用自身 → ② 新建常驻 marker；第 31 轮起），
+                #      而 8 位 NPC 是活体引用、运行期可得（同一会话
+                #      `入口=20(可导航 20｜marker 10 原板 10 兜底 0 不可用 0)` 从头恒定）
+                #      ⇒ 落原板比 marker 更精确、更好。旧断言写死 marker = 假 FAIL。
+                #      ⇒ 判据放宽为「**精确目标二选一**（原板 / marker；兜底才是异常）」；
+                #      marker 链路仍由 `入口=…(marker N…兜底 0 不可用 0)` 覆盖（r47 的断言）。
+                all_ok &= check("用例计划 · r80 精确目标二选一断言（原板 / marker）",
                                 plan_text.encode(),
-                                "assert.log 引导请求：（可重复）贸易管理局 · 邓肯·林奇.*新建常驻 marker（精确）".encode())
+                                "林奇.*(任务板自身（精确）|新建常驻 marker（精确）)".encode())
+                bad_old = "林奇.*新建常驻 marker（精确） scope=prev" in plan_text
+                print(("MISS" if bad_old else "OK  ") +
+                      " 用例计划 · r80 旧「必须 marker」写法已放宽(反向检查)")
+                all_ok &= not bad_old
                 # ★★ 第 81 轮（地球地标任务）：r81 用例的三条判据 ——
                 #   ① 阿波罗地标任务能选中（条目真的进了列表）；
                 #   ② 按 R ⇒ 引导落**第 2 候选 = 同 cell 常驻兜底 0x0008C3E8**
@@ -1491,6 +1504,37 @@ def main() -> int:
         all_ok &= check("DLL · 星图残留请求回收", blob,
                         "防残留的星图请求在星图关闭后再执行一次".encode())
         all_ok &= check("DLL · 星图重试等待窗口文案", blob, "后仍没有才考虑换候选重试".encode())
+        # ★★ 第 84 轮（06:11 会话复查：22 条用例 21 PASS / 1 FAIL，唯一 FAIL 在用例侧、
+        #   产品全对；但新发现一个**更严重的问题** —— 结果 JSON 含非法 UTF-8 ⇒
+        #   `check_results.py` 退出码 2，22 条用例的结果一条也读不出来 = 判据通道失效）：
+        #   ① 产品（DLL，两种构建里都在 ⇒ 不能放进 HARNESS_STRINGS —— 那是发布模式的
+        #      反向检查表，放进去会被误判「发布包里带测试代码」）：
+        #      · 日志/结果的截断改走 `Decision::Utf8SafeCut`（切点回退到字符首字节）——
+        #        实测 `EscapeForLog(报告, 900)` 把「追踪者联盟」切成 `追踪` + 半个 `者`；
+        #        「界面状态」报告上限同时 900 → 1500（icon=/order=/pin=/rep= 探针后，
+        #        900 字节会在 qdata 名单中间截断）；
+        #      · 指针诊断的 RTTI 抄录只留可打印 ASCII（旧实现把随机字节写进日志：
+        #        非法 UTF-8 + 控制字符把一行诊断劈成好几行）。
+        #      下面这行是**启动自检串**：实机日志出现它 ⇒ 跑的是第 84 轮之后的 DLL。
+        all_ok &= check("DLL · 证据通道自检串（第 84 轮）", blob,
+                        "证据通道：日志/结果截断按 UTF-8 字符边界（第 84 轮）".encode())
+        #   ② 判据通道的工具/单测（文件级检查 —— 「修了但没提交/没同步」也能挡住）：
+        #      · 结果检查器的非法 UTF-8 容错（一处坏字节不再让整份报告读不出来）；
+        #      · 离线层单测覆盖 `Utf8SafeCut`（切点边界语义，毫秒级可回归）。
+        tool_src = ROOT / "tools/test/check_results.py"
+        if tool_src.exists():
+            all_ok &= check("结果检查器 · 非法 UTF-8 容错（errors=replace）",
+                            tool_src.read_bytes(), b'errors="replace"')
+        else:
+            print(f"MISS 缺少 {tool_src}")
+            all_ok = False
+        tests_src = ROOT / "plugin/tests/SAQ_DecisionTests.cpp"
+        if tests_src.exists():
+            all_ok &= check("离线层单测 · UTF-8 截断用例（Utf8SafeCut）",
+                            tests_src.read_bytes(), b"Utf8SafeCut")
+        else:
+            print(f"MISS 缺少 {tests_src}")
+            all_ok = False
         # ★★ 第 79 轮（名单截断留痕 —— r77 的「领先一步」断言不可达的真因）：
         #   四个名单（进度 / INFO / 链式 / 隐藏）此前把超出打印上限（kMaxSamples = 40）
         #   的条目**静默丢弃** ⇒ 日志里「被藏」看起来像「没被藏」（本次会话

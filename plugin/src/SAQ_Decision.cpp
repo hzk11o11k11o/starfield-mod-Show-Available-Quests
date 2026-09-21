@@ -15,6 +15,8 @@
 //      AllCandidatesNonPersistent ← SAQ.cpp 同名函数
 //      DecideGuideRecalc       ← SAQ.cpp::UpdateQuestGuideTarget 的判据部分
 //      PassesTestFilter        ← SAQ.cpp::PassesTestFilter（换成结构体输入）
+//      Utf8SafeCut             ← ★ 第 84 轮：SAQ_UI.cpp::EscapeForLog 的字节截断
+//                                 （修「切在多字节字符中间 ⇒ 非法 UTF-8」）
 // ============================================================================
 
 #include "SAQ_Decision.h"
@@ -298,5 +300,20 @@ namespace SAQ::Decision
 			return true;  // 0 / 未知值 = 不过滤
 			// 模式 5 不在这里处理：它在 CollectAvailableQuests 里让整段任务循环不跑。
 		}
+	}
+
+	// ---------------------------------------------------------------- 6. UTF-8 安全截断
+
+	std::size_t Utf8SafeCut(std::string_view a_text, std::size_t a_maxBytes)
+	{
+		if (a_maxBytes == 0 || a_text.size() <= a_maxBytes) {
+			return a_text.size();
+		}
+		std::size_t cut = a_maxBytes;
+		// UTF-8 续字节 = 10xxxxxx：切点落在续字节上 ⇒ 正在切一个多字节字符 ⇒ 左移。
+		while (cut > 0 && (static_cast<unsigned char>(a_text[cut]) & 0xC0u) == 0x80u) {
+			--cut;
+		}
+		return cut;
 	}
 }

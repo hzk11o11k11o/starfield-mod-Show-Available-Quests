@@ -41,12 +41,30 @@ def main() -> int:
         print("（harness 只在 ini [Test] Harness=1 且用例跑完后才写它；"
               "也可能是游戏还没跑到那一步。）")
         return 2
+    # ★★ 第 84 轮：非法 UTF-8 不再让**整份报告**读不出来。
+    #   实测（06:11 会话）：DLL 把「界面状态」行按字节截断到 900 —— 正好切在
+    #   「追踪者联盟」的「者」中间（`追踪` + 0xE8 + `…`）⇒ 这一处坏字节被抄进结果
+    #   JSON ⇒ `json.loads` 前的解码抛错 ⇒ 22 条用例的结果一条也读不出（退出码 2，
+    #   比任何单条 FAIL 都严重 —— 判据通道整体失效）。
+    #   DLL 侧已修（截断按字符边界：Decision::Utf8SafeCut）；这里再做一层防御：
+    #   用替换字符读出 + 明确提示（若再看到提示，说明线上 DLL 还是旧的）。
+    bad_utf8 = False
     try:
-        # 用 utf-8-sig 读：插件写文件时带 UTF-8 BOM（记事本友好）
-        data = json.loads(p.read_text(encoding="utf-8-sig"))
+        text = p.read_bytes().decode("utf-8-sig")   # 插件写文件时带 BOM（记事本友好）
+    except UnicodeDecodeError:
+        text = p.read_bytes().decode("utf-8-sig", errors="replace")
+        bad_utf8 = True
+    try:
+        data = json.loads(text)
     except Exception as e:  # noqa: BLE001
         print(f"结果文件解析失败：{p}\n  {e}")
         return 2
+    if bad_utf8:
+        print("提示：结果文件含非法 UTF-8 字节（已用替换字符读出下文）。")
+        print("      第 84 轮前的 DLL 会在截断（日志 / 界面状态行）时切坏多字节字符，")
+        print("      或把指针诊断的乱码字节原样写进日志；两处均已修 —— 若仍看到本提示，")
+        print("      请先用 verify 确认部署的 DLL 是第 84 轮之后的产物。")
+        print()
 
     s = data.get("summary", {})
     print(f"=== SAQ harness 结果 ===")

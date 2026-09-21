@@ -1313,7 +1313,11 @@ namespace SAQ
 			} else {
 				// 重试时的失败只记前 240 字符：一次失败的完整诊断能带 30 个指针的 RTTI，
 				// 重试几次就把日志淹了（定位卡顿时反而看不清）。
-				REX::WARN("推送失败（重试）：{}… | 耗时 {} ms", detail.substr(0, 240), cost);
+				// ★★ 第 84 轮：切点回退到 UTF-8 字符边界 —— detail 里带中文文案/任务名，
+				//   旧写法 `substr(0, 240)` 按字节切（与 EscapeForLog 是同一类病：
+				//   切在汉字中间 ⇒ 非法 UTF-8）。
+				REX::WARN("推送失败（重试）：{}… | 耗时 {} ms",
+					detail.substr(0, Decision::Utf8SafeCut(detail, 240)), cost);
 			}
 			return ok;
 		}
