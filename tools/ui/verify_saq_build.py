@@ -680,7 +680,21 @@ def main() -> int:
         #     → 56（同轮续：`order=` 顺序探针 —— 同伴任务分组）。
         #   ★★ 第 75 轮（四大势力开头任务）：stamp 57 —— 载荷加第 9/10 列（简要说明）+
         #     描述第一句改用说明 + 新增 `pin=` 探针（说明真的进了描述）。
-        "构建指纹 stamp=57": b"stamp=57",
+        #   ★★ 第 80 轮（可重复 NPC 入口）：stamp 58 —— type 101 条目文案
+        #     （子项「与他交谈（可重复任务）」+ 可重复任务描述）+ `rep=` 探针。
+        "构建指纹 stamp=58": b"stamp=58",
+        # ★★ 第 80 轮（可重复 NPC 入口）：type 101 的界面链路 ——
+        #   ① 常量与合并判据（SaqIsEntryType —— 子项/描述/不可导航提示统一用它）；
+        #   ② 子项名与描述文案（中英各一段，证明不是只改了判据没接文案）；
+        #   ③ `rep=` 探针（可重复 NPC 条目的运行期证据，见 SaqRepeatNpcProbe）。
+        "可重复NPC类型常量": b"SAQ_REPEAT_NPC_TYPE",
+        "入口类型合并判据": b"SaqIsEntryType",
+        "可重复NPC子项名(中)": "与他交谈（可重复任务）".encode(),
+        "可重复NPC子项名(英)": b"Talk to them (repeatable job)",
+        "可重复NPC描述(中)": "这位 NPC 会不断提供可重复任务".encode(),
+        "可重复NPC描述(英)": b"This NPC offers repeatable jobs",
+        "可重复NPC报告探针": b"SaqRepeatNpcProbe",
+        "可重复NPC报告字段": b"rep=[",
         # ★★ 第 74 轮（同伴好感度任务）：「入口」同伴任务固定显示 + 描述提示 + 名字前缀。
         #   ① 载荷第 8 列（bSaqCompanion）与解析分支；
         #   ② 描述提示函数（SaqCompanionNote，中英文案）；
@@ -833,6 +847,11 @@ def main() -> int:
             "入口认领日志": "认领已有引导（任务板入口）".encode(),
             # ★ 第 28 轮修正：中文名用游戏官中译名（"任务板 · 陋室" = The Lodge）
             "入口条目数据": "任务板 · 陋室".encode(),
+            # ★★ 第 80 轮（可重复 NPC 入口）：入口表两类的计数日志 + NPC 名字前缀
+            #   （数据真的进了 DLL 的静态表 —— 不只是生成脚本写对了文件）。
+            "入口两类计数(日志)": "（任务板 {} + 可重复 NPC {}）".encode(),
+            "可重复NPC名字前缀(中)": "（可重复）贸易管理局 · 邓肯·林奇".encode(),
+            "可重复NPC名字前缀(英)": b"(Repeatable) Trackers Alliance Agent - Akila City",
             "引导确认降噪文案": "关菜单后自动确认".encode(),
             # ★ 第 30 轮：入口引导目标的**候选链**（marker → 原板 → 常驻兜底）+ 统计/诊断
             "入口统计列(候选链)": "入口={}(可导航 {}｜marker {} 原板 {} 兜底 {} 不可用 {})".encode(),
@@ -1129,6 +1148,9 @@ def main() -> int:
                             "r77_chain_ryujin", "r77_chain_ryujin_pass",
                             # ★★ 第 78 轮：DLC 的 INFO 门槛（地球舰队的后续被藏）
                             "r78_dlc_info_gate",
+                            # ★★ 第 80 轮：提供无限任务的 NPC 条目（8 条 + 名字前缀 +
+                            #   引导落常驻 marker）
+                            "r80_repeatable_npc",
                             "r62_reload_observe"):
                     all_ok &= check(f"用例计划 · [case:{cid}]", plan_text.encode(),
                                     f"[case:{cid}]".encode())
@@ -1361,6 +1383,24 @@ def main() -> int:
                 all_ok &= check("用例计划 · r71「深藏不露」不再进链式名单（反向断言）",
                                 plan_text.encode(),
                                 "assert.nolog 链式没到:.*深藏不露".encode())
+                # ★★ 第 80 轮（可重复 NPC 入口）：r80 用例的三条判据 ——
+                #   ① DLL 两类计数（`入口条目表=20 条（任务板 12 + 可重复 NPC 8）`）；
+                #   ② 界面 `rep=` 探针（8 条 + 名字前缀「（可重复）」进了载荷/解析）；
+                #   ③ 点邓肯·林奇 ⇒ 引导目标 = 新建常驻 marker（NPC marker 的实机判据）。
+                all_ok &= check("用例计划 · r80 NPC 两类计数断言",
+                                plan_text.encode(),
+                                "assert.log 入口条目表=20 条（任务板 12 \\+ 可重复 NPC 8\\)".encode())
+                all_ok &= check("用例计划 · r80 界面 rep= 探针断言（8 条 + 名字前缀）",
+                                plan_text.encode(),
+                                "assert.ui rep=\\[8\\|0x214684=（可重复）贸易管理局 · 邓肯·林奇".encode())
+                all_ok &= check("用例计划 · r80 引导落常驻 marker 断言",
+                                plan_text.encode(),
+                                "assert.log 引导请求：（可重复）贸易管理局 · 邓肯·林奇.*新建常驻 marker（精确）".encode())
+                #   ★ 第 80 轮更新：r47 的入口统计从 12 → **20**（任务板 12 + NPC 8）——
+                #   反向钉住「改回 12」的回归（NPC 条目静默消失时这条会 MISS）。
+                all_ok &= check("用例计划 · r47 入口统计 20 条（含第 80 轮 NPC）",
+                                plan_text.encode(),
+                                "assert.log 入口=20\\(可导航 20｜marker".encode())
                 # ★★ 第 62 轮（大项 I）：自动读档用例 —— ① 只允许用**用户指定的那个存档**
                 #   （子串 Save7_3AB5A2FA）；② 读档步骤在；③ 存档列表诊断在。
                 all_ok &= check("用例计划 · r62 自动读档（指定存档）",
@@ -2062,6 +2102,86 @@ def main() -> int:
         all_ok &= probe_icon
     else:
         print(f"MISS 缺少 {table_h}")
+        all_ok = False
+
+    # ★★ 第 80 轮（可重复 NPC 入口）：入口条目表（SAQ_EntryTable.h）**数据侧**完整性 ——
+    #   ① 20 条（任务板 12 + 可重复 NPC 8；kEntryTableSize）；
+    #   ② 名字前缀「（可重复）」/"(Repeatable)" **只在 NPC 条目上**（玩家要求：
+    #      「任务板不需要，只需要 NPC 这样做」）；
+    #   ③ 与 ref/repeatable_givers.json（数据源）逐项一致：uID / 名字 / 兜底候选；
+    #   ④ 与 ref/board_markers.json（ESM 侧建档产物）一致：markerLocal；
+    #   ⑤ marker 分配：NPC 从 0x90B 起连续 7 条（外景条目 0x00216D34 无 marker = 0）；
+    #   ⑥ 样本：邓肯·林奇（0x00214684）= marker 0x910 + 兜底 0xC35BA（内景：同 cell）；
+    #      「追踪者联盟探员 · 阿基拉城」（0x00216D34）= marker 0 + 兜底 0x21D003
+    #      （外景：世界级常驻引用）。
+    entry_h = ROOT / "plugin" / "src" / "SAQ_EntryTable.h"
+    if entry_h.exists():
+        ent_blob = entry_h.read_text(encoding="utf-8", errors="replace")
+        #   注意：生成器把 `true` 写成 `true `（尾随空格对齐 `false`）⇒ 真值后允许空白
+        #   （第 80 轮首次跑 verify 抓出来的：严格 `true,` 会漏掉唯一常驻的那条 ⇒ 11 而非 12）。
+        ent_rows = re.findall(
+            r'\{\s*0x([0-9A-Fa-f]+)u,\s*(\d+)u,\s*(true|false)\s*,\s*0x([0-9A-Fa-f]+)u,\s*'
+            r'0x([0-9A-Fa-f]+)u,\s*0x([0-9A-Fa-f]+)u,\s*(\d+)u,\s*"([^"]*)",\s*"([^"]*)"\s*\},',
+            ent_blob)
+        m_ent_size = re.search(r"kEntryTableSize\s*=\s*(\d+);", ent_blob)
+        ent_size = int(m_ent_size.group(1)) if m_ent_size else -1
+        n_board = sum(1 for r_ in ent_rows if r_[6] == "0")
+        n_npc = sum(1 for r_ in ent_rows if r_[6] == "1")
+        bad_prefix = [r_[0] for r_ in ent_rows
+                      if (r_[6] == "1") != (r_[8].startswith("（可重复）")
+                                            and r_[7].startswith("(Repeatable)"))]
+        ent_ok = (len(ent_rows) == 20 == ent_size and n_board == 12 and n_npc == 8
+                  and not bad_prefix)
+        print(("OK  " if ent_ok else "MISS") +
+              f" 入口表 · 20 条（任务板 {n_board} + 可重复 NPC {n_npc}；"
+              f"「（可重复）」前缀只在 NPC 上={not bad_prefix}）")
+        all_ok &= ent_ok
+
+        by_local = {int(r_[0], 16): r_ for r_ in ent_rows}
+        gv_json = ROOT / "ref" / "repeatable_givers.json"
+        gv_ok = gv_json.exists()
+        if gv_ok:
+            gv = json.loads(gv_json.read_text(encoding="utf-8"))
+            gv_ok = len(gv) == 8
+            for g in gv:
+                r_ = by_local.get(g["refLocal"])
+                if r_ is None or (int(r_[6]) != 1 or r_[8] != g["nameZh"]
+                                  or r_[7] != g["nameEn"]
+                                  or int(r_[4], 16) != (g["fallback1"] or 0)
+                                  or int(r_[5], 16) != (g["fallback2"] or 0)):
+                    gv_ok = False
+                    break
+        print(("OK  " if gv_ok else "MISS") +
+              " 入口表 · NPC 条目与 ref/repeatable_givers.json 逐项一致（8 条）")
+        all_ok &= gv_ok
+
+        bm_json = ROOT / "ref" / "board_markers.json"
+        bm_ok = bm_json.exists()
+        if bm_ok:
+            bm = {m["refLocal"]: m["markerLocal"]
+                  for m in json.loads(bm_json.read_text(encoding="utf-8"))["markers"]}
+            bm_ok = all(int(r_[3], 16) == bm.get(int(r_[0], 16), 0) for r_ in ent_rows)
+        print(("OK  " if bm_ok else "MISS") +
+              " 入口表 · markerLocal 与 board_markers.json 一致（20 条）")
+        all_ok &= bm_ok
+
+        npc_markers = sorted(int(r_[3], 16) for r_ in ent_rows
+                             if r_[6] == "1" and int(r_[3], 16))
+        mk_ok = npc_markers == list(range(0x90B, 0x912))
+        print(("OK  " if mk_ok else "MISS") +
+              " 入口表 · NPC marker 连续 7 条 0x90B~0x911（"
+              + " ".join(f"0x{v:X}" for v in npc_markers) + "）")
+        all_ok &= mk_ok
+        for local, want_mk, want_fb1, tag in (
+                ("00214684", 0x910, 0x000C35BA, "贸易管理局·邓肯·林奇（内景：marker + 同 cell 兜底）"),
+                ("00216D34", 0x0, 0x0021D003, "追踪者联盟探员·阿基拉城（外景：无 marker，世界级兜底）")):
+            r_ = by_local.get(int(local, 16))
+            ok_row = (r_ is not None and int(r_[3], 16) == want_mk
+                      and int(r_[4], 16) == want_fb1 and int(r_[6]) == 1)
+            print(("OK  " if ok_row else "MISS") + f" 入口表 · NPC 样本（{tag}）")
+            all_ok &= ok_row
+    else:
+        print(f"MISS 缺少 {entry_h}")
         all_ok = False
 
     # ★ 第 20 轮：ESM 里的测试开关 GLOB（控制台 `set SAQ_TestMode to N` 的落点）

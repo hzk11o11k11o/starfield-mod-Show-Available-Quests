@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
-"""gen_entry_table.py - 生成「无限任务入口」（任务板）条目表。
+"""gen_entry_table.py - 生成「无限任务入口」条目表（任务板 + 提供无限任务的 NPC）。
 
-背景（AGENTS.md 需求）：无限生成任务本身不显示，但「接取入口」（任务板）可以作为
-一条数据出现在可接任务列表里 —— 玩家点了就引导到那块任务板的具体位置。
+背景（AGENTS.md 需求）：无限生成任务本身不显示，但「接取入口」可以作为一条数据出现在
+可接任务列表里 —— 玩家点了就引导到那块任务板 / 那位 NPC 的具体位置。两类入口：
 
-数据来源：Starfield.esm 的世界数据（REFR）+ 本文件里的**白名单**（人工挑的代表性
-任务板，每个城市/据点一块）。任务板在数据里是 ACTIVATOR `MissionBoardConsole*`：
+* **任务板**（第 27 轮起）：白名单在下面（每个城市/据点一块，14 个基础对象里挑）；
+* **提供无限任务的 NPC**（第 80 轮新增）：数据来自 ref/repeatable_givers.json
+  （tools/esm/gen_repeatable_givers.py）—— RAD03「长途运输」的 4 位贸易管理局商人 +
+  RAD04「死亡通缉令」的 4 城追踪者联盟探员；名字自带「（可重复）」前缀（任务板不加）。
+
+任务板在数据里是 ACTIVATOR `MissionBoardConsole*`：
     python tools/esm/esm_probe.py list ACTI --grep board     # 可复现（14 条基础对象）
     python tools/esm/explore_boards.py                        # 所有放置引用的清单
 挑选规则：
@@ -35,10 +39,16 @@ from esm_probe import (  # noqa: E402
 
 # ★★ 第 30 轮：入口的引导目标改成**候选链**（背景见 docs/05 第九节 / docs/99 第 30 轮）——
 #
-#   ① 新建的**常驻 XMarker**（tools/esm/create_board_markers.py：记录号 0x900~0x90A，
-#      位置 = 任务板坐标）—— 常驻引用在任何位置都取得到 ⇒ 精确落点、首选；
-#   ② 任务板引用自身 —— 原生常驻的（阿基拉城）总是可用；非常驻的只有 cell 加载时可用；
-#   ③ 同 cell 里离板最近的**原生常驻引用**（表里的 fallback1/2）—— 位置差 1~20 m，兜底。
+#   ① 新建的**常驻 XMarker**（tools/esm/create_board_markers.py：任务板 0x900~0x90A、
+#      第 80 轮 NPC 追加 0x90B~0x911，位置 = 条目坐标）—— 常驻引用在任何位置都取得到
+#      ⇒ 精确落点、首选；
+#   ② 条目引用自身 —— 原生常驻的（阿基拉城板）总是可用；非常驻的（全部 NPC、11 块板）
+#      只有 cell 加载时可用；
+#   ③ 兜底候选（表里的 fallback1/2）—— 位置差 1~7 m：
+#      * 内景条目 ⇒ 同 cell 里最近的原生常驻引用；
+#      * 外景条目（阿基拉城广场的探员）⇒ 该 worldspace 的**世界级常驻引用**
+#        （`WRLD > WorldChildren > CellChildren > CellPersistent`；外景 cell 里官方
+#        不放 per-cell 常驻引用 —— 见 gen_repeatable_givers.py）。
 #
 #   运行期由 DLL 依次 `LookupByID` 取第一个命中的（见 SAQ.cpp::AppendEntryRows）。
 #
@@ -47,8 +57,13 @@ from esm_probe import (  # noqa: E402
 #   常驻 = 零先例）。新建记录从第一次加载就归入 CellPersistent 组 ⇒ 引擎按常驻处理。
 BOARD_MARKERS_JSON = Path("ref/board_markers.json")
 ENTRY_SCAN_JSON = Path("ref/entry_persistent_scan.json")
+GIVERS_JSON = Path("ref/repeatable_givers.json")   # ★ 第 80 轮：NPC 入口数据（上游工具产物）
 XMARKER_BASES = {0x3B, 0x34}      # XMarker / XMarkerHeading（纯位置标记，位置最稳定）
 FALLBACK_MAX_DIST = 25.0          # 兜底候选的最大距离（同房间级；再远就不是「这块板」了）
+
+# ★ 第 80 轮：入口条目的 kind（与 C++ 的 StaticEntryInfo::kind / AS3 的载荷 type 对应）。
+KIND_BOARD = 0        # 任务板（AS3 type 100：子项「前往任务板」）
+KIND_REPEAT_NPC = 1   # 提供无限任务的 NPC（AS3 type 101：子项「找他接活」；名字带「（可重复）」）
 
 
 def load_markers() -> dict[int, int]:
@@ -77,6 +92,15 @@ def load_fallbacks() -> dict[str, list[int]]:
         cands.sort()
         out[cell.get("edid", "")] = [c[2] for c in cands[:2]]
     return out
+
+
+def load_givers() -> list[dict]:
+    """★ 第 80 轮：「提供无限任务的 NPC」入口数据（上游 tools/esm/gen_repeatable_givers.py）。"""
+    if not GIVERS_JSON.exists():
+        print(f"!! 缺少 {GIVERS_JSON}（先跑 tools/esm/gen_repeatable_givers.py）"
+              f"—— NPC 入口条目将缺失")
+        return []
+    return json.loads(GIVERS_JSON.read_text(encoding="utf-8"))
 
 # 任务板的 14 个基础对象（esm_probe list ACTI --grep board 的结果）；
 # 白名单只收录其中「激活的、每个地点一块」的实例，这里仍然全列出来做 base 校验。
@@ -151,6 +175,7 @@ def main() -> int:
 
     markers = load_markers()
     fallbacks = load_fallbacks()
+    givers = load_givers()
 
     rows = []
     problems = []
@@ -174,6 +199,7 @@ def main() -> int:
             "markerLocal": markers.get(refr, 0),          # ① 新建常驻 XMarker（首选）
             "fallback1": fb[0] if len(fb) > 0 else 0,     # ③ 同 cell 原生常驻引用（兜底）
             "fallback2": fb[1] if len(fb) > 1 else 0,
+            "kind": KIND_BOARD,
             "nameEn": en,
             "nameZh": zh,
         })
@@ -184,54 +210,103 @@ def main() -> int:
             print("   -", p)
         return 1
 
+    # ★ 第 80 轮：「提供无限任务的 NPC」条目（ref/repeatable_givers.json —— 上游已把
+    #   「REFR / 常驻性 / 兜底候选 / 官方名」全部核验过，这里只做合并与少量交叉校验）。
+    for g in givers:
+        if g.get("persistent"):
+            problems.append(f"{g['edid']} 在 repeatable_givers.json 里是常驻 —— "
+                            f"预期非常驻（常驻性判定变了？重跑 gen_repeatable_givers.py）")
+            continue
+        if not g.get("fallback1"):
+            problems.append(f"{g['edid']} 没有兜底候选（远处将不可导航）")
+        rows.append({
+            "refLocal": g["refLocal"],
+            "refHex": g["refHex"],
+            "master": 0,
+            "persistent": False,
+            "base": g["edid"],                            # NPC_ EDID（人工核对用）
+            "cell": g["cell"],
+            "markerLocal": markers.get(g["refLocal"], 0), # 内景 NPC 有；外景（阿基拉城探员）没有
+            "fallback1": g.get("fallback1") or 0,
+            "fallback2": g.get("fallback2") or 0,
+            "kind": KIND_REPEAT_NPC,
+            "nameEn": g["nameEn"],
+            "nameZh": g["nameZh"],
+        })
+
+    if problems:
+        print("!! 入口数据校验失败：")
+        for p in problems:
+            print("   -", p)
+        return 1
+
+    n_board = sum(1 for r in rows if r["kind"] == KIND_BOARD)
+    n_npc = sum(1 for r in rows if r["kind"] == KIND_REPEAT_NPC)
     n_pers = sum(1 for r in rows if r["persistent"])
     n_marker = sum(1 for r in rows if r["markerLocal"])
     n_fb = sum(1 for r in rows if r["fallback1"])
-    print(f"入口条目：{len(rows)} 条（原生常驻 {n_pers} / 非常驻 {len(rows) - n_pers}；"
-          f"新建 marker {n_marker} 条；常驻兜底 {n_fb} 条）")
+    print(f"入口条目：{len(rows)} 条（任务板 {n_board} / 可重复 NPC {n_npc}；"
+          f"原生常驻 {n_pers}；新建 marker {n_marker} 条；兜底候选 {n_fb} 条）")
     for r in rows:
         flag = "P" if r["persistent"] else "-"
         mk = f"marker=0x{r['markerLocal']:03X}" if r["markerLocal"] else "marker=--- "
         fb = (f"兜底=0x{r['fallback1']:06X}/0x{r['fallback2']:06X}" if r["fallback1"]
               else "兜底=---")
-        print(f"  [{flag}] {r['refHex']} {mk} {fb} {r['cell']:<32s} {r['nameZh']}")
+        kind = "板" if r["kind"] == KIND_BOARD else "NPC"
+        print(f"  [{flag}][{kind}] {r['refHex']} {mk} {fb} {r['cell']:<32s} {r['nameZh']}")
 
     # ---- 头文件 ----
     lines = []
     lines.append("#pragma once")
     lines.append("// 本文件由 tools/esm/gen_entry_table.py 自动生成，请勿手改。")
     lines.append("//")
-    lines.append("// 「无限任务入口」条目（任务板）：AGENTS.md 需求 —— 无限生成任务本身不显示，")
-    lines.append("// 但「接取入口」（任务板）作为一条数据显示在列表里，点了就引导到它的位置。")
-    lines.append("//")
+    lines.append("// 「无限任务入口」条目（AGENTS.md 需求 —— 无限生成任务本身不显示，但「接取入口」")
+    lines.append("// 作为一条数据显示在列表里，点了就引导到它的位置）。两类：")
+    lines.append("//   kind=0（任务板，12 条）：ACTIVATOR `MissionBoardConsole*`，名字「任务板 · <地点>」；")
+    lines.append("//   kind=1（可重复 NPC，8 条）：贸易管理局商人 / 追踪者联盟探员（第 80 轮），")
+    lines.append("//     名字自带「（可重复）」前缀 —— 数据 ref/repeatable_givers.json。")
     lines.append("//")
     lines.append("// 字段说明（★ 第 30 轮起，引导目标是**候选链**：DLL 依次 LookupByID 取第一个命中的）——")
-    lines.append("//   refLocal   任务板 ACTIVATOR 的放置引用记录号 —— 同时是界面条目的 uID（运行期 FormID）。")
+    lines.append("//   refLocal   条目引用的记录号（任务板 ACTIVATOR / NPC 的 ACHR）—— 同时是界面条目的")
+    lines.append("//              uID（运行期 FormID）。")
     lines.append("//   master     所属 master 下标（kQuestMasters[]；目前全部在 Starfield.esm）。")
-    lines.append("//   persistent 任务板引用自身是否**原生常驻**（12 条里只有阿基拉城是）。")
-    lines.append("//   markerLocal ① 本插件（ESM 记录号 0x900+i）新建的**常驻 XMarker**，位置 = 任务板坐标：")
-    lines.append("//              常驻引用在 cell 未加载时依然存在 ⇒ 任何位置都取得到 ⇒ 首选引导目标。")
+    lines.append("//   persistent 条目引用自身是否**原生常驻**（20 条里只有阿基拉城任务板是）。")
+    lines.append("//   markerLocal ① 本插件（ESM 记录号：任务板 0x900~0x90A、NPC 0x90B~0x911）新建的")
+    lines.append("//              **常驻 XMarker**，位置 = 条目坐标：常驻引用在 cell 未加载时依然存在")
+    lines.append("//              ⇒ 任何位置都取得到 ⇒ 引导目标。外景条目（阿基拉城广场的探员）不建")
+    lines.append("//              marker（外景 cell 无 per-cell 常驻引用可挂），= 0。")
     lines.append("//              运行期 FormID = (本插件加载序号 << 24) | markerLocal —— 前缀取")
     lines.append("//              Guide 通道的 ch.prefix（SAQ_Guide.cpp 已认领的值）。")
-    lines.append("//   fallback1/2 ③ 同 cell 里离板最近的**原生常驻引用**（XMarker 系优先、≤25 m）——")
-    lines.append("//              位置差 1~20 m，作为「新建 marker 万一不被引擎接受」的兜底。")
+    lines.append("//   fallback1/2 ③ 兜底候选（XMarker 系优先、≤25 m）—— 位置差 1~7 m：")
+    lines.append("//              内景条目 = 同 cell 的原生常驻引用；外景条目 = 该 worldspace 的**世界级")
+    lines.append("//              常驻引用**（`WRLD > WorldChildren > CellChildren > CellPersistent`）。")
+    lines.append("//   kind       0 = 任务板（AS3 type 100，子项「前往任务板」）；")
+    lines.append("//              1 = 可重复 NPC（AS3 type 101，子项「找他接活」+ 名字带「（可重复）」）。")
     lines.append("//   nameZh/En  列表里显示的名字（中英都推，AS3 按游戏语言挑）。")
     lines.append("//")
-    lines.append("// 实机排查看 DLL 日志的「入口目标来源：marker N / 原板 N / 兜底 N / 不可用 N」与")
+    lines.append("// 实机排查看 DLL 日志的「入口=…(可导航 N｜marker a 原板 b 兜底 c 不可用 d)」与")
     lines.append("// 「入口候选诊断：…」（SAQ.cpp::AppendEntryRows）。")
     lines.append("")
     lines.append("#include <cstdint>")
     lines.append("")
     lines.append("namespace SAQ")
     lines.append("{")
+    lines.append("\t// ★ 第 80 轮：与 AS3 载荷 type / gen_entry_table.py 的 KIND_* 对应。")
+    lines.append("\tenum EntryKind : std::uint8_t")
+    lines.append("\t{")
+    lines.append("\t\tkEntryKindBoard = 0,        // 任务板（AS3 type 100）")
+    lines.append("\t\tkEntryKindRepeatNpc = 1,    // 提供无限任务的 NPC（AS3 type 101）")
+    lines.append("\t};")
+    lines.append("")
     lines.append("\tstruct StaticEntryInfo")
     lines.append("\t{")
     lines.append("\t\tstd::uint32_t refLocal;")
     lines.append("\t\tstd::uint8_t  master;")
     lines.append("\t\tbool          persistent;")
     lines.append("\t\tstd::uint32_t markerLocal;   // ① 新建常驻 XMarker（0 = 没有）")
-    lines.append("\t\tstd::uint32_t fallback1;     // ③ 同 cell 原生常驻引用（0 = 没有）")
+    lines.append("\t\tstd::uint32_t fallback1;     // ③ 兜底候选（内景 = 同 cell；外景 = 同 world 世界级）")
     lines.append("\t\tstd::uint32_t fallback2;")
+    lines.append("\t\tstd::uint8_t  kind;          // ★ 第 80 轮：EntryKind")
     lines.append("\t\tconst char*   nameEn;")
     lines.append("\t\tconst char*   nameZh;")
     lines.append("\t};")
@@ -242,7 +317,7 @@ def main() -> int:
         lines.append(
             f'\t\t{{ {r["refLocal"]:#010x}u, {r["master"]}u, {p}, '
             f'{r["markerLocal"]:#010x}u, {r["fallback1"]:#010x}u, {r["fallback2"]:#010x}u, '
-            f'"{c_escape(r["nameEn"])}", "{c_escape(r["nameZh"])}" }},'
+            f'{r["kind"]}u, "{c_escape(r["nameEn"])}", "{c_escape(r["nameZh"])}" }},'
         )
     lines.append("\t};")
     lines.append(f"\tinline constexpr std::size_t kEntryTableSize = {len(rows)};")

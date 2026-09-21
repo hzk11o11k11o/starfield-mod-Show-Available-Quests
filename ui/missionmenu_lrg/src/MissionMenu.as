@@ -104,6 +104,12 @@ package
       //   （见 SaqBuildObjective / SaqDescriptionText）。
       private static const SAQ_ENTRY_TYPE:int = 100;
       
+      // ★★ 第 80 轮：type == 101 = 「提供无限任务的 NPC」条目（贸易管理局商人 /
+      //   追踪者联盟探员）—— 与任务板同属「入口」（uID 是世界引用的 FormID），
+      //   但文案不同：子项「与他交谈（可重复任务）」+ 描述写明「可重复任务提供者」。
+      //   名字里自带「（可重复）」前缀（C++ 侧数据加好，界面原样显示）。
+      private static const SAQ_REPEAT_NPC_TYPE:int = 101;
+      
       private static const SAQ_EMBEDDED_CHUNKS:Array = [/*__SAQ_EMBEDDED__*/];
       
       public var UniversalBackButton_mc:BSButton;
@@ -669,8 +675,8 @@ package
       //    TrackersAlliance / Constellation / TerranArmada / Creations）。
       //   原版枚举 0..4 **全部**能安全 gotoAndStop（此前担心的「None 帧不存在」不成立），
       //   所以不再把派系(2)/主线(1) 归一成 4：真实类型 + 真实阵营 = 与原版任务菜单一致的图标。
-      //   只有我们自己的扩展值（100 = 任务板入口，见 SAQ_ENTRY_TYPE）折叠回「任务」图标，
-      //   保持入口条目既有视觉。
+      //   只有我们自己的扩展值（100 = 任务板入口 / 101 = 可重复 NPC 入口，见
+      //   SAQ_ENTRY_TYPE / SAQ_REPEAT_NPC_TYPE）折叠回「任务」图标，保持入口条目既有视觉。
       private static function SaqSafeType(param1:int) : int
       {
          if(param1 == QuestUtils.ACTIVITY_QUEST_TYPE || param1 == QuestUtils.MAIN_QUEST_TYPE || param1 == QuestUtils.FACTION_QUEST_TYPE || param1 == QuestUtils.MISC_QUEST_TYPE || param1 == QuestUtils.MISSION_QUEST_TYPE)
@@ -686,6 +692,14 @@ package
       //   为什么要范围检查：这两个值会直接交给原版函数（GetQuestIconLabel 的
       //   gotoAndStop、MissionInfo.GetQuestColorIcon 的 getDefinitionByName）——
       //   「协议演进 / 数据串列」产生的越界值不应该带着疑问进原版代码。
+      // ★★ 第 80 轮：入口条目的合并判据（任务板 100 / 可重复 NPC 101）——
+      //   「按入口处理」的地方统一用它（子项名 / 描述 / 不可导航提示），
+      //   防止以后再加入口类型时漏掉某一处（第 51/52 轮的教训：判断散落 = 漏改）。
+      private static function SaqIsEntryType(param1:int) : Boolean
+      {
+         return param1 == SAQ_ENTRY_TYPE || param1 == SAQ_REPEAT_NPC_TYPE;
+      }
+      
       private static function SaqSafeFaction(param1:int) : int
       {
          if(param1 >= FactionUtils.FACTION_PARADISO && param1 <= FactionUtils.FACTION_CREATIONS)
@@ -712,9 +726,12 @@ package
             // SetFactionIcon）——阵营保持 -1，避免「子项也带势力徽记」这种原版没有的视觉。
             "iFaction":FactionUtils.FACTION_NONE,
             // ★ 第 27 轮：入口条目（任务板）的子项名不同 —— 它不是「任务」而是「入口」。
-            "sName":param1.iType == SAQ_ENTRY_TYPE
-               ? (this.SaqUseChinese() ? "前往任务板" : "Go to the mission board")
-               : (this.SaqUseChinese() ? "前往接取地点" : "Reach the pickup location"),
+            // ★★ 第 80 轮：可重复 NPC（101）再单独一档 —— 它不是地点，是「人」。
+            "sName":param1.iType == SAQ_REPEAT_NPC_TYPE
+               ? (this.SaqUseChinese() ? "与他交谈（可重复任务）" : "Talk to them (repeatable job)")
+               : (param1.iType == SAQ_ENTRY_TYPE
+                  ? (this.SaqUseChinese() ? "前往任务板" : "Go to the mission board")
+                  : (this.SaqUseChinese() ? "前往接取地点" : "Reach the pickup location")),
             "sDescription":"",
             "bComplete":false,
             "bFailed":false,
@@ -783,26 +800,41 @@ package
       }
       
       // 右侧详情面板里的描述文案（固定内容，告诉玩家这条记录怎么用）。
-      // ★ 第 27 轮：第 2 个参数 = 入口条目（任务板）—— 它没有「接取地点」的概念，
-      //   描述改成「这是什么、怎么去」。
+      // ★ 第 27 轮：第 2 个参数 = 条目类型（100 = 入口任务板）—— 它没有「接取地点」
+      //   的概念，描述改成「这是什么、怎么去」。
+      //   ★★ 第 80 轮：改传**完整 iType**（不再传 Boolean）—— 101 = 可重复 NPC 也要
+      //   走入口分支（文案不同），用 SaqIsEntryType() 判定。
       // ★ 第 46 轮：第 3 个参数 = 需要靠近（见 SaqApproachNote）。
       // ★★ 第 74 轮：第 4 个参数 = 「入口」同伴任务（见 SaqCompanionNote）。
       // ★★ 第 75 轮：第 5 个参数 = 「简要说明」（四大势力开头任务；载荷第 9/10 列，
       //   空串 = 普通任务）—— 非空时它直接当描述第一句（「加入方式 / 前置条件」），
       //   取代「这条任务当前可以接取」（对固定显示的那四条不成立）。
-      private function SaqDescriptionText(param1:Boolean, param2:Boolean = false, param3:Boolean = false, param4:Boolean = false, param5:String = "") : String
+      private function SaqDescriptionText(param1:Boolean, param2:int = 0, param3:Boolean = false, param4:Boolean = false, param5:String = "") : String
       {
          // ★ 第 27 轮：无限任务入口（任务板）。
+         // ★★ 第 80 轮：可重复 NPC（101）—— 同属入口（uID 也是世界引用），文案另写。
          // ★ 第 29 轮：入口引用已经在 ESM 里 override 成**常驻引用**（任何位置都能取到），
          //   所以这个「取不到」分支只是兜底（ESM 没加载 / 被别的插件覆盖掉时）。
          //   措辞不再提「太远」——玩家明确反馈「不该存在太远就不能导航」。
-         if(param2 == true)
+         if(SaqIsEntryType(param2))
          {
             if(param1 != true)
             {
                return this.SaqUseChinese()
                   ? "暂时无法导航 —— 这个位置此刻取不到（多半是所在区域还没加载出来）。稍后重新打开一次任务菜单再试。"
                   : "Cannot navigate right now - the location is not available at the moment (its area has not loaded yet). Reopen the mission menu and try again.";
+            }
+            if(param2 == SAQ_REPEAT_NPC_TYPE)
+            {
+               if(this.SaqCourseKeyName().length == 0)
+               {
+                  return this.SaqUseChinese()
+                     ? "这位 NPC 会不断提供可重复任务 —— 与他交谈就能接到赏金、运输、勘探等不断刷新的任务。使用底部的「设定航线」即可引导到他的位置。"
+                     : "This NPC offers repeatable jobs - talk to them to pick up endlessly refreshing missions (bounties, transport, survey...). Use SET COURSE to be guided to their location.";
+               }
+               return this.SaqUseChinese()
+                  ? "这位 NPC 会不断提供可重复任务 —— 与他交谈就能接到赏金、运输、勘探等不断刷新的任务。按 " + this.SaqCourseKeyName() + "（设定航线）即可引导到他的位置。"
+                  : "This NPC offers repeatable jobs - talk to them to pick up endlessly refreshing missions (bounties, transport, survey...). Press " + this.SaqCourseKeyName() + " (SET COURSE) to be guided to their location.";
             }
             if(this.SaqCourseKeyName().length == 0)
             {
@@ -900,6 +932,62 @@ package
          return "";
       }
       
+      // ★★ 第 80 轮（可重复 NPC 入口）：报告里报出「可重复 NPC 条目」的**计数 + 前 2 条 uID**
+      //   （短格式，例：`rep=[8|0x214684=（可重复）贸易管理局 · 邓肯·林奇,0x115442]`
+      //   —— 第一条带名字，用例据此断言「（可重复）」前缀真的进了载荷）。
+      //   为什么需要：C++ 静态表 8 条（type=101）⇒ 载荷 ⇒ 界面解析 ⇒ `SaqRawQuests`
+      //   里真的存在这些条目 ——「数据对了 ≠ 界面拿到了」这条链路只靠读代码保证
+      //   （与 order= / pin= 探针同一思路）。
+      //   用 SaqRawQuests（**未折叠 iType** 的原始解析结果）：AvailableQuests 里的
+      //   iType 已被 SaqSafeType 折成原版枚举，认不出 101。
+      private function SaqRepeatNpcProbe() : String
+      {
+         try
+         {
+            if(this.SaqRawQuests == null)
+            {
+               return "";
+            }
+            var _loc1_:int = 0;
+            var _loc2_:Array = new Array();
+            var _loc3_:int = 0;
+            while(_loc3_ < this.SaqRawQuests.length)
+            {
+               var _loc4_:Object = this.SaqRawQuests[_loc3_];
+               if(_loc4_ != null && int(_loc4_.iType) == SAQ_REPEAT_NPC_TYPE)
+               {
+                  _loc1_++;
+                  if(_loc2_.length < 2)
+                  {
+                     var _loc5_:String = this.SaqUseChinese() ? _loc4_.sNameZh : _loc4_.sNameEn;
+                     if(_loc5_ == null)
+                     {
+                        _loc5_ = "";
+                     }
+                     if(_loc2_.length == 0)
+                     {
+                        if(_loc5_.length > 24)
+                        {
+                           _loc5_ = _loc5_.substr(0,24);
+                        }
+                        _loc2_.push("0x" + Number(_loc4_.uID).toString(16) + "=" + _loc5_);
+                     }
+                     else
+                     {
+                        _loc2_.push("0x" + Number(_loc4_.uID).toString(16));
+                     }
+                  }
+               }
+               _loc3_++;
+            }
+            return _loc1_ + "|" + _loc2_.join(",");
+         }
+         catch(e:Error)
+         {
+            return "(ex)";
+         }
+      }
+      
       private function SaqBuildEntry(param1:Object) : Object
       {
          // ★★ 第 75 轮：势力开头任务的「简要说明」（按语言挑；空串 = 普通任务）。
@@ -922,7 +1010,9 @@ package
             // ★ 第 27 轮：入口条目（任务板）的描述用专门文案（第 2 个参数）。
             // ★★ 第 74 轮：第 4 个参数 = 「入口」同伴任务（描述里提示好感度要求）。
             // ★★ 第 75 轮：第 5 个参数 = 势力开头任务的「简要说明」（上面取好的 _loc1_）。
-            "sDescription":this.SaqDescriptionText(param1.bSaqHasTarget != false, param1.iType == SAQ_ENTRY_TYPE, param1.bSaqNeedsApproach == true, param1.bSaqCompanion == true, _loc1_),
+            // ★★ 第 80 轮：第 2 个参数改传**完整 iType**（100 = 任务板 / 101 = 可重复 NPC，
+            //   见 SaqDescriptionText 与 SaqIsEntryType）。
+            "sDescription":this.SaqDescriptionText(param1.bSaqHasTarget != false, param1.iType, param1.bSaqNeedsApproach == true, param1.bSaqCompanion == true, _loc1_),
             // ★★ 第 75 轮：把说明留在条目上 —— SAQ_Report 的 pin= 探针据此报出
             //   「说明真的进了描述」（数据列对了 ≠ 描述里真的用了它）。
             "sSaqNote":_loc1_,
@@ -1189,7 +1279,10 @@ package
          //     只有升到 56 才能定性。
          //   ★★ 第 75 轮（四大势力开头任务）：stamp 57 —— 载荷加第 9/10 列（简要说明）+
          //     描述第一句改为「简要说明」+ 新增 `pin=` 探针（见 SaqPinNoteProbe）。
-         _loc8_ += " stamp=57";
+         //   ★★ 第 80 轮（可重复 NPC 入口）：stamp 58 —— 新增 type 101 条目文案
+         //     （子项「与他交谈（可重复任务）」+ 可重复任务描述）+ `rep=` 探针
+         //     （见 SaqRepeatNpcProbe）。
+         _loc8_ += " stamp=58";
          // ★★ 第 51 轮：入口自检（ep=）—— 见 SaqEntryProbe 的说明。
          //   位置在 stamp 之后、其余字段之前：报告有长度上限，这个字段是当前排查
          //   「测试入口调不到」问题的关键证据，必须优先保下来。
@@ -1217,6 +1310,9 @@ package
          }
          // ★★ 第 75 轮（四大势力开头任务）：说明真的进了描述（见 SaqPinNoteProbe）。
          _loc8_ += " pin=[" + this.SaqPinNoteProbe() + "]";
+         // ★★ 第 80 轮（可重复 NPC 入口）：可重复 NPC 条目计数 + 前 2 条 uID
+         //   （见 SaqRepeatNpcProbe；短格式，几乎不占报告长度）。
+         _loc8_ += " rep=[" + this.SaqRepeatNpcProbe() + "]";
          // 玩家任务日志名单（第 11 轮，诊断用）：QuestData 的「FormID:名字」，最多 12 条。
          // 用途：玩家说「某条可接任务没找到」时，先看它是不是**已经在玩家日志里**
          // （那样它被 C++/AS3 两层过滤中的某一层正当挡掉）—— 在这个名单里一查便知。
@@ -1426,7 +1522,8 @@ package
             // ★ 第 28 轮：入口条目（任务板）与任务的「不可导航」原因不同 —— 提示分开写。
             // ★ 第 29 轮：常驻化 override 之后这是兜底分支（引用理论上总取得到），
             //   提示语不再说「太远」。
-            if(param1.iType == SAQ_ENTRY_TYPE)
+            // ★★ 第 80 轮：入口判据统一用 SaqIsEntryType（任务板 100 / 可重复 NPC 101）。
+            if(SaqIsEntryType(param1.iType))
             {
                this.SaqGuideNote = "暂时无法导航:" + this.SaqQuestName(param1);
             }

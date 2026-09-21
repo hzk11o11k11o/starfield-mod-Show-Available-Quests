@@ -16,15 +16,20 @@
       "sha256": "874c2e779295c899180fef84787a0fa53d20e18370475cdcbe418d74e7bacd75",
       "summary": "任务 209 / 候选 931"
     },
+    "ref/repeatable_givers.json": {
+      "desc": "可重复任务 NPC 入口（gen_repeatable_givers.py）",
+      "sha256": "8a97ec5a3de02e8f0a48828b22c1878db3cfcced19bc78d434a5af1f6e24a6dd",
+      "summary": "NPC 8（内景建档 7 / 外景 1）"
+    },
     "ref/entry_targets.json": {
       "desc": "任务板入口表（gen_entry_table.py）",
-      "sha256": "e93795583ebd56477df6cd53ca9786a4f3ab45594a65a16b939ea31018c82f00",
-      "summary": "条目 12"
+      "sha256": "0e97f56edc03aeebb563b9f57f4c3c1da09bbceffc835552f879525b1c94d3f1",
+      "summary": "条目 20"
     },
     "ref/board_markers.json": {
       "desc": "新建常驻 marker（create_board_markers.py）",
-      "sha256": "5ccd9ff18379fc37abd2804edc8b1321500ab837428ef5d620a06f87306cd52d",
-      "summary": "marker 11"
+      "sha256": "1ed05d32d896bb91ddbda6d4516b84a652c506fad4e4a6e098fb048bd29b7749",
+      "summary": "marker 18"
     },
     "ref/companion_quests.json": {
       "desc": "同伴好感度任务（gen_companion_quests.py）",
@@ -48,13 +53,13 @@
     },
     "plugin/src/SAQ_EntryTable.h": {
       "desc": "入口条目表（gen_entry_table.py，DLL 编译进去）",
-      "sha256": "3962590fc7d88ab2b69072d29a293ad138f411f21c2fc2afe5febb6ec9d4410a",
-      "summary": "入口 12"
+      "sha256": "3ebc674540f35f373ca3db63892e9976d73ba03ef726de347ed45abbbf805c10",
+      "summary": "入口 20"
     },
     "esm/SAQ_ShowAvailableQuests.esm": {
       "desc": "代理任务 ESM（patch_saq_esm.py 等，幂等补丁）",
-      "sha256": "b8c31bb50fcf687876391b9ca22f3b573c13aa779753466994c499aaff67575a",
-      "summary": "3947 B"
+      "sha256": "c2237d853450bcacda8bf9e2fee060eb3792fcc06d7228311be6668639ed1344",
+      "summary": "4752 B"
     }
   }
 }

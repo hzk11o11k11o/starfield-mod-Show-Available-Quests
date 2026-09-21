@@ -1,5 +1,17 @@
 #!/usr/bin/env python3
-r"""create_board_markers.py - 给任务板入口新建**常驻 XMarker 引用**（第 30 轮，任意位置精确导航）。
+r"""create_board_markers.py - 给入口条目（任务板 + 第 80 轮的「可重复 NPC」）新建**常驻 XMarker 引用**（任意位置精确导航）。
+
+## ★ 第 80 轮扩展：NPC 条目也走这条路
+
+「提供无限任务的 NPC」（贸易管理局商人 / 追踪者联盟探员；数据
+ref/repeatable_givers.json）与任务板一样是**非常驻引用**（8/8，见
+tools/esm/gen_repeatable_givers.py）⇒ 同样需要常驻 marker：
+* 内景 NPC（7 位）⇒ 与任务板完全同款：marker 记录号接着排（0x90B 起），
+  CELL 空壳照抄（新 cell 只有 CityAkilaCityTradeAuthority 一个）；
+* 外景 NPC（阿基拉城广场的探员）⇒ **不建 marker**（外景 cell 里官方不放 per-cell
+  常驻引用，没有组头可照抄；它的兜底 = 该 worldspace 的世界级常驻引用，见
+  gen_repeatable_givers.py）—— 该条目在 board_markers.json 里不出现，DLL 侧
+  markerLocal=0，候选链退化为「引用自身 + 世界级兜底」。
 
 ## 背景：第 29 轮的 override 路线已被实机 + 数据双重否定
 
@@ -101,7 +113,10 @@ OUT_JSON = ROOT / "ref" / "board_markers.json"
 STARFIELD = Path(r"D:\SteamLibrary\steamapps\common\Starfield\Data\Starfield.esm")
 
 MARKER_FIRST_ID = 0x900            # marker 记录号从这里开始（0x800~0x805 已被 QUST/GLOB 占用）
+# ★ 前缀保留历史名字（第 30 轮为任务板而建；第 80 轮起 NPC 条目也用同一前缀 ——
+#   verify_saq_build.py 与 collect_records() 都按它筛选，改名只徒增波及面）。
 MARKER_EDID_PREFIX = "SAQ_BoardMarker_"
+GIVERS_JSON = ROOT / "ref" / "repeatable_givers.json"   # ★ 第 80 轮：NPC 入口数据
 XMARKER_BASE = 0x0000003B          # Starfield.esm 的 XMarker（无模型、无脚本）
 # ★ 第 33 轮：CELL 记录用官方的「空壳」写法（只留 EDID + 这个 flag —— SFBGS003/00D/050 同款）
 CELL_STUB_FLAG = 0x00004000
@@ -132,11 +147,18 @@ def count_masters(head: bytes) -> int:
 
 def build_marker_record(hdr_tmpl: bytes, local_id: int, edid: str, data24: bytes,
                         self_index: int) -> bytes:
-    """用原任务板记录头作模板（时间戳/版本字段照抄），只改 size/flags/formid。"""
+    """用源记录头作模板（时间戳/版本字段照抄），只改**签名**/size/flags/formid。
+
+    ★ 第 80 轮（自校验抓出来的真问题）：marker 的基类是 **XMarker（REFR 家族）**，
+    记录签名**必须**写成 `REFR` —— 模板是 NPC 时（源记录是 **ACHR**）如果照抄签名，
+    就会写出「base 指向 XMarker 的 ACHR」（非法记录：ACHR 的 NAME 必须指向 NPC_），
+    引擎轻则忽略、重则崩。任务板时代模板本来就是 REFR，所以这个坑第一次踩到。
+    """
     payload = (sub(b"EDID", edid.encode("latin1") + b"\x00") +
                sub(b"NAME", struct.pack("<I", XMARKER_BASE)) +
                sub(b"DATA", data24))
     hdr = bytearray(hdr_tmpl[:24])
+    hdr[0:4] = b"REFR"                 # ★ 强制 REFR（见 docstring）
     struct.pack_into("<I", hdr, 4, len(payload))
     struct.pack_into("<I", hdr, 8, PERSISTENT_FLAG)
     struct.pack_into("<I", hdr, 12, (self_index << 24) | local_id)
@@ -340,7 +362,8 @@ def collect_records(buf: bytes) -> tuple[dict[int, dict], dict[int, dict]]:
                                             "chain": list(chain)}
             elif edid and edid.startswith(MARKER_EDID_PREFIX):
                 seen[formid & 0xFFFFFF] = {"flags": flags, "chain": list(chain),
-                                           "edid": edid, "data": data24, "formid": formid}
+                                           "edid": edid, "data": data24, "formid": formid,
+                                           "sig": sig4.decode("latin1")}
             p += 24 + size
 
     head_size = struct.unpack_from("<I", buf, 4)[0]
@@ -364,6 +387,11 @@ def verify(buf: bytes, expect: list[dict], check_data: bool, self_index: int = -
         if got is None:
             problems.append(f"{e['nameZh']}（marker 0x{e['markerLocal']:X}）没有记录")
             continue
+        # ★ 第 80 轮：marker 基类是 XMarker ⇒ 签名必须是 REFR（NPC 模板的 ACHR 签名
+        #   会写出「base=XMarker 的 ACHR」这种非法记录；见 build_marker_record）
+        if got.get("sig") != "REFR":
+            problems.append(f"{e['nameZh']} marker 0x{e['markerLocal']:X} 记录签名="
+                            f"{got.get('sig')!r} ≠ 'REFR'（marker 的基类是 XMarker）")
         if got["edid"] != e["edid"]:
             problems.append(f"{e['nameZh']} EDID={got['edid']!r} 期望 {e['edid']!r}")
         if self_index >= 0 and (got["formid"] >> 24) != self_index:
@@ -435,16 +463,32 @@ def main() -> int:
     if a.check:
         return describe(target)
 
-    # 需要建档的条目（非常驻的任务板）：
-    #   ① 首选 ref/entry_targets.json 的 persistent 字段（快，与静态表一致）；
-    #   ② 不存在（首次构建）⇒ 用 gen_entry_table 的白名单，读 Starfield.esm 按 flags 判断。
-    need: list[dict] = []
+    # 需要建档的条目（非常驻引用）：
+    #   ① 任务板：首选 ref/entry_targets.json 的 persistent 字段（快，与静态表一致）；
+    #      不存在（首次构建）⇒ 用 gen_entry_table 的白名单，读 Starfield.esm 按 flags 判断；
+    #   ② ★ 第 80 轮：可重复 NPC（ref/repeatable_givers.json）—— 内景的建 marker、
+    #      外景的（阿基拉城探员）不建（外景 cell 无 per-cell 常驻组头可照抄）。
+    board_need: list[dict] = []
     if ENTRY_JSON.exists():
         entries = json.loads(ENTRY_JSON.read_text(encoding="utf-8"))
-        need = [{"refLocal": e["refLocal"], "refHex": e["refHex"], "nameZh": e["nameZh"],
-                 "cell": e["cell"]} for e in entries if not e["persistent"]]
-        need.sort(key=lambda e: e["refLocal"])
-    pending_scan = not need   # True ⇒ 需要读 Starfield.esm 才知道哪些要建档
+        # ★ 只取**任务板**（kind=0）—— entry_targets.json 从第 80 轮起也含 NPC 条目，
+        #   它们走下面的 npc_need（判据不同：外景条目不建档；且防止同一 refLocal 重复建档）。
+        board_need = [{"refLocal": e["refLocal"], "refHex": e["refHex"], "nameZh": e["nameZh"],
+                       "cell": e["cell"]} for e in entries
+                      if e.get("kind", 0) == 0 and not e["persistent"]]
+        board_need.sort(key=lambda e: e["refLocal"])
+    pending_scan = not board_need   # True ⇒ 需要读 Starfield.esm 才知道哪些任务板要建档
+
+    npc_need: list[dict] = []
+    if GIVERS_JSON.exists():
+        for g in json.loads(GIVERS_JSON.read_text(encoding="utf-8")):
+            if g.get("interior") and not g.get("persistent"):
+                npc_need.append({"refLocal": g["refLocal"], "refHex": g["refHex"],
+                                 "nameZh": g["nameZh"], "cell": g["cell"]})
+        npc_need.sort(key=lambda e: e["refLocal"])
+    else:
+        print(f"!! 缺少 {GIVERS_JSON}（先跑 tools/esm/gen_repeatable_givers.py）"
+              f"—— 本次不建 NPC marker（NPC 条目远处将不可导航）")
 
     buf = target.read_bytes()
     head, groups = split_top_groups(buf)
@@ -463,17 +507,23 @@ def main() -> int:
         print(f"移除 CELL 组 {n_old_cell} 个（numRecords {old} -> {n_rec + n_mast}，{len(out)} B）")
         return 0
 
-    def make_expect(items: list[dict]) -> list[dict]:
+    def make_expect(items: list[dict], first_id: int) -> list[dict]:
         return [{
             "refLocal": e["refLocal"], "refHex": e["refHex"], "nameZh": e["nameZh"],
-            "cell": e["cell"], "markerLocal": MARKER_FIRST_ID + i,
+            "cell": e["cell"], "markerLocal": first_id + i,
             "edid": f"{MARKER_EDID_PREFIX}{e['refLocal']:06X}",
         } for i, e in enumerate(items)]
 
-    expect = make_expect(need)
+    def make_all_expect(board_items: list[dict], npc_items: list[dict]) -> list[dict]:
+        # 编号规则：任务板 0x900+i（与第 30 轮一致），NPC 紧随其后 —— 实测 11 条板
+        # ⇒ NPC 从 0x90B 起（7 条：0x90B~0x911）。动态分配（不写死），板子数量变化也安全。
+        return make_expect(board_items, MARKER_FIRST_ID) + \
+            make_expect(npc_items, MARKER_FIRST_ID + len(board_items))
+
+    expect = make_all_expect(board_need, npc_need)
 
     # 快速路径：文件里已有结构正确的 CELL 组 + 条目集合来自缓存 ⇒ 不必读 1.4 GB 的 Starfield.esm
-    # （DATA 与任务板的一致性校验需要 Starfield 的原始字节，只在重建路径做。）
+    # （DATA 与源记录的一致性校验需要 Starfield 的原始字节，只在重建路径做。）
     if not pending_scan and n_old_cell == 1 and not verify(buf, expect, check_data=False,
                                                            self_index=self_index):
         print(f"CELL 组已是最新（{len(expect)} 条常驻 marker）—— 跳过重建")
@@ -482,22 +532,25 @@ def main() -> int:
 
     print(f"移除旧 CELL 组 {n_old_cell} 个（含第 29 轮的无效 override）")
     print(f"读 {STARFIELD.name}（约 1~2 分钟）…")
-    want = {r for r, *_ in BOARD_WHITELIST} if pending_scan else {e["refLocal"] for e in need}
+    want = {r for r, *_ in BOARD_WHITELIST} if pending_scan else {e["refLocal"] for e in board_need}
+    want |= {e["refLocal"] for e in npc_need}
     sc = scan_starfield(want)
     if pending_scan:
-        need = []
+        board_need = []
         for refr, cell_edid, _en, zh in BOARD_WHITELIST:
             b = sc["boards"].get(refr)
             if b is None:
                 raise SystemExit(f"白名单 REFR 0x{refr:06X} 在 Starfield.esm 里没找到")
             if not (b["flags"] & PERSISTENT_FLAG):
-                need.append({"refLocal": refr, "refHex": f"0x{refr:06X}", "nameZh": zh, "cell": cell_edid})
-        need.sort(key=lambda e: e["refLocal"])
-        expect = make_expect(need)
-        print(f"（首次路径：按 Starfield.esm 的 flags 判断）需要建档 {len(need)} / 白名单 {len(BOARD_WHITELIST)} 条")
-        if not need:
-            print("白名单里的任务板都已经是原生常驻 —— 没有要建档的")
-            return 0
+                board_need.append({"refLocal": refr, "refHex": f"0x{refr:06X}", "nameZh": zh, "cell": cell_edid})
+        board_need.sort(key=lambda e: e["refLocal"])
+        print(f"（首次路径：按 Starfield.esm 的 flags 判断）需要建档的任务板 {len(board_need)} / "
+              f"白名单 {len(BOARD_WHITELIST)} 条；NPC {len(npc_need)} 条")
+    expect = make_all_expect(board_need, npc_need)
+    need = board_need + npc_need
+    if not need:
+        print("入口条目都已经是原生常驻 —— 没有要建档的")
+        return 0
     missing = [e for e in need if e["refLocal"] not in sc["boards"]]
     if missing:
         raise SystemExit("Starfield.esm 里没找到：" + ", ".join(e["refHex"] for e in missing))

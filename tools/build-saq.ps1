@@ -131,6 +131,12 @@ if (-not $SkipTable) {
     Step '1/6' '生成同伴好感度任务表（gen_companion_quests.py → ref\companion_quests.json）'
     & python (Join-Path $root 'tools\esm\gen_companion_quests.py') | Write-Host
     if ($LASTEXITCODE -ne 0) { throw "gen_companion_quests.py 失败（exit $LASTEXITCODE）" }
+    # ★★ 第 80 轮：「提供无限任务的 NPC」入口（RAD03 贸易管理局商人 ×4 / RAD04 追踪者联盟
+    #   探员 ×4）—— gp 扫 Starfield.esm 拿 REFR + 兜底候选（内景同 cell / 外景世界级），
+    #   产物 ref\repeatable_givers.json 由 create_board_markers.py 与 gen_entry_table.py 消费。
+    Step '1/6' '生成可重复任务 NPC 入口表（gen_repeatable_givers.py → ref\repeatable_givers.json）'
+    & python (Join-Path $root 'tools\esm\gen_repeatable_givers.py') | Write-Host
+    if ($LASTEXITCODE -ne 0) { throw "gen_repeatable_givers.py 失败（exit $LASTEXITCODE）" }
     Step '1/6' '生成静态任务表（gen_quest_table.py）'
     & python (Join-Path $root 'tools\esm\gen_quest_table.py') | Write-Host
     if ($LASTEXITCODE -ne 0) { throw "gen_quest_table.py 失败（exit $LASTEXITCODE）" }

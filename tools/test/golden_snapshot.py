@@ -42,6 +42,9 @@ ITEMS: list[tuple[str, str]] = [
     ("ref/ctda_gates.json", "进度门槛数据（analyze_ctda.py）"),
     ("ref/info_gates_final.json", "INFO 门槛数据（analyze_info_gates.py）"),
     ("ref/guide_targets.json", "引导目标候选池（gen_guide_targets.py）"),
+    # ★★ 第 80 轮：提供无限任务的 NPC 入口（贸易管理局商人 / 追踪者联盟探员；
+    #   gen_repeatable_givers.py —— 是 entry_targets / board_markers 的上游数据源）
+    ("ref/repeatable_givers.json", "可重复任务 NPC 入口（gen_repeatable_givers.py）"),
     ("ref/entry_targets.json", "任务板入口表（gen_entry_table.py）"),
     ("ref/board_markers.json", "新建常驻 marker（create_board_markers.py）"),
     # ★★ 第 74 轮：同伴好感度任务（入口固定显示 + 后续启动边；gen_companion_quests.py）
@@ -108,6 +111,10 @@ def summarize(rel: str, path: pathlib.Path) -> str:
                 # ★★ 第 75 轮：四大势力开头任务 —— 条数 + 可引导数（其余只给说明）
                 n_guide = sum(1 for g in obj if g.get("guide"))
                 return f"势力 {len(obj)}（可引导 {n_guide}）"
+            if rel.endswith("repeatable_givers.json") and isinstance(obj, list):
+                # ★★ 第 80 轮：可重复任务 NPC —— 条数 + 内景建档数（外景的不建 marker）
+                n_int = sum(1 for g in obj if g.get("interior"))
+                return f"NPC {len(obj)}（内景建档 {n_int} / 外景 {len(obj) - n_int}）"
             return f"键 {len(obj)}" if isinstance(obj, dict) else f"条目 {len(obj)}"
         if rel.endswith("SaqEmbeddedPayload.inc"):
             # ★★ 第 74 轮续：内嵌载荷 —— 条数 + 第一条 FormID（顺序不变量的第一眼证据）

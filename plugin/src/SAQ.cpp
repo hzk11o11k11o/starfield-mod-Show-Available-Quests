@@ -90,6 +90,24 @@ namespace SAQ
 		// ★ 第 27 轮：无限任务入口（任务板）—— payload 的 type 列用这个值，AS3 侧据此
 		//   换文案（子项「前往任务板」+ 专用描述），普通任务不会用到 100。
 		constexpr std::int32_t kEntryQuestType = 100;
+		// ★★ 第 80 轮：「提供无限任务的 NPC」入口（贸易管理局商人 / 追踪者联盟探员）——
+		//   载荷 type 用 101（AS3 侧：子项「找他接活」+ 可重复任务专用描述）。
+		//   名字里自带「（可重复）」前缀（数据侧加好，见 SAQ_EntryTable.h）。
+		constexpr std::int32_t kNpcEntryQuestType = 101;
+
+		// ★ 第 80 轮：入口表两类的条数（编译期从静态表算 —— 日志/用例对账用）。
+		constexpr std::size_t CountEntryKind(std::uint8_t a_kind)
+		{
+			std::size_t n = 0;
+			for (const auto& e : kEntryTable) {
+				if (e.kind == a_kind) {
+					++n;
+				}
+			}
+			return n;
+		}
+		constexpr std::size_t kEntryBoardCount = CountEntryKind(kEntryKindBoard);
+		constexpr std::size_t kEntryNpcCount = CountEntryKind(kEntryKindRepeatNpc);
 		// 测试模式 5 = 只显示入口条目（在列表里单独验证任务板入口，不受 260 条任务干扰）。
 		constexpr int kEntryOnlyTestMode = 5;
 		// ★ 第 46 轮：测试模式值的**上限**（6 = 只显示「需要靠近」的任务）。
@@ -799,10 +817,11 @@ namespace SAQ
 				prefix, probe((prefix << 24) | kOwnQuestLocal) ? "有" : "无");
 		}
 
-		// ★ 第 27 轮：「无限任务入口」（任务板）条目 —— uID = 界面标识 = 任务板引用的运行期 FormID。
+		// ★ 第 27 轮：「无限任务入口」条目（第 80 轮起含「提供无限任务的 NPC」）——
+		//   uID = 界面标识 = 条目引用的运行期 FormID（任务板 ACTIVATOR / NPC 的 ACHR）。
 		//
-		// 需求（AGENTS.md）：无限生成任务本身不显示，但「接取入口」（任务板）作为一条
-		// 数据出现在列表里，点了就引导到那块任务板。入口不是 quest，所以不走
+		// 需求（AGENTS.md）：无限生成任务本身不显示，但「接取入口」（任务板、提供无限任务的
+		// NPC）作为一条数据出现在列表里，点了就引导到它的位置。入口不是 quest，所以不走
 		// 「已完成 / 已接取」那套运行时过滤。
 		void AppendEntryRows(std::vector<QuestEntry>& a_out, RuntimeFilterStats& a_stats)
 		{
@@ -819,7 +838,8 @@ namespace SAQ
 
 				QuestEntry entry;
 				entry.formID = boardID;
-				entry.type = kEntryQuestType;  // AS3：入口条目（子项/描述换文案）
+				// AS3：入口条目（子项/描述换文案）—— 任务板 100 / 可重复 NPC 101（第 80 轮）。
+				entry.type = (e.kind == kEntryKindRepeatNpc) ? kNpcEntryQuestType : kEntryQuestType;
 				// 入口不是任务：没有阵营（界面把 type=100 折叠回「任务」图标显示）。
 				entry.faction = -1;
 				entry.hasGuideTarget = (st.target != 0);
@@ -3599,8 +3619,10 @@ namespace SAQ
 			const auto masters = BuildRuntimeRows(g_pending.stats);
 			CollectAvailableQuests(g_pending.quests, g_pending.total, g_pending.stats, testMode.mode);
 			const auto collectCost = NowMs() - t0;
-			// ★ 第 27 轮：入口条目表（任务板）一并报出来 —— 排查「任务板没显示」先看这里。
-			REX::INFO("数据源：{}；入口条目表={} 条（任务板）", masters, kEntryTableSize);
+			// ★ 第 27 轮：入口条目表一并报出来 —— 排查「入口没显示」先看这里。
+			//   ★ 第 80 轮：两类（任务板 + 提供无限任务的 NPC），数字让排查一眼能对账。
+			REX::INFO("数据源：{}；入口条目表={} 条（任务板 {} + 可重复 NPC {}）",
+				masters, kEntryTableSize, kEntryBoardCount, kEntryNpcCount);
 			// ★ 第 46 轮：**无论开没开都打这一行**。起因：ini 写 `Mode=6` 而解析层把未知值
 			//   静默折成 0 时，日志里**一行都没有** —— 玩家只知道「过滤没生效」，无从下手。
 			//   现在 mode=0 也会写 `测试模式：0（关闭（显示全部））[来源=ini]`，
