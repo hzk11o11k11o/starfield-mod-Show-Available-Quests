@@ -161,7 +161,7 @@ namespace SAQ::Decision
 		return out;
 	}
 
-	// ------------------------------------------------- 3b. 同伴好感度任务（第 74 轮）
+	// ------------------------------------------------- 3b. 「固定显示」的两类任务（第 74/75 轮）
 
 	bool IsCompanionPinned(std::uint8_t a_companionPin)
 	{
@@ -169,6 +169,46 @@ namespace SAQ::Decision
 		// （个人任务 COM_Quest_<同伴>_Q01 —— 由好感度里程碑直接启动的那一环）⇒ 固定显示。
 		// 「后续」（承诺任务）是 0：照旧走链式门槛（前置好感度里程碑没到就不显示）。
 		return a_companionPin != 0;
+	}
+
+	bool IsFactionEntryPinned(std::int8_t a_factionEntry)
+	{
+		// ★★ 第 75 轮：语义见 SAQ_QuestTable.h 的 StaticQuestInfo::factionEntry：
+		//   0..3 = 四大势力开头任务（同时是固定顺序）⇒ 固定显示 + 固定排前四。
+		return a_factionEntry >= 0;
+	}
+
+	bool IsGatePinned(std::uint8_t a_companionPin, std::int8_t a_factionEntry)
+	{
+		// 两个来源的合并（调用点只用这一个）：入口同伴任务 / 四大势力开头任务。
+		return IsCompanionPinned(a_companionPin) || IsFactionEntryPinned(a_factionEntry);
+	}
+
+	// ------------------------------------------------- 3c. 列表顺序（第 74/75 轮）
+
+	EntryOrderKey PinnedOrderKey(std::int8_t a_factionEntry, std::int8_t a_companion,
+		std::uint8_t a_companionPin)
+	{
+		if (a_factionEntry >= 0) {
+			// 四大势力开头任务：最靠前；组内按下标 = 固定顺序（UC → FC → RI → CF）。
+			return { 0, a_factionEntry };
+		}
+		if (a_companion >= 0) {
+			// 同伴任务：按同伴分组；同一位同伴的「入口」（pin）在「后续」之前。
+			return { 1, a_companion * 2 + (IsCompanionPinned(a_companionPin) ? 0 : 1) };
+		}
+		return { 2, 0 };
+	}
+
+	bool PinnedOrderLess(const EntryOrderKey& a, const EntryOrderKey& b)
+	{
+		if (a.group != b.group) {
+			return a.group < b.group;   // 势力开头 → 同伴 → 其余
+		}
+		if (a.group == 2) {
+			return false;               // 其余：保持原顺序（stable_sort 的语义，别动）
+		}
+		return a.rank < b.rank;
 	}
 
 	GateAction DecideGateAction(CondVerdict a_verdict, bool a_pinned)

@@ -9,6 +9,8 @@
                                             （gen_faction_types.py 生成；缺失 ⇒ 全部按无阵营）
     ref/companion_quests.json               ★★ 第 74 轮：同伴好感度任务（gen_companion_quests.py
                                             生成；缺失 ⇒ 不标记 —— 这类任务就不会固定显示）
+    ref/faction_entry_quests.json           ★★ 第 75 轮：四大势力开头任务（gen_faction_entry_quests.py
+                                            生成；缺失 ⇒ 不标记 —— 也不会固定排前四）
 输出：
     plugin/src/SAQ_QuestTable.h             C++ 静态数组（多 master）
     ref/quest_table_debug.json              同样的数据（便于人工核对）
@@ -167,18 +169,25 @@ def sanitize_name(s: str) -> str:
 
 
 def payload_order(rows: list[dict]) -> list[dict]:
-    """★★ 第 74 轮（同伴好感度任务）：内嵌回退载荷的条目顺序 —— 与 C++ 侧**逐条对齐**。
+    """★★ 第 74/75 轮：内嵌回退载荷的条目顺序 —— 与 C++ 侧**逐条对齐**。
 
-    C++（SAQ.cpp 的 CollectAvailableQuests）收集完成后把同伴任务**前置**（按同伴分组、
-    同一位同伴的「入口」在「后续」之前），其余任务保持表顺序（稳定排序）；
+    C++（SAQ.cpp 的 CollectAvailableQuests）收集完成后把两类「固定显示」的任务**前置**：
+      ① ★★ 第 75 轮：四大势力开头任务（faction_entry ≥ 0）—— 玩家要求
+         「固定排在可接任务列表的**前四个**」，组内按 faction_entry 下标（= 固定顺序）；
+      ② ★ 第 74 轮：同伴任务（按同伴分组、同一位同伴的「入口」在「后续」之前）；
+    其余任务保持表顺序（稳定排序）。
     内嵌载荷必须同序 —— 否则「C++ 推送失败 → 内嵌回退」的窗口里列表顺序会跳变
-    （第 65 轮踩过列不对齐的坑，顺序同理）。
+    （第 65 轮踩过列不对齐的坑，顺序同理；★ 第 74 轮的 `order=` 探针会直接把顺序报出来）。
     """
-    companions = [r for r in rows if int(r.get("companion", -1)) >= 0]
-    others = [r for r in rows if int(r.get("companion", -1)) < 0]
+    factions = [r for r in rows if int(r.get("faction_entry", -1)) >= 0]
+    companions = [r for r in rows if int(r.get("faction_entry", -1)) < 0
+                  and int(r.get("companion", -1)) >= 0]
+    others = [r for r in rows if int(r.get("faction_entry", -1)) < 0
+              and int(r.get("companion", -1)) < 0]
+    factions.sort(key=lambda r: int(r["faction_entry"]))
     companions.sort(key=lambda r: (int(r["companion"]),
                                    0 if int(r.get("companion_pin", 0)) else 1))
-    return companions + others
+    return factions + companions + others
 
 
 def build_payload(rows: list[dict], title_zh: str = "可接任务", title_en: str = "Available") -> str:
@@ -190,23 +199,28 @@ def build_payload(rows: list[dict], title_zh: str = "可接任务", title_en: st
     ★ 第 23 轮：倒数第四列是「有没有引导目标」（1/0）——界面据此决定能不能导航。
     ★ 第 46 轮：倒数第三列 = 「全部候选都非常驻」（需要靠近才加载目标）。
       第 65 轮补上 —— 此前内嵌回退载荷缺这列，AS3 会把阵营列误读成它。
-    ★ 第 65 轮（任务专属图标）：倒数第二列 = 原版 UI 阵营枚举（-1 = 无阵营），
+    ★ 第 65 轮（任务专属图标）：倒数第四列 = 原版 UI 阵营枚举（-1 = 无阵营），
       界面据此显示主线/势力专属图标。
-    ★★ 第 74 轮（同伴好感度任务）：最后一列 = 「同伴任务」（1/0）—— 界面在描述里
+    ★★ 第 74 轮（同伴好感度任务）：倒数第三列 = 「同伴任务」（1/0）—— 界面在描述里
       提示「需要一定好感度才能接取」；旧载荷缺列 ⇒ false（不提这回事）。
+    ★★ 第 75 轮（四大势力开头任务）：最后两列 = 「简要说明」（中 / 英）——
+      界面把它写在描述里（固定显示的那四条：加入方式 / 前置条件）；
+      其余任务是空串。旧载荷缺列 ⇒ 空串（走原来的「这条任务当前可以接取」文案）。
     """
     lines = ["SAQ1", f"T\t{title_zh}\t{title_en}"]
-    # ★★ 第 74 轮：顺序与 C++ 对齐（同伴任务前置 + 按同伴分组，见 payload_order）
+    # ★★ 第 74/75 轮：顺序与 C++ 对齐（势力开头任务 → 同伴任务 → 其余，见 payload_order）
     for r in payload_order(rows):
         fid = r["formid"] if isinstance(r["formid"], int) else int(r["formid"], 16)
         has_target = "1" if int(r.get("cand_count", 0)) else "0"
         approach = "1" if r.get("needs_approach") else "0"
         faction = int(r.get("faction", -1))
         companion = "1" if int(r.get("companion", -1)) >= 0 else "0"
+        note_zh = sanitize_name(r["noteZh"]) if int(r.get("faction_entry", -1)) >= 0 else ""
+        note_en = sanitize_name(r["noteEn"]) if int(r.get("faction_entry", -1)) >= 0 else ""
         lines.append(
             f'Q\t{fid}\t{r["itype"]}\t{sanitize_name(r["name_zh"])}'
             f'\t{sanitize_name(r["name_en"])}\t{has_target}\t{approach}\t{faction}'
-            f'\t{companion}'
+            f'\t{companion}\t{note_zh}\t{note_en}'
         )
     return "\n".join(lines) + "\n"
 
@@ -272,6 +286,22 @@ def load_companions(path: Path) -> list[dict]:
     if not path.exists():
         print(f"（没有 {path} —— 同伴好感度任务不会被固定显示，"
               f"先跑 tools/esm/gen_companion_quests.py）")
+        return []
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def load_faction_entries(path: Path) -> list[dict]:
+    """★★ 第 75 轮：四大势力开头任务（tools/esm/gen_faction_entry_quests.py 生成）。
+
+    这四条（UC01 超越极限 / FC01 枝节横生 / RI01 重返职场 / CF01 深藏不露）是各自
+    势力线的**第一环** ⇒ 运行时「固定显示」（跳过三类门槛）+ **固定排在列表前四个**
+    （玩家要求）+ 描述里写「简要说明」（加入方式 / 前置条件，载荷最后两列）。
+    `guide=false` 的那条（深红舰队）另有处置：**清空引导候选**（见下面的候选循环）。
+    缺失 ⇒ 不标记（功能退化：这四条按普通任务处理，不会写错数据）。
+    """
+    if not path.exists():
+        print(f"（没有 {path} —— 四大势力开头任务不会被固定显示，"
+              f"先跑 tools/esm/gen_faction_entry_quests.py）")
         return []
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -408,6 +438,9 @@ def main() -> int:
     ap.add_argument("--companions", default="ref/companion_quests.json",
                     help="★★ 第 74 轮：同伴好感度任务（gen_companion_quests.py 产物；"
                          "缺失 ⇒ 不标记，这类任务不会固定显示）")
+    ap.add_argument("--faction-entries", default="ref/faction_entry_quests.json",
+                    help="★★ 第 75 轮：四大势力开头任务（gen_faction_entry_quests.py 产物；"
+                         "缺失 ⇒ 不标记，这四条不会固定排前四）")
     ap.add_argument("--out-header", default="plugin/src/SAQ_QuestTable.h")
     ap.add_argument("--out-json", default="ref/quest_table_debug.json")
     ap.add_argument("--out-as3", default="ui/missionmenu/saqdata/SaqEmbeddedPayload.inc")
@@ -499,6 +532,9 @@ def main() -> int:
             # ★★ 第 74 轮（同伴好感度任务）：-1 = 不是；≥0 = kCompanionNames 下标。
             #   真正的标记与名字前缀在下面 apply_companions 里统一做（要两遍）。
             "companion": -1,
+            # ★★ 第 75 轮（四大势力开头任务）：-1 = 不是；≥0 = kFactionEntry* 下标
+            #   （同时是**固定顺序**：0 = 联合殖民地 … 3 = 深红舰队）。同样在两遍里做。
+            "faction_entry": -1,
         }
         if not a.keep_internal:
             reason = filter_reason(row, raw_en, raw_zh)
@@ -564,6 +600,39 @@ def main() -> int:
         print(f"  {g['nameZh']:<10}（{g['nameEn']}）：入口 {'、'.join(entries)}"
               f"｜后续 {'、'.join(follows)}")
 
+    # ★★ 第 75 轮（四大势力开头任务）：固定显示 + 固定排前四 + 描述里的「简要说明」。
+    #   数据 = ref/faction_entry_quests.json（gen_faction_entry_quests.py；核验过
+    #   「是势力线第一环」+ 引导候选 / 阵营枚举 / 说明文本）；缺失 ⇒ 不标记。
+    #   ★ guide=false 的那条（深红舰队「深藏不露」）另有处置：下面的候选循环会
+    #     **清空它的引导候选**（玩家要求「只保留简要说明」—— 它的接取点在先锋队线
+    #     两个任务之后才出现，给引导只会把玩家引到错的地方）。
+    faction_entries = load_faction_entries(Path(a.faction_entries))
+    fac_by_formid = {int(g["quest"]["formid"]): i for i, g in enumerate(faction_entries)}
+    fac_guide = {i: bool(g["guide"]) for i, g in enumerate(faction_entries)}
+    n_faction_entries = 0
+    for r in rows:
+        idx = fac_by_formid.get(int(r["formid"]))
+        if idx is None:
+            continue
+        r["faction_entry"] = idx
+        # 说明文本只给这四条（载荷最后两列）—— 其余任务保持空串
+        r["noteZh"] = faction_entries[idx]["noteZh"]
+        r["noteEn"] = faction_entries[idx]["noteEn"]
+        n_faction_entries += 1
+    rows_formids = {int(r["formid"]) for r in rows}
+    missing_fac = [g["key"] for g in faction_entries
+                   if int(g["quest"]["formid"]) not in rows_formids]
+    if missing_fac:
+        print(f"  !! 势力开头任务表里有、但静态表里没有的任务（不会固定显示）：{missing_fac}")
+    if faction_entries:
+        print(f"四大势力开头任务：{n_faction_entries}/{len(faction_entries)} 条标记"
+              f"（固定显示 + 固定排前四；说明写进载荷最后两列）")
+        for i, g in enumerate(faction_entries):
+            if int(g["quest"]["formid"]) in rows_formids:
+                print(f"  {i}. {g['quest']['nameZh']} / {g['quest']['nameEn']}"
+                      f"（{g['nameZh']} / {g['nameEn']}）"
+                      f"{'可引导' if g['guide'] else '只给说明（候选会被清空）'}")
+
     # 引导目标（第 10 轮；★ 第 45 轮升级为「候选池」）：每条任务在世界里的
     # 「去哪里接」引用序列（gen_guide_targets.py 按质量排序 —— 有名字的 NPC >
     # 可读名落脚点 > 通用名 NPC > 内部名落脚点；同级内常驻优先）。
@@ -586,6 +655,15 @@ def main() -> int:
                 unknown_guide_master.add(cm)
                 continue
             ok_cands.append(c)
+        # ★★ 第 75 轮（四大势力开头任务）：明确「只给说明」的那条（深红舰队「深藏不露」）
+        #   ⇒ **清空引导候选** —— 界面侧因此走「不可导航」通路（点击给提示 + 描述里写明
+        #   原因），不会把玩家引到 CF 线中途才存在的 NPC 那里去。判据来自
+        #   ref/faction_entry_quests.json 的 guide=false（玩家要求「只保留简要说明」）。
+        if int(r.get("faction_entry", -1)) >= 0 and not fac_guide.get(int(r["faction_entry"]), True):
+            if ok_cands:
+                print(f"  · {r['name_zh']}：按势力入口表清空 {len(ok_cands)} 个引导候选"
+                      f"（只保留说明）")
+            ok_cands = []
         r["cand_begin"] = len(cand_flat)
         r["cand_count"] = len(ok_cands)
         # ★ 第 65 轮：内嵌回退载荷要跟 C++ 的 Q 行**逐列对齐** —— 这里补算
@@ -740,6 +818,10 @@ def main() -> int:
     lines.append("// ★★ 第 74 轮（同伴好感度任务）：行尾两列 = companion（同伴下标，-1 = 不是）")
     lines.append("//   + companionPin（1 = 「入口」同伴任务 ⇒ 固定显示 + 名字带同伴前缀）。")
     lines.append("//   「后续」同伴任务（承诺任务，pin=0）照旧走链式门槛（前置没到不显示）。")
+    lines.append("// ★★ 第 75 轮（四大势力开头任务）：最后一列 = factionEntry（-1 = 不是；")
+    lines.append("//   0..3 = kFactionEntryNames* 下标）—— 这四条**固定显示**（跳过三类门槛）+")
+    lines.append("//   **固定排在列表前四个**（按本列升序）+ 描述里写「简要说明」")
+    lines.append("//   （载荷最后两列，来自 kFactionEntryNotesZh/En）。")
     lines.append("//")
     lines.append("// ★ 多 master（DLC）：表里存的是「master 下标 + 记录号(local)」，不是运行期 FormID ——")
     lines.append("//   高字节是加载顺序，只有运行时才知道（见 SAQ.cpp 的 MasterResolver）。")
@@ -820,6 +902,21 @@ def main() -> int:
     lines.append("\t\t//   玩家要求：「把所有达到一定好感度才能接到的同伴任务固定在可接任务列表里」")
     lines.append("\t\t//   + 「链式关系的后续任务还是不要显示，只显示入口任务」。")
     lines.append("\t\tstd::uint8_t  companionPin;")
+    lines.append("\t\t// ★★ 第 75 轮（四大势力开头任务）：这条是不是「四大势力开头任务」——")
+    lines.append("\t\t//   -1 = 不是；>= 0 = kFactionEntryNamesZh/En 的下标（**同时是固定顺序**：")
+    lines.append("\t\t//   0 = 联合殖民地先锋队 / 1 = 自由星游骑兵 / 2 = 龙神工业 / 3 = 深红舰队）。")
+    lines.append("\t\t//   语义（玩家 2026-09-21 要求「固定显示，并固定排在可接任务列表的前四个；")
+    lines.append("\t\t//   除了深红舰队，其他都能正常引导；深红舰队只保留简要说明」）：")
+    lines.append("\t\t//     * **固定显示**：跳过进度 / INFO / 链式三类门槛（同同伴「入口」任务）；")
+    lines.append("\t\t//     * **固定排前四**：列表排序时这一组最靠前（按本列升序），")
+    lines.append("\t\t//       载荷（C++ 推送 + 内嵌回退）与界面顺序逐条对齐；")
+    lines.append("\t\t//     * **简要说明**：kFactionEntryNotesZh/En 的同一下标 —— C++ 写进载荷最后")
+    lines.append("\t\t//       两列，界面把它当描述的第一句（「加入方式 / 前置条件」）；")
+    lines.append("\t\t//     * 「深红舰队」那条（guide=false 的数据）在生成期就被**清空引导候选**")
+    lines.append("\t\t//       （candCount == 0）⇒ 界面按「不可导航」处理（点击给提示、描述写明原因）。")
+    lines.append("\t\t//   数据源：ref/faction_entry_quests.json（tools/esm/gen_faction_entry_quests.py；")
+    lines.append("\t\t//   核验「势力线第一环」+ 引导候选 + 阵营枚举 + 说明文本）。")
+    lines.append("\t\tstd::int8_t   factionEntry;")
     lines.append("\t};")
     lines.append("")
     lines.append("\t// 进度门槛（第 35 轮，「游戏进度还不能让玩家接到 ⇒ 不显示」）：")
@@ -946,6 +1043,36 @@ def main() -> int:
     lines.append("\t};")
     lines.append(f"\tinline constexpr std::size_t kCompanionCount = {len(companions)};")
     lines.append("")
+    lines.append("\t// ★★ 第 75 轮（四大势力开头任务）：显示名 / 「简要说明」（下标 = StaticQuestInfo::")
+    lines.append("\t//   factionEntry；**顺序就是固定顺序** —— 联合殖民地 → 自由星 → 龙神 → 深红舰队）。")
+    lines.append("\t//   说明由 C++ 写进载荷最后两列（界面描述里的第一句）；")
+    lines.append("\t//   数据源：ref/faction_entry_quests.json（gen_faction_entry_quests.py）。")
+    lines.append("\tinline constexpr const char* kFactionEntryNamesZh[] = {")
+    for g in faction_entries:
+        lines.append(f'\t\t"{c_escape(g["nameZh"])}",')
+    if not faction_entries:
+        lines.append('\t\t"",  // 占位（表为空时 MSVC 不允许零长数组）')
+    lines.append("\t};")
+    lines.append("\tinline constexpr const char* kFactionEntryNamesEn[] = {")
+    for g in faction_entries:
+        lines.append(f'\t\t"{c_escape(g["nameEn"])}",')
+    if not faction_entries:
+        lines.append('\t\t"",  // 占位（表为空时 MSVC 不允许零长数组）')
+    lines.append("\t};")
+    lines.append("\tinline constexpr const char* kFactionEntryNotesZh[] = {")
+    for g in faction_entries:
+        lines.append(f'\t\t"{c_escape(g["noteZh"])}",')
+    if not faction_entries:
+        lines.append('\t\t"",  // 占位（表为空时 MSVC 不允许零长数组）')
+    lines.append("\t};")
+    lines.append("\tinline constexpr const char* kFactionEntryNotesEn[] = {")
+    for g in faction_entries:
+        lines.append(f'\t\t"{c_escape(g["noteEn"])}",')
+    if not faction_entries:
+        lines.append('\t\t"",  // 占位（表为空时 MSVC 不允许零长数组）')
+    lines.append("\t};")
+    lines.append(f"\tinline constexpr std::size_t kFactionEntryCount = {len(faction_entries)};")
+    lines.append("")
     lines.append(f"\tinline constexpr StaticQuestInfo kQuestTable[] = {{")
     for r in rows:
         flags = int(r.get("dnam_flags", 0))
@@ -958,7 +1085,7 @@ def main() -> int:
             f' "{c_escape(r["guide_where_en"])}", "{c_escape(r["guide_where_zh"])}",'
             f' "{c_escape(r["name_en"])}", "{c_escape(r["name_zh"])}",'
             f' {int(r.get("faction", -1))}, {int(r.get("companion", -1))},'
-            f' {int(r.get("companion_pin", 0))}u }},'
+            f' {int(r.get("companion_pin", 0))}u, {int(r.get("faction_entry", -1))} }},'
         )
     lines.append("\t};")
     lines.append(f"\tinline constexpr std::size_t kQuestTableSize = {len(rows)};")

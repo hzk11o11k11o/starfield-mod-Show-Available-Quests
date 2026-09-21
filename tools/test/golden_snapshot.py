@@ -46,6 +46,8 @@ ITEMS: list[tuple[str, str]] = [
     ("ref/board_markers.json", "新建常驻 marker（create_board_markers.py）"),
     # ★★ 第 74 轮：同伴好感度任务（入口固定显示 + 后续启动边；gen_companion_quests.py）
     ("ref/companion_quests.json", "同伴好感度任务（gen_companion_quests.py）"),
+    # ★★ 第 75 轮：四大势力开头任务（固定显示 + 固定排前四；gen_faction_entry_quests.py）
+    ("ref/faction_entry_quests.json", "四大势力开头任务（gen_faction_entry_quests.py）"),
     ("plugin/src/SAQ_QuestTable.h", "静态任务表（gen_quest_table.py，DLL 编译进去）"),
     # ★★ 第 74 轮续：内嵌回退载荷（顺序与 C++ 载荷逐条对齐 —— 同伴任务前置参见 verify）
     ("ui/missionmenu/saqdata/SaqEmbeddedPayload.inc", "内嵌回退载荷（gen_quest_table.py）"),
@@ -102,6 +104,10 @@ def summarize(rel: str, path: pathlib.Path) -> str:
                 qs = [q for g in obj for q in g.get("quests", [])]
                 n_pin = sum(1 for q in qs if q.get("pin"))
                 return f"同伴 {len(obj)} / 任务 {len(qs)}（入口 {n_pin}）"
+            if rel.endswith("faction_entry_quests.json") and isinstance(obj, list):
+                # ★★ 第 75 轮：四大势力开头任务 —— 条数 + 可引导数（其余只给说明）
+                n_guide = sum(1 for g in obj if g.get("guide"))
+                return f"势力 {len(obj)}（可引导 {n_guide}）"
             return f"键 {len(obj)}" if isinstance(obj, dict) else f"条目 {len(obj)}"
         if rel.endswith("SaqEmbeddedPayload.inc"):
             # ★★ 第 74 轮续：内嵌载荷 —— 条数 + 第一条 FormID（顺序不变量的第一眼证据）
@@ -117,6 +123,8 @@ def summarize(rel: str, path: pathlib.Path) -> str:
                 "kInfoGroupCount": "INFO对话",
                 "kInfoCondCount": "INFO条件",
                 "kChainGateCount": "链式边",     # ★ 第 67 轮：任务链门槛
+                "kCompanionCount": "同伴",       # ★★ 第 74 轮：同伴好感度任务
+                "kFactionEntryCount": "势力入口",  # ★★ 第 75 轮：四大势力开头任务
                 "kEntryTableSize": "入口",
             }
             parts = []

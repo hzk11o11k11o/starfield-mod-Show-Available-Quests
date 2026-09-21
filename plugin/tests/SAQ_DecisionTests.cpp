@@ -289,6 +289,64 @@ MT_TEST(同伴固定显示_入口任务跳过三类门槛)
 	}
 }
 
+// ---------------------------------------------- 4d. 四大势力开头任务（第 75 轮）
+
+MT_TEST(势力开头任务_固定显示与两类来源合并)
+{
+	// 判据：factionEntry ≥ 0 = 四大势力开头任务（0 = 联合殖民地 … 3 = 深红舰队）。
+	MT_CHECK_EQ(IsFactionEntryPinned(-1), false);
+	for (int i = 0; i < 4; ++i) {
+		MT_CHECK_EQ(IsFactionEntryPinned(static_cast<std::int8_t>(i)), true);
+	}
+	MT_CHECK_EQ(IsFactionEntryPinned(127), true);   // 字段只当下标/布尔用
+
+	// 合并判据：两个来源任一命中 ⇒ 固定显示（调用点只用这一个）。
+	for (int pin = 0; pin < 2; ++pin) {
+		for (int fac = -1; fac < 2; ++fac) {
+			const bool want = pin != 0 || fac >= 0;
+			MT_CHECK_EQ(IsGatePinned(static_cast<std::uint8_t>(pin),
+				static_cast<std::int8_t>(fac)), want);
+		}
+	}
+}
+
+MT_TEST(列表顺序_势力开头在最前_同伴随后_其余保持原序)
+{
+	// 键：group 0 = 势力开头任务（rank = factionEntry）；1 = 同伴（rank = 同伴*2 + 入口优先）；
+	//     2 = 其余（rank 固定 0 —— 比较器对两个「其余」返回 false，保持输入顺序）。
+	const auto f0 = PinnedOrderKey(0, -1, 0);
+	const auto f3 = PinnedOrderKey(3, -1, 0);
+	const auto c0 = PinnedOrderKey(-1, 0, 1);          // 同伴 0 的「入口」
+	const auto c0f = PinnedOrderKey(-1, 0, 0);         // 同伴 0 的「后续」
+	const auto c1 = PinnedOrderKey(-1, 1, 1);
+	const auto other = PinnedOrderKey(-1, -1, 0);
+	const auto other2 = PinnedOrderKey(-1, -1, 1);
+
+	MT_CHECK_EQ(f0.group, 0);
+	MT_CHECK_EQ(c0.group, 1);
+	MT_CHECK_EQ(other.group, 2);
+
+	// 全序：势力（按下标升序）→ 同伴（按同伴分组、入口在后续前）→ 其余
+	MT_CHECK(PinnedOrderLess(f0, f3));
+	MT_CHECK(PinnedOrderLess(f3, c0));
+	MT_CHECK(PinnedOrderLess(c0, c0f));    // 同一位同伴：入口在后续之前
+	MT_CHECK(PinnedOrderLess(c0f, c1));    // 按同伴分组
+	MT_CHECK(PinnedOrderLess(c1, other));
+	// 其余之间：两个方向都 false（stable_sort ⇒ 保持原顺序）
+	MT_CHECK_EQ(PinnedOrderLess(other, other2), false);
+	MT_CHECK_EQ(PinnedOrderLess(other2, other), false);
+	// 自反：任何键都不小于自己
+	for (const auto& k : { f0, f3, c0, c0f, c1, other }) {
+		MT_CHECK_EQ(PinnedOrderLess(k, k), false);
+	}
+	// 势力组内按「固定顺序」：0（联合殖民地）→ 1（自由星）→ 2（龙神）→ 3（深红舰队）
+	MT_CHECK(PinnedOrderLess(PinnedOrderKey(0, -1, 0), PinnedOrderKey(1, -1, 0)));
+	MT_CHECK(PinnedOrderLess(PinnedOrderKey(1, -1, 0), PinnedOrderKey(2, -1, 0)));
+	MT_CHECK(PinnedOrderLess(PinnedOrderKey(2, -1, 0), PinnedOrderKey(3, -1, 0)));
+	// 势力键即使同时带同伴下标，也仍然归势力组（静态表数据不会这样，但语义要稳）
+	MT_CHECK_EQ(PinnedOrderKey(2, 3, 1).group, 0);
+}
+
 // ---------------------------------------------------------------- 5. 候选池
 
 MT_TEST(候选选择_第一个可得的即最优)

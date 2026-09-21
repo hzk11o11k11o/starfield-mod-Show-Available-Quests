@@ -938,7 +938,7 @@ namespace SAQ::UI
 		//     SAQ1
 		//     T\t可接任务\tAvailable
 		//     P\t<代理任务FormID>（第 36 轮；0 = 通道没认领，界面跳过原版星图流程）
-		//     Q\t<FormID>\t<type>\t<中文名>\t<英文名>\t<有无引导目标>\t<是否全是非常驻候选>\t<阵营>\t<同伴固定显示>
+		//     Q\t<FormID>\t<type>\t<中文名>\t<英文名>\t<有无引导目标>\t<是否全是非常驻候选>\t<阵营>\t<同伴固定显示>\t<说明中>\t<说明英>
 		//   （第 23 轮追加「有无引导目标」；★ 第 46 轮追加「是否全是非常驻候选」——
 		//    "1" = 该任务的全部候选都非常驻（远处一定取不到，需要靠近目标区域）。
 		//     界面据此在描述里**提前**说明「需要靠近」，见 MissionMenu.SaqDescriptionText。
@@ -966,7 +966,10 @@ namespace SAQ::UI
 			for (const auto& q : a_quests) {
 				std::string zh = q.nameZh;
 				std::string en = q.nameEn;
-				for (auto* name : { &zh, &en }) {
+				// ★★ 第 75 轮：说明文本也在载荷里 —— 同样要清掉会破坏列结构/行结构的字符。
+				std::string noteZh = q.noteZh;
+				std::string noteEn = q.noteEn;
+				for (auto* name : { &zh, &en, &noteZh, &noteEn }) {
 					for (auto& ch : *name) {
 						if (ch == '\r' || ch == '\n' || ch == '\t') {
 							ch = ' ';
@@ -992,6 +995,13 @@ namespace SAQ::UI
 				//   旧版 AS3 / 内嵌回退数据缺这列 ⇒ 按 "0" 处理（不提这回事）。
 				s += "\t";
 				s += q.companionPinned ? "1" : "0";
+				// ★★ 第 75 轮（四大势力开头任务）：第 9/10 列 = 「简要说明」（中 / 英）——
+				//   界面把它当描述的第一句（加入方式 / 前置条件）；其余任务是空串。
+				//   旧版 AS3 / 内嵌回退数据缺这列 ⇒ 空串（走原来的「当前可以接取」文案）。
+				s += "\t";
+				s += noteZh;
+				s += "\t";
+				s += noteEn;
 				s += "\n";
 				}
 				return s;

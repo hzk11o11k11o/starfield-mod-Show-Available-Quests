@@ -31,15 +31,20 @@
       "sha256": "e8764b114415bb01ad9df1d8816772603b4bdbba9ff18abdb6ef1cffd568f01c",
       "summary": "同伴 4 / 任务 8（入口 4）"
     },
+    "ref/faction_entry_quests.json": {
+      "desc": "四大势力开头任务（gen_faction_entry_quests.py）",
+      "sha256": "01af5049026c459c2f65403a5b4e23f192e4d4d17d7e04a9a88db0a6e71ceb08",
+      "summary": "势力 4（可引导 3）"
+    },
     "plugin/src/SAQ_QuestTable.h": {
       "desc": "静态任务表（gen_quest_table.py，DLL 编译进去）",
-      "sha256": "8615640e85e2023d5a33f3bad31fd174b69dd8e43931fb35b6a4af881d8484c3",
-      "summary": "任务 261 / 候选 931 / 进度门槛 9 / INFO对话 290 / INFO条件 341 / 链式边 55"
+      "sha256": "137b5a9d657bfdd701e7076663bd7652698abb42bf8bcfa8fde680dd6693b432",
+      "summary": "任务 261 / 候选 924 / 进度门槛 9 / INFO对话 290 / INFO条件 341 / 链式边 55 / 同伴 4 / 势力入口 4"
     },
     "ui/missionmenu/saqdata/SaqEmbeddedPayload.inc": {
       "desc": "内嵌回退载荷（gen_quest_table.py）",
-      "sha256": "4f64e9ed2e66a7a023ffa4d6f7a316533757c941d1173a0a422a6bb991f190a3",
-      "summary": "条目 202 / 第一条 2223312"
+      "sha256": "bf8bf7d4f4d36cf3eea0d64b251867f0d7231ce850d3ea8fc999797f5d2ae64e",
+      "summary": "条目 202 / 第一条 2905089"
     },
     "plugin/src/SAQ_EntryTable.h": {
       "desc": "入口条目表（gen_entry_table.py，DLL 编译进去）",

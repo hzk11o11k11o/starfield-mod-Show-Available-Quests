@@ -178,6 +178,13 @@ namespace SAQ
 			std::size_t companionGateMiss{};  // 其中被门槛判「进度没到」但被放行的条数
 			std::size_t companionOrdered{};   // ★ 前置到列表开头的同伴条目数（按同伴分组）
 			std::string companionSamples;     // 名单（任务名已带同伴前缀）
+			// ★★ 第 75 轮（四大势力开头任务）：UC01 / FC01 / RI01 / CF01 四条 ——
+			//   玩家要求「固定显示，并固定排在可接任务列表的前四个」。
+			//   跳过三类门槛（同同伴「入口」），完成过滤仍生效；固定顺序 = 静态表下标。
+			std::size_t factionPinned{};      // 固定显示的势力开头任务数
+			std::size_t factionGateMiss{};    // 其中被门槛判「进度没到」但被放行的条数
+			std::size_t factionOrdered{};     // ★ 前置到列表**最前**的势力条目数（固定顺序）
+			std::string factionSamples;       // 名单（任务名 + 势力 + 是否跳过门槛）
 			bool        filterApplied{};      // 这次到底有没有按运行时状态过滤
 			std::string samples;              // 被剔掉的前几条（名字 + 状态）
 			std::string vtableSamples;        // 未识别虚表的样本（诊断）
@@ -872,6 +879,8 @@ namespace SAQ
 
 			// ★★ 第 74 轮（同伴好感度任务）：「入口」同伴任务的名单样本上限（与其它名单一致）。
 			std::size_t companionSampleCount = 0;
+			// ★★ 第 75 轮（四大势力开头任务）：同上（四条，其实永远在上限内）。
+			std::size_t factionSampleCount = 0;
 
 			// ★ 第 27 轮：模式 5（只显示入口条目）跳过整段任务循环（入口在下面单独追加）。
 			const bool entryOnly = (a_testMode == kEntryOnlyTestMode);
@@ -933,9 +942,15 @@ namespace SAQ
 				//   才能接取」。
 				//   ★ 只对「入口」生效：「后续」（承诺任务）companionPin == 0，照旧走链式
 				//     门槛 —— 玩家要求「链式关系的后续任务还是不要显示，只显示入口任务」。
+				// ★★ 第 75 轮（四大势力开头任务）：UC01 / FC01 / RI01 / CF01 四条同样
+				//   **固定显示**（玩家要求「固定显示，并固定排在可接任务列表的前四个」）——
+				//   它们各自的「进度门槛」（如 RI01 的 INFO 门槛、CF01 的链式门槛
+				//   UC02@860）不再隐藏它们；描述里写「简要说明」（载荷第 9/10 列）。
 				//   ★ 不跳过「已完成 ⇒ 隐藏」（做过的任务不该再出现在「可接」里），
 				//     也不跳过控制台测试过滤（diagnostic，与产品语义正交）。
-				const bool pinned = Decision::IsCompanionPinned(info.companionPin);
+				const bool pinnedCompanion = Decision::IsCompanionPinned(info.companionPin);
+				const bool pinnedFaction = Decision::IsFactionEntryPinned(info.factionEntry);
+				const bool pinned = Decision::IsGatePinned(info.companionPin, info.factionEntry);
 				bool pinnedBypassed = false;   // 被门槛判「进度没到」但固定显示放行（统计证据）
 
 				// ★ 第 35 轮：进度门槛（需求「游戏进度还不能让玩家接到 ⇒ 不显示」）。
@@ -1081,7 +1096,24 @@ namespace SAQ
 				// ★★ 第 74 轮（同伴好感度任务）：「入口」同伴任务固定显示 ——
 				//   到这里说明它过了完成过滤、且没有被三类门槛藏掉（pinned ⇒ 门槛
 				//   一律放行）；把统计与名单记下来（「固定显示」真的生效的证据）。
-				if (pinned) {
+				// ★★ 第 75 轮（四大势力开头任务）：同一段统计，名单分成两份
+				//   （「势力入口固定名单」/「同伴固定名单」），日志里一眼能分开。
+				if (pinnedFaction) {
+					++a_stats.factionPinned;
+					if (pinnedBypassed) {
+						++a_stats.factionGateMiss;
+					}
+					if (factionSampleCount < kMaxSamples) {
+						++factionSampleCount;
+						a_stats.factionSamples += std::format("{}[0x{:08X}{}{}] ",
+							info.nameZh, row.formID,
+							(info.factionEntry >= 0 &&
+								static_cast<std::size_t>(info.factionEntry) < kFactionEntryCount)
+								? std::format(" 势力={}", kFactionEntryNamesZh[info.factionEntry])
+								: std::string{},
+							pinnedBypassed ? " 跳过门槛" : "");
+					}
+				} else if (pinnedCompanion) {
 					++a_stats.companionPinned;
 					if (pinnedBypassed) {
 						++a_stats.companionGateMiss;
@@ -1109,9 +1141,19 @@ namespace SAQ
 				entry.formID = row.formID;
 				// ★★ 第 74 轮（同伴好感度任务）：界面据此在描述里提示「需要一定好感度
 				//   才能接取」（载荷第 8 列）—— 固定显示的「入口」同伴任务才有这个标记。
-				entry.companionPinned = pinned;
+				//   ★ 第 75 轮：只认同伴来源（势力开头任务不写这句 —— 它们的描述第一句
+				//     是各自的「简要说明」，见下面的 noteZh/noteEn）。
+				entry.companionPinned = pinnedCompanion;
 				// ★★ 第 74 轮：同伴下标（只用于下面的列表排序 —— 同伴任务前置 + 分组）。
 				entry.companion = info.companion;
+				// ★★ 第 75 轮（四大势力开头任务）：下标（只用于排序 —— 固定排前四个）
+				//   + 描述里的「简要说明」（载荷最后两列；只有这四条非空）。
+				entry.factionEntry = info.factionEntry;
+				if (info.factionEntry >= 0 &&
+					static_cast<std::size_t>(info.factionEntry) < kFactionEntryCount) {
+					entry.noteZh = kFactionEntryNotesZh[info.factionEntry];
+					entry.noteEn = kFactionEntryNotesEn[info.factionEntry];
+				}
 				// ★ 第 65 轮（任务专属图标）：type 推真实任务类型（此前推 6「可接任务」
 				//   统一值）—— 界面按它 + faction 选图标，与原版任务菜单一致。
 				entry.type = info.type;
@@ -1139,30 +1181,29 @@ namespace SAQ
 
 			// ★★ 第 74 轮（同伴好感度任务）：**把它们放在一起**（玩家要求：「同伴任务是
 			//   不是都放在一起（我观察到任务板都是按顺序放在一起的），如果不是，把它们
-			//   放在一起」）—— 同伴任务**前置**到列表开头，按同伴分组、同一位同伴的
+			//   放在一起」）—— 同伴任务前置到列表开头，按同伴分组、同一位同伴的
 			//   「入口」（个人任务）在「后续」（承诺任务）之前；其余任务保持原顺序
-			//   （static 稳定排序 ⇒ 非同伴条目相对顺序不变）；任务板入口照旧追加在末尾。
-			//   为什么前置：这类任务是「固定显示」的重点信息（好感度提示），玩家打开
-			//   tab 第一眼就该看到；任务板条目本来就是「无限任务的入口」，放末尾与之对称。
+			//   （稳定排序 ⇒ 非同伴条目相对顺序不变）；任务板入口照旧追加在末尾。
+			// ★★ 第 75 轮（四大势力开头任务）：玩家要求「固定排在可接任务列表的**前四个**」
+			//   ⇒ 这一组排在最前（排在同伴之前），组内按静态表下标 = 固定顺序
+			//   （联合殖民地 → 自由星 → 龙神 → 深红舰队）。
+			//   排序判据在离线层（Decision::PinnedOrderKey / PinnedOrderLess，有单测）；
+			//   内嵌回退载荷（gen_quest_table.py::payload_order）与此**逐条同序**。
 			//   排序在界面侧同样成立：载荷顺序 → BuildMergedList → InitializeEntries
-			//   （`_loc2_` 正常段保持输入顺序）→ 我们的 tab 只看 bSaqAvailable 条目。
+			//   （`_loc2_` 正常段保持输入顺序）→ 我们的 tab 只看 bSaqAvailable 条目
+			//   （运行期证据 = SAQ_Report 的 `order=` 探针）。
 			std::stable_sort(a_out.begin(), a_out.end(),
 				[](const QuestEntry& a, const QuestEntry& b) {
-					const bool ca = a.companion >= 0;
-					const bool cb = b.companion >= 0;
-					if (ca != cb) {
-						return ca;   // 同伴任务在前
-					}
-					if (!ca) {
-						return false;   // 都不是同伴任务：保持原顺序（stable_sort）
-					}
-					if (a.companion != b.companion) {
-						return a.companion < b.companion;   // 按同伴分组
-					}
-					return a.companionPinned > b.companionPinned;   // 入口在后续之前
+					return Decision::PinnedOrderLess(
+						Decision::PinnedOrderKey(a.factionEntry, a.companion,
+							a.companionPinned ? 1u : 0u),
+						Decision::PinnedOrderKey(b.factionEntry, b.companion,
+							b.companionPinned ? 1u : 0u));
 				});
 			for (const auto& e : a_out) {
-				if (e.companion >= 0) {
+				if (e.factionEntry >= 0) {
+					++a_stats.factionOrdered;     // 列表**最前**的势力开头任务数
+				} else if (e.companion >= 0) {
 					++a_stats.companionOrdered;   // 列表开头的同伴条目数（日志/用例证据）
 				}
 			}
@@ -1282,9 +1323,38 @@ namespace SAQ
 			if (!a_stats.chainSamples.empty()) {
 				out += " 链式没到: " + a_stats.chainSamples;
 			}
+			if (!a_stats.samples.empty()) {
+				// 完整名单（第 11 轮起不再只记前几条）：玩家反馈「某条任务没显示」时，
+				// 先在 `隐藏:` 这一段里搜 FormID —— 在 = 被运行时状态挡住（看它后面括号里的状态）；
+				// 不在 = 它已经被推送给 UI（详见 AS3 侧的 `qdata=` 名单）。
+				out += " 隐藏: " + a_stats.samples;
+			}
+			if (!a_stats.vtableSamples.empty()) {
+				out += " 未识别例: " + a_stats.vtableSamples;
+			}
+			if (!a_stats.entryUnavailable.empty()) {
+				// ★ 第 29 轮：入口引用取不到 = 常驻化 override 没生效（正常应恒为空）
+				out += " 入口不可导航: " + a_stats.entryUnavailable;
+			}
+			return out;
+		}
+
+		// ★★ 第 75 轮（四大势力开头任务）：**「固定显示」的两类条目单独一行**。
+		//
+		//   为什么拆行（而不是并进上面那行）：上面那行同时带着三类门槛的**名单**
+		//   （`进度没到:` / `INFO没到:` / `链式没到:`）。而「固定显示」的条目按其定义
+		//   **会被放行、不进那些名单** —— 但它们的名字（如「深藏不露」）会出现在这一行
+		//   自己的名单里 ⇒ 如果两类名单同处一行，用例里的反向断言
+		//   `assert.nolog 链式没到:.*深藏不露` 会**假命中**（正则跨字段匹配：`链式没到:`
+		//   出现在后面的 `势力入口固定名单:` 之前）——「假 PASS / 假 FAIL」的又一形态，
+		//   与「断言窗口 / 共享同一批行」那几条用例红线同一类纪律。
+		//   返回空串 ⇒ 不打这一行（没有固定显示条目时零噪音）。
+		std::string FormatPinStats(const RuntimeFilterStats& a_stats)
+		{
+			std::string out;
 			// ★★ 第 74 轮：同伴好感度任务（「入口」固定显示）的统计与名单。
 			//   「其中 N 条被门槛判『进度没到』但放行」= 固定显示真的起了作用的证据
-			//   （否则这些任务会出现在上面的「进度没到 / INFO没到 / 链式没到」名单里）。
+			//   （否则这些任务会出现在上面那行的「进度没到 / INFO没到 / 链式没到」名单里）。
 			//   名单里每条带所属同伴与「跳过门槛」标记；「后续」（承诺任务）不在这里
 			//   —— 它们照旧走链式门槛（前置没到 ⇒ 出现在「链式没到」名单里）。
 			if (a_stats.companionPinned) {
@@ -1301,20 +1371,27 @@ namespace SAQ
 			if (!a_stats.companionSamples.empty()) {
 				out += " 同伴固定名单: " + a_stats.companionSamples;
 			}
-			if (!a_stats.samples.empty()) {
-				// 完整名单（第 11 轮起不再只记前几条）：玩家反馈「某条任务没显示」时，
-				// 先在 `隐藏:` 这一段里搜 FormID —— 在 = 被运行时状态挡住（看它后面括号里的状态）；
-				// 不在 = 它已经被推送给 UI（详见 AS3 侧的 `qdata=` 名单）。
-				out += " 隐藏: " + a_stats.samples;
+			// ★★ 第 75 轮（四大势力开头任务）：统计与名单（固定显示 + 固定排前四）。
+			//   「其中 N 条被门槛判『进度没到』但放行」= 固定显示真的起了作用的证据
+			//   —— 例如「深藏不露」的链式前置 UC02@860、「重返职场」的 INFO 门槛
+			//   （名单里那条会带「跳过门槛」标记）。名单每条带势力名（任务名是官方名）。
+			if (a_stats.factionPinned) {
+				out += std::format(" 势力入口固定={}(其中{}条被门槛判「进度没到」但放行)",
+					a_stats.factionPinned, a_stats.factionGateMiss);
 			}
-			if (!a_stats.vtableSamples.empty()) {
-				out += " 未识别例: " + a_stats.vtableSamples;
+			//   固定顺序（玩家要求「固定排在可接任务列表的前四个」）：这里的数字 = 被前置
+			//   到列表最前的势力条目数；`order=` 探针给出顺序本身（前四条应是这四个 uID）。
+			if (a_stats.factionOrdered) {
+				out += std::format(" 势力入口前置={}(固定顺序：联合殖民地→自由星→龙神→深红舰队)",
+					a_stats.factionOrdered);
 			}
-			if (!a_stats.entryUnavailable.empty()) {
-				// ★ 第 29 轮：入口引用取不到 = 常驻化 override 没生效（正常应恒为空）
-				out += " 入口不可导航: " + a_stats.entryUnavailable;
+			if (!a_stats.factionSamples.empty()) {
+				out += " 势力入口固定名单: " + a_stats.factionSamples;
 			}
-			return out;
+			if (out.empty()) {
+				return out;
+			}
+			return "固定显示（这两类条目跳过进度/INFO/链式三类门槛）：" + out;
 		}
 
 		// （第 17 轮删掉了「DNAM 位分布」那行诊断日志：它要回答的问题在 xEdit 的
@@ -3468,6 +3545,13 @@ namespace SAQ
 			REX::INFO("测试模式：{}（{}）[来源={}] —— 控制台 set SAQ_TestMode to 0 或改 ini，均可关闭",
 				testMode.mode, TestModeNote(testMode.mode), testMode.source);
 			REX::INFO("{}", FormatRuntimeStats(g_pending.stats));
+			// ★★ 第 75 轮：「固定显示」的两类条目单独一行（拆行的理由见 FormatPinStats）。
+			{
+				const auto pinLine = FormatPinStats(g_pending.stats);
+				if (!pinLine.empty()) {
+					REX::INFO("{}", pinLine);
+				}
+			}
 			// 语言这一项只是**日志参考**：实际显示语言由 AS3 侧按引擎推来的任务名判定。
 			// 收集耗时进日志（第 11 轮）：正常应为毫秒级；若出现几百 ms，就是查询本身有问题。
 			REX::INFO("菜单打开：静态表={} 引擎里存在={} 待推送={} 收集耗时={} ms INI语言={}(仅供参考) 标题=可接任务/Available(中英都推，由 UI 选)",

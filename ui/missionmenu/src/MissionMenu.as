@@ -638,7 +638,13 @@ package
                         //   （固定显示的那一类 —— 个人任务；"1"/"0"）。
                         //   描述里据此提示「需要与同伴的好感度达到一定水平后才能接取」；
                         //   旧载荷 / 旧内嵌数据缺这列 ⇒ false（不提这回事）。
-                        "bSaqCompanion":_loc7_.length >= 8 ? _loc7_[7] == "1" : false
+                        "bSaqCompanion":_loc7_.length >= 8 ? _loc7_[7] == "1" : false,
+                        // ★★ 第 75 轮（四大势力开头任务）：第 9/10 列 = 「简要说明」
+                        //   （中 / 英；加入方式 / 前置条件；只有那四条非空）。
+                        //   描述第一句用它（取代「这条任务当前可以接取」）；
+                        //   旧载荷 / 旧内嵌数据缺这列 ⇒ 空串（走原来的文案）。
+                        "sSaqNoteZh":_loc7_.length >= 9 ? _loc7_[8] : "",
+                        "sSaqNoteEn":_loc7_.length >= 10 ? _loc7_[9] : ""
                      });
                   }
                }
@@ -763,12 +769,26 @@ package
             : "This companion quest can be accepted only after reaching a certain affinity level with the companion (it stays listed here until then).";
       }
       
+      // ★★ 第 75 轮（四大势力开头任务）：其中「深红舰队」那条**没有导航目标**
+      //   （数据侧故意清空了引导候选 —— 它的接取点在先锋队线两个任务之后才出现）。
+      //   描述里要说清「按上面的说明推进」，而不是普通任务那句「暂时还没有导航目标」
+      //   —— 后者听起来像 bug（玩家要求：不可引导也要有明确提示）。
+      private function SaqNoPickupNote() : String
+      {
+         return this.SaqUseChinese()
+            ? "它没有可以直接导航的接取地点 —— 按上面的说明推进即可。"
+            : " There is no direct pickup location to navigate to - follow the note above.";
+      }
+      
       // 右侧详情面板里的描述文案（固定内容，告诉玩家这条记录怎么用）。
       // ★ 第 27 轮：第 2 个参数 = 入口条目（任务板）—— 它没有「接取地点」的概念，
       //   描述改成「这是什么、怎么去」。
       // ★ 第 46 轮：第 3 个参数 = 需要靠近（见 SaqApproachNote）。
       // ★★ 第 74 轮：第 4 个参数 = 「入口」同伴任务（见 SaqCompanionNote）。
-      private function SaqDescriptionText(param1:Boolean, param2:Boolean = false, param3:Boolean = false, param4:Boolean = false) : String
+      // ★★ 第 75 轮：第 5 个参数 = 「简要说明」（四大势力开头任务；载荷第 9/10 列，
+      //   空串 = 普通任务）—— 非空时它直接当描述第一句（「加入方式 / 前置条件」），
+      //   取代「这条任务当前可以接取」（对固定显示的那四条不成立）。
+      private function SaqDescriptionText(param1:Boolean, param2:Boolean = false, param3:Boolean = false, param4:Boolean = false, param5:String = "") : String
       {
          // ★ 第 27 轮：无限任务入口（任务板）。
          // ★ 第 29 轮：入口引用已经在 ESM 里 override 成**常驻引用**（任何位置都能取到），
@@ -794,15 +814,33 @@ package
          }
          // ★★ 第 74 轮：首句分两种 —— 普通任务「当前可以接取」；「入口」同伴任务
          //   「需要好感度达标后才能接取」（param4 = bSaqCompanion，见 SaqCompanionNote）。
-         var _loc1_:String = param4 == true
-            ? this.SaqCompanionNote()
-            : (this.SaqUseChinese() ? "这条任务当前可以接取。" : "This quest is currently available.");
+         // ★★ 第 75 轮：势力开头任务的「简要说明」（param5）最优先 —— 它已经写清
+         //   加入方式 / 前置条件，不能再接「当前可以接取」那句。
+         var _loc1_:String;
+         if(param5.length > 0)
+         {
+            _loc1_ = param5;
+         }
+         else if(param4 == true)
+         {
+            _loc1_ = this.SaqCompanionNote();
+         }
+         else
+         {
+            _loc1_ = this.SaqUseChinese() ? "这条任务当前可以接取。" : "This quest is currently available.";
+         }
          // ★ 第 46 轮：全是非常驻候选的任务追加一句「需要靠近」（param3 = bSaqNeedsApproach）
          var _loc2_:String = param3 == true ? this.SaqApproachNote() : "";
          // ★ 第 23 轮：没有引导目标的任务（261 条里 52 条）——列表照常显示，但**无法导航**。
          //   把原因直接写进描述，玩家不用点一下才知道（此前「点了瞬间回滚」看不出原因）。
+         //   ★★ 第 75 轮：势力开头任务里「按设计不给导航」的那条（深红舰队）另写一句
+         //   （见 SaqNoPickupNote）—— 它缺导航目标不是「还没准备好」而是**故意**的。
          if(param1 != true)
          {
+            if(param5.length > 0)
+            {
+               return _loc1_ + this.SaqNoPickupNote() + _loc2_;
+            }
             return _loc1_ + (this.SaqUseChinese()
                ? "但它暂时还没有导航目标 —— 无法引导到接取地点（任务本身照常显示）。"
                : " It has no navigation target yet, so it cannot guide you to the pickup location.") + _loc2_;
@@ -819,8 +857,56 @@ package
             : " Expand it, then select the objective or press " + _loc3_ + " (SET COURSE) to be guided to the pickup location.") + _loc2_;
       }
       
+      // ★★ 第 75 轮（四大势力开头任务）：「简要说明」真的进了描述 —— 报告里报出
+      //   **第一条带说明的条目**的 `<uID>=<描述前 24 字>`（最多一条）。
+      //   为什么需要：数据列写对了 ≠ 描述里真的用了它（与 `order=` / `icon=` 探针同一思路：
+      //   整条链路 data → 载荷 → 解析 → sDescription 只靠读代码保证）——harness 用例
+      //   的判据也用它（`assert.ui pin=[0x2c5401=加入联合殖民地先锋队…`）。
+      //   只报一条 + 截 24 字：报告有长度上限（C++ 侧按 900 字转义落盘），别把别的字段挤掉。
+      private function SaqPinNoteProbe() : String
+      {
+         try
+         {
+            if(this.AvailableQuests == null)
+            {
+               return "";
+            }
+            var _loc1_:int = 0;
+            while(_loc1_ < this.AvailableQuests.length)
+            {
+               var _loc2_:Object = this.AvailableQuests[_loc1_];
+               if(_loc2_ != null && _loc2_.sSaqNote != null && _loc2_.sSaqNote.length > 0)
+               {
+                  var _loc3_:String = _loc2_.sDescription;
+                  if(_loc3_ == null)
+                  {
+                     _loc3_ = "";
+                  }
+                  if(_loc3_.length > 24)
+                  {
+                     _loc3_ = _loc3_.substr(0,24);
+                  }
+                  return "0x" + Number(_loc2_.uID).toString(16) + "=" + _loc3_;
+               }
+               _loc1_++;
+            }
+         }
+         catch(e:Error)
+         {
+            return "(ex)";
+         }
+         return "";
+      }
+      
       private function SaqBuildEntry(param1:Object) : Object
       {
+         // ★★ 第 75 轮：势力开头任务的「简要说明」（按语言挑；空串 = 普通任务）。
+         //   先取出来算一次：描述与报告探针（SAQ_Report 的 pin= 字段）都用它。
+         var _loc1_:String = this.SaqUseChinese() ? param1.sSaqNoteZh : param1.sSaqNoteEn;
+         if(_loc1_ == null)
+         {
+            _loc1_ = "";
+         }
          return {
             "uID":param1.uID,
             "uInstanceID":0,
@@ -833,7 +919,11 @@ package
             "sName":this.SaqUseChinese() ? param1.sNameZh : param1.sNameEn,
             // ★ 第 27 轮：入口条目（任务板）的描述用专门文案（第 2 个参数）。
             // ★★ 第 74 轮：第 4 个参数 = 「入口」同伴任务（描述里提示好感度要求）。
-            "sDescription":this.SaqDescriptionText(param1.bSaqHasTarget != false, param1.iType == SAQ_ENTRY_TYPE, param1.bSaqNeedsApproach == true, param1.bSaqCompanion == true),
+            // ★★ 第 75 轮：第 5 个参数 = 势力开头任务的「简要说明」（上面取好的 _loc1_）。
+            "sDescription":this.SaqDescriptionText(param1.bSaqHasTarget != false, param1.iType == SAQ_ENTRY_TYPE, param1.bSaqNeedsApproach == true, param1.bSaqCompanion == true, _loc1_),
+            // ★★ 第 75 轮：把说明留在条目上 —— SAQ_Report 的 pin= 探针据此报出
+            //   「说明真的进了描述」（数据列对了 ≠ 描述里真的用了它）。
+            "sSaqNote":_loc1_,
             // 引导中的那条保持「追踪中」的视觉（左侧竖条）—— 列表重建（SaqRefresh）后不丢状态。
             "bActive":this.SaqGuideQuest != 0 && param1.uID == this.SaqGuideQuest,
             "bComplete":false,
@@ -1095,7 +1185,9 @@ package
          //     ★ 为什么同轮再 +1：SWF 在**游戏启动阶段**加载，「部署了但游戏没重启」
          //     时必须能区分「加载的是哪一版」—— 部署前若已跑过 stamp=55 的那份，
          //     只有升到 56 才能定性。
-         _loc8_ += " stamp=56";
+         //   ★★ 第 75 轮（四大势力开头任务）：stamp 57 —— 载荷加第 9/10 列（简要说明）+
+         //     描述第一句改为「简要说明」+ 新增 `pin=` 探针（见 SaqPinNoteProbe）。
+         _loc8_ += " stamp=57";
          // ★★ 第 51 轮：入口自检（ep=）—— 见 SaqEntryProbe 的说明。
          //   位置在 stamp 之后、其余字段之前：报告有长度上限，这个字段是当前排查
          //   「测试入口调不到」问题的关键证据，必须优先保下来。
@@ -1115,10 +1207,14 @@ package
             + " btn=[" + this.SaqLastBtnNote + "] ev=[" + this.SaqEventLog.join(" ") + "]";
          // ★★ 第 74 轮（同伴任务分组）：显示列表前 6 条的 uID —— 「同伴任务前置 +
          //   按同伴分组」的**运行期顺序证据**（见 MissionsList.SAQ_OrderProbe）。
+         //   ★★ 第 75 轮：四大势力开头任务排在最前（前四条应是 0x2c5401 / 0x29a8f0 /
+         //   0x2c9c97 / 0x9136）—— 同一个探针即可判定「固定排前四」。
          if(this.MissionsList_mc != null)
          {
             _loc8_ += " order=[" + this.MissionsList_mc.SAQ_OrderProbe() + "]";
          }
+         // ★★ 第 75 轮（四大势力开头任务）：说明真的进了描述（见 SaqPinNoteProbe）。
+         _loc8_ += " pin=[" + this.SaqPinNoteProbe() + "]";
          // 玩家任务日志名单（第 11 轮，诊断用）：QuestData 的「FormID:名字」，最多 12 条。
          // 用途：玩家说「某条可接任务没找到」时，先看它是不是**已经在玩家日志里**
          // （那样它被 C++/AS3 两层过滤中的某一层正当挡掉）—— 在这个名单里一查便知。

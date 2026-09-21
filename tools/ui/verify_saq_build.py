@@ -678,7 +678,9 @@ def main() -> int:
         # ★★ 第 65 轮：构建指纹 ——**以后每改一次 SWF 都要 +1 并同步这里**。
         #   ★★ 第 74 轮（同伴好感度任务）：stamp 54 → 55（载荷加第 8 列 + 描述提示）
         #     → 56（同轮续：`order=` 顺序探针 —— 同伴任务分组）。
-        "构建指纹 stamp=56": b"stamp=56",
+        #   ★★ 第 75 轮（四大势力开头任务）：stamp 57 —— 载荷加第 9/10 列（简要说明）+
+        #     描述第一句改用说明 + 新增 `pin=` 探针（说明真的进了描述）。
+        "构建指纹 stamp=57": b"stamp=57",
         # ★★ 第 74 轮（同伴好感度任务）：「入口」同伴任务固定显示 + 描述提示 + 名字前缀。
         #   ① 载荷第 8 列（bSaqCompanion）与解析分支；
         #   ② 描述提示函数（SaqCompanionNote，中英文案）；
@@ -697,6 +699,20 @@ def main() -> int:
         #   （载荷顺序 → InitializeEntries → entryList 这条链路只靠代码保证）。
         "列表顺序探针函数": b"SAQ_OrderProbe",
         "报告字段 order=[": b" order=[",
+        # ★★ 第 75 轮（四大势力开头任务）：载荷加第 9/10 列（「简要说明」中/英），
+        #   描述第一句改用它（取代「这条任务当前可以接取」）；「深红舰队」那条
+        #   没有导航目标 ⇒ 另写一句「没有可以直接导航的接取地点」。
+        "势力说明列(中) sSaqNoteZh": b"sSaqNoteZh",
+        "势力说明列(英) sSaqNoteEn": b"sSaqNoteEn",
+        "不可导航说明函数 SaqNoPickupNote": b"SaqNoPickupNote",
+        "不可导航说明(中)": "没有可以直接导航的接取地点".encode(),
+        "不可导航说明(英)": b"no direct pickup location",
+        # ★★ 第 75 轮：`pin=` 探针 + 内嵌回退载荷里的说明文本（数据 → SWF 的硬证据：
+        #   说明不是只写在静态表里，也真的跟着内嵌载荷进了 SWF）。
+        "说明进描述探针函数 SaqPinNoteProbe": b"SaqPinNoteProbe",
+        "报告字段 pin=[": b" pin=[",
+        "内嵌载荷说明(UC 中)": "加入联合殖民地先锋队".encode(),
+        "内嵌载荷说明(深红舰队 中)": "加入深红舰队".encode(),
         # ★★ 第 65 轮：图标帧自检 —— SAQ_Report 的 icon= 字段 + MissionsList.SAQ_IconProbe。
         #   数据层对了 ≠ 图标帧真的切过去了（索引错位 / 帧名拼错 / sprite 结构变化都会
         #   停在第 1 帧）；实机日志里的 `icon=[0x…:Constellation,…]` 是图标真的画出来的证据。
@@ -1031,6 +1047,17 @@ def main() -> int:
             # ★★ 第 74 轮续（「把它们放在一起」）：同伴条目前置的统计 ——
             #   `同伴分组前置=N(按同伴分组，入口在后续前)`。
             "同伴分组前置统计": "同伴分组前置=",
+            # ★★ 第 75 轮（四大势力开头任务）：固定显示 + 固定排前四。
+            #   ① 统计与名单（单独一行 —— 见 FormatPinStats 的拆行理由）；
+            #   ② 数据侧两条说明文本编进 DLL（kFactionEntryNotes*）——证明数组真的在；
+            #   ③ 势力名（kFactionEntryNames*）与排序/固定顺序的文案。
+            "势力入口固定统计（势力入口固定=）": "势力入口固定=",
+            "势力入口固定名单（势力入口固定名单:）": "势力入口固定名单: ",
+            "势力入口前置统计（势力入口前置=）": "势力入口前置=",
+            "势力入口固定顺序文案": "固定顺序：联合殖民地→自由星→龙神→深红舰队",
+            "势力说明数据(UC)": "加入联合殖民地先锋队",
+            "势力说明数据(深红舰队)": "加入深红舰队",
+            "势力名数据(kFactionEntryNamesZh)": "联合殖民地先锋队",
         }.items():
             all_ok &= check(f"DLL · {name}", blob, needle.encode())
         # ★★ 第 49 轮（引擎内 harness）：用例驱动器 + 原语层。
@@ -1095,6 +1122,9 @@ def main() -> int:
                             "r71_chain_cf", "r71_chain_redtape", "r71_chain_redtape_pass",
                             # ★★ 第 74 轮：同伴好感度任务（入口固定显示 + 后续走链式门槛）
                             "r74_companion",
+                            # ★★ 第 75 轮：四大势力开头任务（固定显示 + 固定排前四 +
+                            #   深红舰队只给说明）
+                            "r75_faction_entry",
                             "r62_reload_observe"):
                     all_ok &= check(f"用例计划 · [case:{cid}]", plan_text.encode(),
                                     f"[case:{cid}]".encode())
@@ -1148,9 +1178,16 @@ def main() -> int:
                 # ★ 第 72 轮（r65_icons 实测）：原「记录性核对：选中深藏不露」退役 ——
                 #   深藏不露的启动边（UC02@860 → CF01）收进链式门槛后，存档没开深红
                 #   舰队线时它被藏（ui.select 报 notfound = 修复生效，不是用例缺陷）。
-                gone = "step = ui.select 0x00009136" not in plan_text
+                #   ★★ 第 75 轮更新：深藏不露升格为「四大势力开头任务」后**又会显示**
+                #   （固定显示）—— 同一句 `ui.select 0x00009136` 在 r75 用例里**是正当的**
+                #   ⇒ 反向检查收窄到 **r65_icons 这一段**（它不该再选中深藏不露：
+                #   黑色舰队图标帧的正确性由离线图标映射表保证）。
+                i65 = plan_text.find("[case:r65_icons]")
+                i65_end = plan_text.find("[case:", i65 + 1) if i65 >= 0 else -1
+                r65_sec = plan_text[i65:i65_end if i65_end > i65 else len(plan_text)] if i65 >= 0 else ""
+                gone = "0x00009136" not in r65_sec
                 print(("OK  " if gone else "MISS") +
-                      " 用例计划 · r65 旧「选中深藏不露」记录步骤已退役(反向检查)")
+                      " 用例计划 · r65 旧「选中深藏不露」记录步骤已退役(反向检查，只看 r65 段)")
                 all_ok &= gone
                 # 反向检查：15:43 会话里那条未知步骤 `ui.state`（老驱动器只 WARN + 丢步 ⇒ 用例
                 #   照样 PASS）已删；新驱动器对解析失败直接判 FAIL（见 SAQ_Test.cpp v69）。
@@ -1262,9 +1299,38 @@ def main() -> int:
                 all_ok &= check("用例计划 · r74 同伴分组前置统计断言",
                                 plan_text.encode(),
                                 "assert.log 同伴分组前置=\\d+\\(按同伴分组".encode())
-                all_ok &= check("用例计划 · r74 界面顺序探针断言（order= 首条为入口同伴任务）",
+                #   ★★ 第 75 轮变更：两类「固定显示」条目都在最前 —— 首条是四大势力开头
+                #   任务或入口同伴任务之一（精确的「前四条 = 四个势力任务」见 r75 用例）。
+                all_ok &= check("用例计划 · r74 界面顺序探针断言（order= 首条为固定显示条目）",
                                 plan_text.encode(),
-                                "assert.ui order=\\[0x(21ecd0|369ab|263262|2c7c11)".encode())
+                                "assert.ui order=\\[0x(2c5401|29a8f0|2c9c97|9136|21ecd0|369ab|263262|2c7c11)".encode())
+                # ★★ 第 75 轮（四大势力开头任务）：r75 用例的四条判据 ——
+                #   ① 固定显示统计行（`势力入口固定=4(其中N条被门槛判「进度没到」但放行)`）
+                #      + 名单里有「超越极限」/「深藏不露」（后者带「跳过门槛」）；
+                #   ② 固定排前四：日志统计 + 界面 `order=` 探针的**前四条**精确匹配；
+                #   ③ 「简要说明」真的进了描述（`pin=` 探针）；
+                #   ④ 「深藏不露」按 R 只给「暂无导航目标」提示（不可引导也要提示玩家）。
+                all_ok &= check("用例计划 · r75 势力入口固定统计断言",
+                                plan_text.encode(),
+                                "assert.log 势力入口固定=4\\(其中\\d+条被门槛判".encode())
+                all_ok &= check("用例计划 · r75 名单含「超越极限」与「深藏不露」",
+                                plan_text.encode(),
+                                "assert.log 势力入口固定名单: .*深藏不露\\[0x00009136".encode())
+                all_ok &= check("用例计划 · r75 固定排前四（order= 前四条精确）",
+                                plan_text.encode(),
+                                "assert.ui order=\\[0x2c5401,0x29a8f0,0x2c9c97,0x9136".encode())
+                all_ok &= check("用例计划 · r75 说明进描述（pin= 探针）",
+                                plan_text.encode(),
+                                "assert.ui pin=\\[0x2c5401=加入联合殖民地先锋队".encode())
+                all_ok &= check("用例计划 · r75 深红舰队不可导航提示",
+                                plan_text.encode(),
+                                "assert.ui guide=\\d+\\|\\d+\\|该任务暂无导航目标:深藏不露".encode())
+                #   ★ r71 用例的修正（第 75 轮）：CF01 升格为固定显示 ⇒ 它**不该**再出现在
+                #   「链式没到」名单里（否则「固定显示」没生效）；这条反向断言同时是
+                #   「两类名单必须分行」那条纪律的落点（见 DLL · FormatPinStats）。
+                all_ok &= check("用例计划 · r71「深藏不露」不再进链式名单（反向断言）",
+                                plan_text.encode(),
+                                "assert.nolog 链式没到:.*深藏不露".encode())
                 # ★★ 第 62 轮（大项 I）：自动读档用例 —— ① 只允许用**用户指定的那个存档**
                 #   （子串 Save7_3AB5A2FA）；② 读档步骤在；③ 存档列表诊断在。
                 all_ok &= check("用例计划 · r62 自动读档（指定存档）",
@@ -1420,7 +1486,10 @@ def main() -> int:
 
         # ★★ 第 45 轮：引导目标**候选池**（多候选链）—— 数据侧完整性（不只是特征串）：
         #   ① 结构/数组存在；② 候选计数 > 0；③ 任务表的切片 (candBegin+candCount)
-        #   全部不越界、且有目标任务数与实测对齐（209 条）；④ 旧单目标字段已移除。
+        #   全部不越界、且有目标任务数与实测对齐；④ 旧单目标字段已移除。
+        #   ★★ 第 75 轮：有目标任务 209 → **208**、候选 931 → **924** ——
+        #   「深红舰队·深藏不露」（CF01）按玩家要求「只保留简要说明」，
+        #   生成期**故意清空**它的 7 个引导候选（见 gen_quest_table.py 的候选循环）。
         def _num_after(text: str, k: str) -> int:
             i = text.find(k)
             if i < 0:
@@ -1454,9 +1523,10 @@ def main() -> int:
                 n_with += 1
                 if cand_total >= 0 and begin + count > cand_total:
                     n_oob += 1
-        ok = cand_total > 200 and n_with == 209 and n_oob == 0
+        ok = cand_total > 200 and n_with == 208 and n_oob == 0
         print(("OK  " if ok else "MISS") +
-              f" 静态表 · 候选池完整（候选 {cand_total} 条 / 有目标任务 {n_with} / 切片越界 {n_oob}）")
+              f" 静态表 · 候选池完整（候选 {cand_total} 条 / 有目标任务 {n_with}（第 75 轮起 208）"
+              f" / 切片越界 {n_oob}）")
         all_ok &= ok
         gone = "guideRefLocal" not in blob and "guideRefMaster" not in blob
         print(("OK  " if gone else "MISS") + " 静态表 · 旧单目标字段已移除(反向检查)")
@@ -1710,17 +1780,24 @@ def main() -> int:
         #      （0x00009136，Crimson Fleet 任务）= 5。
         #   ★★ 第 74 轮：行尾追加两列（companion / companionPin）⇒ 正则要显式取
         #   「名字之后的那两个数」，不能再拿「最后一个数」当 faction。
-        fac_rows = re.findall(r'",\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(\d+)u\s*\},', region)
+        #   ★★ 第 75 轮：再追加一列（factionEntry，-1 = 不是势力开头任务）⇒ 正则更新为
+        #   行尾四列（faction / companion / companionPin / factionEntry）+ 开头补上
+        #   记录号（第 75 轮的势力入口完整性检查要按记录号对账）。
+        fac_rows = re.findall(
+            r'\{\s*0x([0-9A-F]+)u,\s*\d+u,\s*\d+u,\s*0x[0-9A-F]+u,\s*\d+u,\s*\d+u,'
+            r'\s*\d+u,\s*\d+u,\s*\d+u,\s*\d+u,\s*\d+u,\s*\d+u,'
+            r'.*?,\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(\d+)u\s*,\s*(-?\d+)\s*\},',
+            region)
         table_size = _num_after(blob, "kQuestTableSize = ")
-        n_with_fac = sum(1 for v, _c, _p in fac_rows if int(v) >= 0)
+        n_with_fac = sum(1 for _l, v, _c, _p, _fe in fac_rows if int(v) >= 0)
         fac_ok = (len(fac_rows) == table_size and table_size > 0
-                  and all(-1 <= int(v) <= 9 for v, _c, _p in fac_rows)
+                  and all(-1 <= int(v) <= 9 for _l, v, _c, _p, _fe in fac_rows)
                   and n_with_fac == 74)
         print(("OK  " if fac_ok else "MISS") +
               f" 静态表 · 阵营列完整（行 {len(fac_rows)}/{table_size} / 有阵营 {n_with_fac} /"
               f" 值域 -1..9）")
         all_ok &= fac_ok
-        m_fac = re.search(r"\{\s*0x00009136u,.*?,\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(\d+)u\s*\},", blob)
+        m_fac = re.search(r"\{\s*0x00009136u,.*?,\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(\d+)u\s*,\s*(-?\d+)\s*\},", blob)
         ok_fac = m_fac is not None and int(m_fac.group(1)) == 5
         print(("OK  " if ok_fac else "MISS") +
               " 静态表 · 样本「深藏不露」阵营（Crimson Fleet = 5）")
@@ -1733,7 +1810,8 @@ def main() -> int:
         #   ③ 名字数组 kCompanionNamesZh/En 与同伴表（ref/companion_quests.json）逐项一致；
         #   ④ 实测样本：「巴雷特：违约」（0x000369AB）= Barrett(1) + pin 1；
         #      「巴雷特：承诺」（0x001C7185）= Barrett(1) + pin 0（**后续** ⇒ 走链式门槛）。
-        comp_rows = [(int(f), int(c), int(p)) for (f, c, p) in fac_rows if int(c) >= 0]
+        comp_rows = [(int(l, 16), int(c), int(p))
+                     for (l, _f, c, p, _fe) in fac_rows if int(c) >= 0]
         n_pin = sum(1 for _f, _c, p in comp_rows if p)
         comp_json = ROOT / "ref" / "companion_quests.json"
         names_zh, names_en, n_json_q = [], [], 0
@@ -1758,11 +1836,56 @@ def main() -> int:
                 ("001C7185", 0, "巴雷特：承诺", "后续·链式门槛"),
                 ("00263262", 1, "萨姆·科尔：哈特家事", "入口·固定显示"),
                 ("0027B667", 0, "莎拉·摩根：承诺", "后续·链式门槛")):
-            m = re.search(r"\{\s*0x" + local + r"u,.*?,\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(\d+)u\s*\},", blob)
+            m = re.search(r"\{\s*0x" + local + r"u,.*?,\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(\d+)u\s*,\s*(-?\d+)\s*\},", blob)
             ok_row = (m is not None and int(m.group(3)) == want_pin
                       and f'"{want_name}"' in blob)
             print(("OK  " if ok_row else "MISS") +
                   f" 静态表 · 同伴样本 {label}（{want_name} pin={want_pin}）")
+            all_ok &= ok_row
+
+        # ★★ 第 75 轮（四大势力开头任务）：数据侧完整性 ——
+        #   ① 表里恰好 4 条 factionEntry ≥ 0，下标 = 0..3（= 固定顺序，无重复）；
+        #   ② 与 ref/faction_entry_quests.json 的 uID / 下标 / 说明文本逐项一致；
+        #   ③ 「深红舰队」那条（guide=false）的**引导候选被清空**（candCount == 0）——
+        #      界面因此走「不可导航」通路（只给说明）；
+        #   ④ 样本：「深藏不露」= 下标 3 + 阵营 5 + 候选 0；「超越极限」= 下标 0 + 候选 > 0。
+        fe_rows = [(l, int(fe)) for (l, _f, _c, _p, fe) in fac_rows if int(fe) >= 0]
+        fe_json = ROOT / "ref" / "faction_entry_quests.json"
+        fe_ok = len(fe_rows) == 4 and sorted(v for _f, v in fe_rows) == [0, 1, 2, 3]
+        want_fe = []
+        if fe_json.exists():
+            fej = json.loads(fe_json.read_text(encoding="utf-8"))
+            want_fe = [(f"{int(g['quest']['local']):08X}", i) for i, g in enumerate(fej)]
+            fe_ok = fe_ok and sorted(fe_rows) == sorted(want_fe)
+            # 说明文本（中/英）逐条编进静态表（kFactionEntryNotesZh/En）
+            m_notes_zh = re.search(r"kFactionEntryNotesZh\[\]\s*=\s*\{(.*?)\};", blob, re.S)
+            m_notes_en = re.search(r"kFactionEntryNotesEn\[\]\s*=\s*\{(.*?)\};", blob, re.S)
+            for i, g in enumerate(fej):
+                if g["noteZh"] not in blob or g["noteEn"] not in blob:
+                    fe_ok = False
+                    print(f"MISS 静态表 · 势力说明文本缺失（{g['key']}）")
+                    break
+        print(("OK  " if fe_ok else "MISS") +
+              f" 静态表 · 四大势力开头任务完整（标记 {len(fe_rows)}/4、下标 {sorted(v for _f, v in fe_rows)}"
+              + (f"、与 ref 逐项一致" if fe_json.exists() else "（缺 ref/faction_entry_quests.json）") + "）")
+        all_ok &= fe_ok
+        #   ④ 样本行：下标 / 阵营 / 候选数
+        for local, want_fe_idx, want_fac, want_cands, tag in (
+                ("002C5401", 0, 1, True, "联合殖民地·超越极限（可引导）"),
+                ("0029A8F0", 1, 4, True, "自由星·枝节横生（可引导）"),
+                ("002C9C97", 2, 2, True, "龙神·重返职场（可引导）"),
+                ("00009136", 3, 5, False, "深红舰队·深藏不露（只给说明 → 候选被清空）")):
+            m = re.search(r"\{\s*0x" + local + r"u,\s*\d+u,\s*\d+u,\s*0x[0-9A-F]+u,"
+                          r"\s*\d+u,\s*(\d+)u,.*?,\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(\d+)u\s*,\s*(-?\d+)\s*\},",
+                          blob)
+            #   组号：1 = candCount；2 = faction；3 = companion；4 = companionPin；
+            #         5 = factionEntry（行尾四列的顺序见 StaticQuestInfo）
+            ok_row = (m is not None and int(m.group(2)) == want_fac
+                      and int(m.group(5)) == want_fe_idx
+                      and ((int(m.group(1)) > 0) == want_cands))
+            print(("OK  " if ok_row else "MISS") +
+                  f" 静态表 · 势力入口样本 {tag}（下标 {want_fe_idx} / 阵营 {want_fac} / "
+                  f"候选{'>0' if want_cands else '=0'}）")
             all_ok &= ok_row
 
         # ★★ 第 74 轮续（「把它们放在一起」）：**内嵌回退载荷的条目顺序** —— 与 C++ 侧
@@ -1772,23 +1895,34 @@ def main() -> int:
         inc_path = ROOT / "ui/missionmenu/saqdata/SaqEmbeddedPayload.inc"
         if inc_path.exists():
             inc = inc_path.read_text(encoding="utf-8", errors="replace")
-            # 期望的表头 8 条（顺序 = 同伴下标，每位同伴「入口在后续前」）：
-            #   安德列娅 难侍二主/承诺 → 巴雷特 违约/承诺 → 萨姆·科尔 哈特家事/承诺
-            #   → 莎拉·摩根 难忘逝者/承诺
+            # 期望的表头 12 条：
+            #   ★★ 第 75 轮：前 4 条 = **四大势力开头任务**（固定顺序 =
+            #     UC01 超越极限 → FC01 枝节横生 → RI01 重返职场 → CF01 深藏不露）；
+            #   ★ 第 74 轮：接着 8 条 = 同伴任务（顺序 = 同伴下标，每位同伴「入口在后续前」）
+            #     安德列娅 难侍二主/承诺 → 巴雷特 违约/承诺 → 萨姆·科尔 哈特家事/承诺
+            #     → 莎拉·摩根 难忘逝者/承诺。
             want_head = [int(f, 16) for f in
-                         ("0021ECD0", "000B8633", "000369AB", "001C7185",
+                         ("002C5401", "0029A8F0", "002C9C97", "00009136",
+                          "0021ECD0", "000B8633", "000369AB", "001C7185",
                           "00263262", "000DF7AD", "002C7C11", "0027B667")]
-            head = [int(x) for x in re.findall(r"Q\\t(\d+)\\t", inc)[:8]]
+            head = [int(x) for x in re.findall(r"Q\\t(\d+)\\t", inc)[:12]]
             ok_head = head == want_head
             print(("OK  " if ok_head else "MISS") +
-                  " 内嵌载荷 · 同伴条目前置（前 8 条 = 同伴任务：按同伴下标分组、入口在后续前）"
+                  " 内嵌载荷 · 势力开头任务在前四条 + 同伴任务随后（与 C++ 排序逐条同序）"
                   + ("" if ok_head else f" ← 实际 {[hex(x) for x in head]}"))
             all_ok &= ok_head
             # 反向检查：第一条不能再是基础游戏的最小记录号（0x351A = 平衡账目）——
-            #   那是「未分组」的旧顺序（同伴任务散在 261 条里）。
+            #   那是「未分组」的旧顺序（势力/同伴任务散在 261 条里）。
             gone = not head or head[0] != 0x351A
             print(("OK  " if gone else "MISS") + " 内嵌载荷 · 旧「未分组」顺序已替换(反向检查)")
             all_ok &= gone
+            # ★★ 第 75 轮：内嵌载荷带上了第 9/10 列（「简要说明」中/英）—— 这正是
+            #   「C++ 推送失败的头 0.3~0.8 秒里描述也对」的保证（列不对齐会让说明串行）。
+            note_ok = ("加入联合殖民地先锋队" in inc and "加入深红舰队" in inc
+                       and "Join the UC Vanguard" in inc)
+            print(("OK  " if note_ok else "MISS") +
+                  " 内嵌载荷 · 四大势力开头任务的「简要说明」两列都在")
+            all_ok &= note_ok
 
         # ★★ 第 65 轮（任务专属图标）：**图标映射表** —— 「数据 -> 图标帧」永不落空。
         #
@@ -1831,10 +1965,11 @@ def main() -> int:
 
         #   ★★ 第 74 轮：行尾多了 companion / companionPin 两列 ⇒ 这里显式取
         #   「type + faction」（此前用 `.*?,\s*(-?\d+)\s*\},` 取最后一个数 —— 会读到
-        #   companionPin，把图标映射检查变成瞎猜）。
+        #   companionPin，把图标映射检查变成瞎猜）；★★ 第 75 轮行尾再多一列
+        #   （factionEntry）⇒ 尾部模式跟着更新。
         tf_pairs = {(int(m.group(1)), int(m.group(2))) for m in re.finditer(
             r"\{\s*0x[0-9A-F]+u,\s*\d+u,\s*(\d+)u,\s*0x[0-9A-F]+u,"
-            r".*?,\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*\d+u\s*\},", region)}
+            r".*?,\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*\d+u\s*,\s*-?\d+\s*\},", region)}
         tf_bad = sorted(p for p in tf_pairs if icon_label(p[1], p[0]) not in icon_frames)
         ok_icon = not tf_bad and len(tf_pairs) > 0
         print(("OK  " if ok_icon else "MISS") +

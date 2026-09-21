@@ -158,25 +158,66 @@ namespace SAQ::Decision
 	GateDecision DecideChainGates(std::span<const CondCheck> a_edges);
 
 	// ========================================================================
-	//  3b. 同伴好感度任务（第 74 轮）：「入口」固定显示 / 「后续」照旧走链式门槛
+	//  3b. 「固定显示」的两类任务（第 74/75 轮）：入口同伴 / 四大势力开头
 	//
-	//  需求（玩家）：「把所有达到一定好感度才能接到的同伴任务**固定**在可接任务
-	//  列表里，任务名称前面写上同伴的名字，并在提示里提示到达一定好感度才能接取」
-	//  + 「链式关系的后续任务还是不要显示，只显示入口任务」。
+	//  需求（玩家）：
+	//    · 第 74 轮：「把所有达到一定好感度才能接到的同伴任务**固定**在可接任务
+	//      列表里，任务名称前面写上同伴的名字，并在提示里提示到达一定好感度才能接取」
+	//      + 「链式关系的后续任务还是不要显示，只显示入口任务」；
+	//    · 第 75 轮：「把四大势力开头任务…**固定显示**，并固定排在可接任务列表的
+	//      前四个；除了深红舰队，其他都能正常引导；深红舰队只保留简要说明」。
 	//
 	//  数据：StaticQuestInfo::companion（哪一位同伴）+ companionPin（1 = **入口**
-	//  同伴任务 = 个人任务 COM_Quest_<同伴>_Q01 —— 由好感度里程碑直接启动的那一环）。
-	//  生成器 tools/esm/gen_companion_quests.py（对着官方 Papyrus 源码核验）。
+	//  同伴任务 = 个人任务 COM_Quest_<同伴>_Q01 —— 由好感度里程碑直接启动的那一环）；
+	//  ★★ 第 75 轮追加 StaticQuestInfo::factionEntry（≥ 0 = 四大势力开头任务，
+	//  同时也是固定顺序：0 = 联合殖民地 … 3 = 深红舰队）。
+	//  生成器 tools/esm/gen_companion_quests.py / tools/esm/gen_faction_entry_quests.py
+	//  （都对着官方 Papyrus 源码核验）。
 	//  ========================================================================
 
 	// a_companionPin != 0 ⇒ 这条是「入口」同伴任务（固定显示）。
 	bool IsCompanionPinned(std::uint8_t a_companionPin);
 
+	// ★★ 第 75 轮：a_factionEntry >= 0 ⇒ 这条是四大势力开头任务（固定显示 +
+	//   固定排在列表前四个，见下面的 PinnedOrderKey/PinnedOrderLess）。
+	bool IsFactionEntryPinned(std::int8_t a_factionEntry);
+
+	// 两个来源合并后的「要不要跳过三类门槛」判据（调用点只用这一个 ——
+	// 免得两处各写一份 `||`，漏改一处就是「某类任务忽然被藏」）。
+	bool IsGatePinned(std::uint8_t a_companionPin, std::int8_t a_factionEntry);
+
+	// ========================================================================
+	//  3c. 列表顺序（第 74/75 轮）：两类「固定显示」的任务**前置**
+	//
+	//  收集完成后按这个键排序（stable_sort ⇒ 其余条目保持表顺序）：
+	//    ① ★★ 第 75 轮：四大势力开头任务 —— 玩家要求「固定排在可接任务列表的
+	//       前四个」；组内按 factionEntry 升序 = 固定顺序（联合殖民地 → 自由星 →
+	//       龙神 → 深红舰队）；
+	//    ② ★ 第 74 轮：同伴任务 —— 玩家要求「把它们放在一起」；按同伴下标分组，
+	//       同一位同伴的「入口」（个人任务）在「后续」（承诺任务）之前；
+	//    ③ 其余：group 2 —— 比较器对两个「其余」都返回 false（保持原顺序）。
+	//
+	//  界面侧的 `order=` 探针（MissionsList.SAQ_OrderProbe）给出运行期真实顺序；
+	//  内嵌回退载荷（gen_quest_table.py::payload_order）必须与本排序**逐条同序**。
+	//  ========================================================================
+	struct EntryOrderKey
+	{
+		std::int32_t group{};  // 0 = 势力开头任务；1 = 同伴任务；2 = 其余
+		std::int32_t rank{};   // 组内次序（势力 = factionEntry；同伴 = companion*2 + 入口优先）
+	};
+
+	EntryOrderKey PinnedOrderKey(std::int8_t a_factionEntry, std::int8_t a_companion,
+		std::uint8_t a_companionPin);
+
+	// 是否 a 应排在 b 前面（stable_sort 的比较器；两个「其余」⇒ false）。
+	bool PinnedOrderLess(const EntryOrderKey& a, const EntryOrderKey& b);
+
 	// 门槛求值的最终动作（三个门槛 —— 进度 / INFO / 链式 —— 共用）：
 	//   * kNone       —— 没有门槛 / 求值通过 / 求值不了（放行，不动作）；
 	//   * kHide       —— 进度没到 ⇒ 隐藏（调用方还要看对应 ini 开关是否关闭）；
-	//   * kPinBypass  —— 本来该隐藏，但这是**固定显示**的「入口」同伴任务 ⇒ 放行
-	//                    （调用方只记统计 —— 「固定显示」真的起了作用的证据）。
+	//   * kPinBypass  —— 本来该隐藏，但这是**固定显示**的任务（a_pinned：入口同伴 /
+	//                    四大势力开头）⇒ 放行（调用方只记统计 —— 「固定显示」真的
+	//                    起了作用的证据）。
 	enum class GateAction : std::uint8_t
 	{
 		kNone = 0,
@@ -187,6 +228,7 @@ namespace SAQ::Decision
 	// 判据（阈值/组合都在这里，调用点不许各写一份）：
 	//   verdict == kFail 时：pinned ⇒ kPinBypass；否则 kHide；
 	//   其余 verdict（kNoGates / kPass / kUnknown）⇒ kNone。
+	// a_pinned 由调用方用 IsGatePinned(companionPin, factionEntry) 算（两个来源合并）。
 	GateAction DecideGateAction(CondVerdict a_verdict, bool a_pinned);
 
 	// ========================================================================
