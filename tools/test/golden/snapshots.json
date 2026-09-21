@@ -3,8 +3,8 @@
   "items": {
     "ref/ctda_gates.json": {
       "desc": "进度门槛数据（analyze_ctda.py）",
-      "sha256": "cd788e1dd36a877202a68cc7d19ef07d36489846e47d24eaacd136aa8dc3b177",
-      "summary": "任务 9 / 条件 11"
+      "sha256": "2a3a7a84ef840ddc5b219500fadd685b4b7f58f6ff57caca21f402e9a724fb70",
+      "summary": "任务 9 / 条件 13"
     },
     "ref/info_gates_final.json": {
       "desc": "INFO 门槛数据（analyze_info_gates.py）",
@@ -48,8 +48,8 @@
     },
     "plugin/src/SAQ_QuestTable.h": {
       "desc": "静态任务表（gen_quest_table.py，DLL 编译进去）",
-      "sha256": "ff36d3da49739cf31619f0dcdc7f740768c784675ad0d697449aed6d1d41af32",
-      "summary": "任务 271 / 候选 960 / 进度门槛 9 / INFO对话 418 / INFO条件 492 / 链式边 63 / 同伴 4 / 势力入口 4 / 地标 10"
+      "sha256": "48cab7ea394ff6c28745fad0b7780bc0f3cb6847a8fd1b7d96963a0866fd6b78",
+      "summary": "任务 271 / 候选 960 / 进度门槛 11 / INFO对话 418 / INFO条件 492 / 链式边 63 / 同伴 4 / 势力入口 4 / 地标 10"
     },
     "ui/missionmenu/saqdata/SaqEmbeddedPayload.inc": {
       "desc": "内嵌回退载荷（gen_quest_table.py）",
