@@ -26,6 +26,9 @@
 ;    · `assert.log/assert.nolog` 的 `scope=`：默认只找「本步骤开始之后」的行 —— 而
 ;      动作与它的日志常落在**同一次 Tick** 里（产品路径先跑、harness 后跑）⇒ 断言
 ;      「上一步引起的那一行」要用 `scope=prev`，查整条用例的总账用 `scope=case`。
+;      ★ 第 55 轮实测教训：smoke 的三条断言因为漏写 `scope=prev` 出现过**假失败**
+;      （"引导请求"行其实早就打了，只是落在断言窗口起点之前）—— 凡是断言「上一步
+;      动作引起的那一行」，一律写 `scope=prev`。
 ;    · `~0x…` = **记录号**（不是运行期 FormID）：DLC 任务的运行期高字节是加载顺序
 ;      （本机 SFBGS050 = 0x03，换机器可能不同）⇒ 用例里写 `~0x0008EBDC`，由驱动器
 ;      按静态表解析。基础游戏的任务（master 0）两种写法等价。
@@ -48,17 +51,17 @@ step = ping
 step = quest.reset 0x0006E0A1
 step = note === 2. 开菜单 + 等 C++ 数据推送 ===
 step = menu.open
-step = assert.log 推送成功 timeout=10000
+step = assert.log 推送成功 scope=prev timeout=10000
 step = note === 3. 切到「可接任务」tab 并选中目标任务 ===
 step = ui.tab
 step = ui.select 0x0006E0A1
 step = assert.ui src=cpp timeout=3000
 step = note === 4. 按 R（SET COURSE）→ C++ 应收到引导请求 ===
 step = ui.key XButton
-step = assert.log 引导请求： timeout=4000
+step = assert.log 引导请求： scope=prev timeout=4000
 step = note === 5. 关菜单 → 脚本应用引导 ===
 step = menu.close
-step = assert.log 引导已生效|引导延迟生效|引导确认 timeout=30000
+step = assert.log 引导已生效|引导延迟生效|引导确认 scope=prev timeout=30000
 step = guide.clear
 
 ; ----------------------------------------------------------------------------
@@ -185,7 +188,7 @@ step = teleport.entry 0x001DF853
 step = assert.log 候选复算：.*先保持 scope=prev timeout=15000
 step = assert.nolog 引导目标已更新（候选复算） scope=prev timeout=12000
 step = note === 观察期满后正常降级（回常驻兜底）===
-step = assert.log 引导目标已更新（候选复算）.*\[1\]「G型」→ \[2\]「Ref_08ECA6」 timeout=25000
+step = assert.log 引导目标已更新（候选复算）.*\[1\]「G型」→ \[2\]「Ref_08ECA6」 scope=prev timeout=25000
 step = guide.clear
 
 ; ----------------------------------------------------------------------------

@@ -1980,7 +1980,14 @@ namespace SAQ
 		//   ★ 第 44 轮：脚本侧的窗口从「1.5 s 延时定时器」缩短成「1 个轮询节拍」，这里
 		//   也同步收到 1.5 s（仍明显大于脚本那段窗口，不会抢跑；也没有再缩的必要 ——
 		//   缩得比脚本窗口小才是问题）。
-		constexpr std::uint64_t kStarMapRetryAfterAppliedMs = 1500;
+		//   ★★ 第 55 轮：1.5 s **太紧**了 —— 09:06 会话（harness 首跑 6 条历史用例）
+		//   实测脚本这一段实际要 **1.6~2.5 秒**：装星图待办（1 拍）+ 到点执行（再 1 拍）
+		//   之外，还要等「界面侧关闭整个暂停菜单 ⇒ 游戏真正恢复运行」那一段（引擎负载
+		//   高时能拖到 1 秒以上）。结果：星图**马上就要开了**，DLL 却已经记「第 2 次尝试」
+		//   并写通道换候选 —— 还留下一个未被脚本消费的「星图 6」请求（星图关闭后脚本
+		//   又执行了一次，玩家看到星图自己再弹一回；本函数下面的写回就是修这个）。
+		//   放宽到 3 s：覆盖脚本窗口 + 恢复运行延迟；真失败时也只是晚 1.5 秒重试。
+		constexpr std::uint64_t kStarMapRetryAfterAppliedMs = 3000;
 
 		// 请求「关菜单 + 开星图」。调用方保证通道已经写好状态 5。
 		// ★ 第 38 轮：a_swfCloses = 新 SWF 会在收到回写后自己调 CloseMenu(true)
@@ -2099,9 +2106,29 @@ namespace SAQ
 			// ★ 第 41 轮：用引擎自己的注册名 GalaxyStarMapMenu（见 StarMapMenuName()）。
 			if (ui->IsMenuOpen(StarMapMenuName())) {
 				g_starMap.pending = false;
+				// ★★ 第 55 轮：本次若发生过「换候选重试」（attempts > 1），通道里可能还
+				//   留着一个**未被脚本消费**的「待处理 + 星图 6/7」。脚本的轮询节拍在
+				//   星图开着时冻结，等玩家把星图一关、游戏恢复运行，那笔残留请求就会被
+				//   消费 ⇒ 星图**自己又弹出来一次**（09:06 会话实测：22 秒处第二次打开；
+				//   对玩家就是「我明明关掉了它又自己开了」）。
+				//   这里把通道标回**普通待处理（状态 0）**：脚本下一拍重新应用同一条引导
+				//   —— 顺带作废任何未执行的星图待办（ApplyGuide 的「任何新请求先作废」
+				//   第 42 轮语义），且状态 0 不要求开星图，不会再弹。
+				std::string retryNote;
+				if (g_starMap.attempts > 1 && g_guide.guideRef != 0) {
+					std::string detail;
+					if (Guide::SetGuideTarget(g_guide.guideRef, detail, /*a_starMap=*/false)) {
+						retryNote = std::format("；本次换过候选（第 {} 次尝试）⇒ 已把通道标回普通状态"
+												"（防残留的星图请求在星图关闭后再执行一次）",
+							g_starMap.attempts);
+					} else {
+						retryNote = std::format("；⚠ 把通道标回普通状态失败（{}）—— 星图关闭后可能又弹一次",
+							detail);
+					}
+				}
 				REX::INFO("星图：已打开（GalaxyStarMapMenu 在屏幕上，R 后约 {:.1f} 秒，第 {} 次尝试）"
-						  "—— SET COURSE 链路完整",
-					elapsed, g_starMap.attempts);
+						  "—— SET COURSE 链路完整{}",
+					elapsed, g_starMap.attempts, retryNote);
 				return;
 			}
 			if (!g_starMap.midLogged && now >= g_starMap.midCheckMs) {
@@ -2138,8 +2165,8 @@ namespace SAQ
 						g_starMap.appliedNoted = true;
 						REX::INFO("星图：脚本已应用这次引导（状态=1）—— 它的星图调用在下一个轮询节拍"
 								  "（约 0.5~1 秒）内到达；这段时间内不改地点候选，只等星图出现"
-								  "（{:.1f} 秒后仍没有才考虑换候选重试）",
-							static_cast<double>(kStarMapRetryAfterAppliedMs) / 1000.0);
+								  "（{} ms 后仍没有才考虑换候选重试；第 55 轮实测脚本窗口 1.6~2.5 秒）",
+							kStarMapRetryAfterAppliedMs);
 					}
 				}
 			}

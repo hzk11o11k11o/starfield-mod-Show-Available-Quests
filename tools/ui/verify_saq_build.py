@@ -336,7 +336,10 @@ HARNESS_STRINGS = (
     ("传送到任务板", "teleport.entry"),
     ("界面测试驱动-子项", "SAQ_TestDriveSelectChild"),
     ("菜单 kShow 开关", "已请求打开任务菜单"),
-    ("harness 结束清菜单", "结束时菜单还开着"),
+    # ★ 第 55 轮：用例收尾清场从「全部用例结束一次」改成**每条用例结束**都做
+    #   （09:06 会话：smoke 失败中止 ⇒ 星图留屏 ⇒ 后续 5 条用例的 ping 全被冻死）。
+    ("harness 用例收尾清菜单", "harness：用例收尾：任务菜单还开着"),
+    ("harness 用例收尾清星图", "harness：用例收尾：星图还开着"),
     ("失败带 SWF 指纹", "SWF 指纹"),
     ("旧版 SWF 判定文案", "游戏加载的还是旧版 SWF"),
 )
@@ -868,9 +871,32 @@ def main() -> int:
                 else:
                     print(f"MISS 用例计划 · MO2 部署副本不存在：{plan_deployed}")
                     all_ok = False
+                # ★ 第 55 轮：smoke 的三条「上一步副作用」断言必须带 `scope=prev` ——
+                #   09:06 会话的假失败就是漏写它（「引导请求」行其实打了，只是落在
+                #   断言窗口起点之前 —— 动作与它的日志常在同一次 Tick）。
+                all_ok &= check("用例计划 · smoke 引导请求断言带 scope=prev",
+                                plan_text.encode(), "assert.log 引导请求： scope=prev".encode())
+                gone = "引导请求： timeout=" not in plan_text
+                print(("OK  " if gone else "MISS") +
+                      " 用例计划 · 旧「引导请求」断言（不带 scope）已替换(反向检查)")
+                all_ok &= gone
             else:
                 print(f"MISS 缺少用例计划 {plan_src}")
                 all_ok = False
+        # ★★ 第 55 轮（09:06 会话实测的两个星图收口）：这两条属于**产品路径**
+        #   （SAQ.cpp），开发/发布两种构建里都在 —— 不能放进 HARNESS_STRINGS
+        #   （那张表在发布模式是反向检查，放进去会误报「发布包里带测试代码」）。
+        #   ① 星图已打开时把通道标回普通状态（防「未被脚本消费的重试请求（状态 6/7）」
+        #      在星图关闭后又被执行一次 —— 玩家看到星图自己又弹一回）；
+        #   ② 换候选重试的等待窗口 1.5 s → 3 s（脚本实测窗口 1.6~2.5 秒，1.5 s 会假重试）。
+        all_ok &= check("DLL · 星图残留请求回收", blob,
+                        "防残留的星图请求在星图关闭后再执行一次".encode())
+        all_ok &= check("DLL · 星图重试等待窗口文案", blob, "后仍没有才考虑换候选重试".encode())
+        # 反向检查：第 55 轮把「结束时…」文案统一成了「用例收尾：…」（收尾从
+        #   「全部用例结束」提前到「每条用例结束」，旧文案不该再出现）。
+        gone = "结束时菜单还开着".encode() not in blob and "结束时星图还开着".encode() not in blob
+        print(("OK  " if gone else "MISS") + " DLL · 旧「结束时…」收尾文案已替换(反向检查)")
+        all_ok &= gone
         # ★ 第 17 轮的核心判据：DLC 的两个 + 基础游戏一共 4 个数据源名都编进了 DLL
         for master in (b"Starfield.esm", b"ShatteredSpace.esm", b"SFBGS050.esm", b"SFBGS00D.esm"):
             all_ok &= check(f"DLL · 数据源 {master.decode()}", blob, master)

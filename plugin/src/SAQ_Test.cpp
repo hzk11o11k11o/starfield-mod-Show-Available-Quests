@@ -125,6 +125,10 @@ namespace SAQ::Test
 		bool        g_wantHarness{};
 		std::uint64_t g_lastEnableCheckMs{};
 		constexpr std::uint64_t kEnableCheckIntervalMs = 2000;
+		// ★ 第 55 轮：用例之间的间隔 —— 上一条用例收尾（清场）后给引擎一点时间把
+		//   菜单关闭处理完，再开下一条（否则下一条的 `ping` 可能撞上「游戏仍暂停」）。
+		std::uint64_t g_nextCaseAtMs{};
+		constexpr std::uint64_t kInterCaseDelayMs = 700;
 		bool        g_harnessReady{};
 		bool        g_readyWarned{};
 		bool        g_active{};
@@ -718,6 +722,36 @@ namespace SAQ::Test
 		// ----------------------------------------------------------------
 		//  用例/步骤推进
 		// ----------------------------------------------------------------
+		// ★ 第 55 轮：用例结束（含失败中止）时的**清场**。
+		//
+		//  实测（09:06 会话，6 条用例全 FAIL 的真因之二）：smoke 的 R 链路会由脚本
+		//  打开星图（产品行为、正确）—— 用例因断言假失败中止后，星图留在屏幕上 ⇒
+		//  游戏暂停 ⇒ 脚本定时器冻结 ⇒ 后面 5 条用例的 `ping` 全部超时（3000 ms）。
+		//  第 54 轮只在 finishAll（**全部**用例跑完）时清场，来不及救中间的用例。
+		//
+		//  顺序有意：**先清引导**（写通道；脚本下一拍会把「待打开的星图」待办作废，
+		//  见 SAQ_Main.psc 的 ApplyGuide「任何一次新请求先作废星图待办」）—— 否则
+		//  在游戏恢复运行的瞬间，残留的星图待办可能又开一次星图。
+		//  动作都是「请求」级别（引擎下一帧处理），用例之间的间隔（kInterCaseDelayMs）
+		//  给它留时间。
+		void CleanupAfterCase()
+		{
+			std::string detail;
+			if (!ClearGuide(detail)) {
+				REX::INFO("harness：用例收尾：清引导没成功（{}）—— 多半本来就没有引导", detail);
+			}
+			if (MissionMenuIsOpen()) {
+				if (SetMenuOpen(false, detail)) {
+					REX::INFO("harness：用例收尾：任务菜单还开着 —— 已请求关闭（{}）", detail);
+				}
+			}
+			if (MenuIsOpen("GalaxyStarMapMenu")) {
+				if (SetMenuOpenByName("GalaxyStarMapMenu", false, detail)) {
+					REX::INFO("harness：用例收尾：星图还开着 —— 已请求关闭（{}）", detail);
+				}
+			}
+		}
+
 		void FinishCase(bool a_ok, const std::string& a_reason)
 		{
 			if (g_caseIdx >= g_results.size()) {
@@ -739,6 +773,10 @@ namespace SAQ::Test
 			}
 			g_active = false;
 			g_stepIdx = 0;
+			// ★ 第 55 轮：用例一结束（无论 PASS/FAIL）就清场 —— 见 CleanupAfterCase；
+			//   再留一段间隔，让引擎把菜单关闭处理完，然后才开下一条用例。
+			CleanupAfterCase();
+			g_nextCaseAtMs = NowMs() + kInterCaseDelayMs;
 		}
 
 		void StartCase(std::size_t a_index)
@@ -1158,25 +1196,12 @@ namespace SAQ::Test
 		}
 
 		auto finishAll = [&]() {
-			// ★ 第 49 轮补丁：结束（含失败中止）时把菜单恢复成「关着」。
-			//   首测实证：smoke 在 ui.tab 失败中止 ⇒ 后面的 menu.close 步骤没跑到
-			//   ⇒ 任务菜单（暂停菜单）一直留在屏幕上（游戏暂停、脚本定时器冻结），
-			//   得玩家手动按 Cancel 才能继续。用例跑完菜单该回到常态。
-			if (MissionMenuIsOpen()) {
-				std::string detail;
-				if (SetMenuOpen(false, detail)) {
-					REX::INFO("harness：结束时菜单还开着 —— 已请求关闭（{}）", detail);
-				}
-			}
-			// ★ 第 54 轮：**星图**也是暂停菜单（第 44 轮起由脚本按 R 打开）——
-			//   用例若在「星图开着」时失败中止，游戏会一直暂停（脚本定时器冻结、
-			//   后续会话里的命令步骤全部超时）。收尾一并关掉。
-			if (MenuIsOpen("GalaxyStarMapMenu")) {
-				std::string detail;
-				if (SetMenuOpenByName("GalaxyStarMapMenu", false, detail)) {
-					REX::INFO("harness：结束时星图还开着 —— 已请求关闭（{}）", detail);
-				}
-			}
+			// ★ 第 49 轮补丁 / 第 54/55 轮：结束（含失败中止）时把「暂停菜单」恢复成常态。
+			//   首测实证：smoke 在 ui.tab 失败中止 ⇒ 后面的 menu.close 步骤没跑到 ⇒
+			//   任务菜单（暂停菜单）一直留在屏幕上（游戏暂停、脚本定时器冻结）。
+			//   09:06 会话又实证了星图版本（smoke 失败 ⇒ 星图留屏 ⇒ 后续用例全冻死）。
+			//   第 55 轮起这段逻辑收进 CleanupAfterCase，**每条用例结束**都会执行。
+			CleanupAfterCase();
 			g_finished = true;
 			WriteResults();
 			REX::INFO("harness：全部用例结束 —— {}", StatusLine());
@@ -1207,7 +1232,12 @@ namespace SAQ::Test
 				REX::INFO("harness：通道就绪（{}）", detail);
 				return;
 			}
-			// ② 走完一条就开下一条
+			// ② 走完一条就开下一条（★ 第 55 轮：先等「用例间隔」—— 上一条的收尾清场
+			//    要一点时间才能让引擎真正关掉菜单/星图；不等的话下一条的 `ping` 可能
+			//    撞上「游戏仍暂停 ⇒ 脚本定时器冻结」而超时，看起来像被测功能坏了）。
+			if (NowMs() < g_nextCaseAtMs) {
+				return;
+			}
 			if (g_results.size() > g_caseIdx) {
 				++g_caseIdx;
 			}
