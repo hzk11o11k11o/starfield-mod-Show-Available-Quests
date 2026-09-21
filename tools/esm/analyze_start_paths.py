@@ -95,6 +95,11 @@ def main() -> int:
     table = json.loads((REF / "quest_table_debug.json").read_text(encoding="utf-8"))
     chain_path = REF / "quest_chain.json"
     chain = json.loads(chain_path.read_text(encoding="utf-8")) if chain_path.exists() else []
+    # ★ 第 71 轮：覆盖集要把**扩展边**也算上（此前只读编号链 ⇒ 第 69 轮加过的扩展边
+    #   目标被误标成「☆未覆盖」，审计时得人工再过滤一遍）。
+    chain_extra_path = REF / "quest_chain_extra.json"
+    chain_extra = (json.loads(chain_extra_path.read_text(encoding="utf-8"))
+                   if chain_extra_path.exists() else [])
 
     base = [q for q in quests if (q.get("master") or "Starfield.esm") == "Starfield.esm" and q.get("edid")]
     edid2q: dict[str, dict] = {}
@@ -105,7 +110,7 @@ def main() -> int:
     table_locals = {t["local"] for t in table}
     table_name = {t["local"]: (t.get("name_zh") or t.get("edid") or "?") for t in table}
     table_flags = {t["local"]: int(t.get("dnam_flags", 0)) for t in table}
-    covered_tgt = {c["formid"] for c in chain}
+    covered_tgt = {c["formid"] for c in chain} | {c["formid"] for c in chain_extra}
 
     lines: list[str] = []
 

@@ -503,6 +503,88 @@ step = wait 2500
 step = menu.close
 
 ; ----------------------------------------------------------------------------
+;  用例：第 71 轮 —— 链式门槛的**全量入边审计**（跨系列交接 / 终局选边 / 星钥站
+;  支线 / 城市线三连 / 引入任务 / 同伴里程碑）
+;
+;  起因（玩家实测）：存档里**深红舰队线根本没开始**，但「可接任务」里能看到
+;    「深藏不露」（CF01）、「宝藏号的结局」（CF08_SysDef）、「夺回曾经」（FFKeyZ01）。
+;  全量审计（tools/esm/analyze_start_paths.py：5033 个脚本 / 737 条指向表内任务的
+;  启动调用 / 114 个「无对话·终端·Perk 起点」的任务）后，18 条边收进
+;  gen_quest_chain_extra.py（该表现为 **24 任务 / 26 边**，构建期逐条对着官方
+;  Papyrus 源码核验）。判据与第 67/69 轮完全一致（kChainGates / 链式门槛统计与
+;  名单），本用例把几条代表边钉住：
+;    * CF 线：CF01 ← UC02@860、CF08_SysDef ← LC088_Space@200、
+;      CF08_Fleet ← LC088_Space@100、FFKeyZ01 / FFKeyZ02 ← CF08_SysDef@10；
+;    * 城市线：City_CY_RedTape01@10000 → 02 → 03（B 段还验证「或」的精确性：
+;      推进 01 只放行 02；03 的前置（02@10000）仍未触发 ⇒ 继续被藏）。
+;
+;  拆三条：
+;    ① `[case:r71_chain_cf]`（A1）：CF 终局四条回滚 ⇒ 全在「链式没到」名单里
+;       （★ 其中「深藏不露」的边 = UC02@860 —— 断言成立的前提是**本存档的先锋队线
+;       没做到 UC02@860**（当前测试存档如此）；若将来存档已推进过那里，这条断言
+;       会 FAIL —— 那是存档状态变化，不是产品回归）；
+;    ② `[case:r71_chain_redtape]`（A2）：火星城官僚三连回滚 ⇒ 02/03 都在名单里；
+;    ③ `[case:r71_chain_redtape_pass]`（B）：推进 01 到收尾 stage 10000
+;       （fragment 只做 `City_CY_RedTape02.Start()`，无世界副作用）⇒ 02 不再被藏、
+;       03 仍在名单里（前置未到）。
+;
+;  ★ 只动这几条任务自己的状态；不传送、不开星图、不读档；各用例自清场。
+; ----------------------------------------------------------------------------
+[case:r71_chain_cf]
+desc = 第 71 轮：链式门槛全量审计（A1）—— CF 终局四条在「链式没到」名单里
+step = note === 准备：CF 终局四条回滚（宝藏号的结局/遗产的结局/夺回曾经/博士的命令）===
+step = ping
+step = quest.reset 0x001B41D0
+step = quest.reset 0x001EF7F1
+step = quest.reset 0x001BB164
+step = quest.reset 0x001B6246
+step = wait 2500
+step = note === 前置没做 ⇒ 四条都必须出现在「链式没到」名单里（= 被藏）===
+step = menu.open
+step = assert.log 推送成功 scope=prev timeout=12000
+step = assert.log 链式没到: .*宝藏号的结局\[0x001B41D0 scope=case timeout=3000
+step = assert.log 链式没到: .*遗产的结局\[0x001EF7F1 scope=case timeout=3000
+step = assert.log 链式没到: .*夺回曾经\[0x001BB164 scope=case timeout=3000
+step = assert.log 链式没到: .*博士的命令\[0x001B6246 scope=case timeout=3000
+step = note === 「深藏不露」：边 = UC02@860（前提：本存档先锋队线未到 860）===
+step = assert.log 链式没到: .*深藏不露\[0x00009136 scope=case timeout=3000
+step = menu.close
+
+[case:r71_chain_redtape]
+desc = 第 71 轮：链式门槛全量审计（A2）—— 火星城官僚线后续在「链式没到」名单里
+step = note === 准备：官僚三连回滚（01 习气阴郁 / 02 搪塞 / 03 纠正）===
+step = ping
+step = quest.reset 0x00237490
+step = quest.reset 0x00237491
+step = quest.reset 0x0023748F
+step = wait 2500
+step = note === 前置没做 ⇒ 02/03 都在名单里（= 被藏）===
+step = menu.open
+step = assert.log 推送成功 scope=prev timeout=12000
+step = assert.log 链式没到: .*官僚习气搪塞\[0x00237491 scope=case timeout=3000
+step = assert.log 链式没到: .*官僚习气纠正\[0x0023748F scope=case timeout=3000
+step = menu.close
+
+[case:r71_chain_redtape_pass]
+desc = 第 71 轮：链式门槛全量审计（B）—— 推进 01 只放行 02；03 继续被藏（「或」的精确性）
+step = note === 推进 01 到收尾 stage 10000（fragment 只做 City_CY_RedTape02.Start()）===
+step = ping
+step = quest.start 0x00237490
+step = quest.stage 0x00237490 10000
+step = wait 2500
+step = menu.open
+step = assert.log 推送成功 scope=prev timeout=12000
+step = assert.nolog 链式没到:.*官僚习气搪塞 scope=case timeout=3000
+step = assert.log 链式没到: .*官僚习气纠正\[0x0023748F scope=case timeout=3000
+step = note === 收尾：三条 reset 回去（自清场）===
+step = menu.close
+step = quest.reset 0x00237490
+step = quest.reset 0x00237491
+step = quest.reset 0x0023748F
+step = wait 2500
+step = menu.close
+
+; ----------------------------------------------------------------------------
 ;  用例 8：第 62 轮（大项 I）—— 自动读档（**指定存档**）
 ;
 ;  目的 = 把「读档 / 加载窗口」引入 harness —— 候选降级观察期（第 49 轮补丁②）那半段
