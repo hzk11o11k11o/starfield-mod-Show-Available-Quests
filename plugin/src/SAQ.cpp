@@ -163,6 +163,14 @@ namespace SAQ
 			std::size_t infoUnknown{};        // 结构异常 → 放行（保守）
 			bool        infoFilterOff{};      // ini 把过滤关了（只统计不隐藏）
 			std::string infoSamples;          // 「INFO 没到」的名单（名字 + 已知为假的条件）
+			// ★★ 第 67 轮：链式门槛（编号任务链的启动边 ——「上一个任务的收尾 stage
+			//   启动下一个任务」；数据见 kChainGates / tools/esm/gen_quest_chain.py）。
+			std::size_t chainGated{};         // 带链式门槛的任务数（静态表 chainCount>0 的）
+			std::size_t chainPassed{};        // 至少一条启动边已触发 → 显示
+			std::size_t chainHidden{};        // 全部启动边都没触发（进度没到）→ 隐藏
+			std::size_t chainUnknown{};       // 求值不了 → 放行（保守）
+			bool        chainFilterOff{};     // ini 把过滤关了（只统计不隐藏）
+			std::string chainSamples;         // 「链式没到」的名单（名字 + 未触发的前置）
 			bool        filterApplied{};      // 这次到底有没有按运行时状态过滤
 			std::string samples;              // 被剔掉的前几条（名字 + 状态）
 			std::string vtableSamples;        // 未识别虚表的样本（诊断）
@@ -506,9 +514,17 @@ namespace SAQ
 				"; 判据来自任务自己的对话（INFO）里「引用别的任务」的同类条件 —— 全部参与判定的\r\n"
 				"; 对话都「有已知为假的条件」⇒ 进度没到 ⇒ 不显示（目前覆盖 60 条任务）。\r\n"
 				";   1 = 过滤（默认）；0 = 只写日志（便于对照界面）\r\n"
+				";\r\n"
+				"; ---- 任务链门槛（第 67 轮，「进度没到」的第三判据） ----\r\n"
+				"; 势力线/主线那种「编号任务链」的后续任务（菜鸟觐见、风驰电掣、联合殖民地第 3 章…）\r\n"
+				"; 只能由前一个任务的收尾阶段自动开始 —— 前置没做完时它们**根本接不到**，不该显示。\r\n"
+				"; 判据来自官方 Papyrus 源码里的启动边（CF01 stage 1000 里 CF02.SetStage(10) 这种，\r\n"
+				"; 目前覆盖 25 条任务 / 26 条启动边）：全部启动边都还没触发 ⇒ 不显示。\r\n"
+				";   1 = 过滤（默认）；0 = 只写日志（便于对照界面）\r\n"
 				"[Filter]\r\n"
 				"ProgressCond=1\r\n"
-				"InfoCond=1\r\n";
+				"InfoCond=1\r\n"
+				"ChainCond=1\r\n";
 			std::ofstream f{ path.c_str(), std::ios::binary };
 			if (!f) {
 				REX::WARN("测试开关 ini 写不进去（忽略；不影响其它功能）");
@@ -596,6 +612,18 @@ namespace SAQ
 			const auto path = TestModeIniPath();
 			if (!path.empty()) {
 				return ::GetPrivateProfileIntW(L"Filter", L"InfoCond", 1, path.c_str()) != 0;
+			}
+			return true;
+		}
+
+		// ★★ 第 67 轮：任务链门槛过滤开关（ini `[Filter] ChainCond`）。
+		//   1 = 过滤（默认）：编号任务链的后续任务、且全部启动边都没触发 ⇒ 不显示；
+		//   0 = 只把判据结果写进日志、**不隐藏**（实机对照用）。
+		bool ResolveChainCondFilter()
+		{
+			const auto path = TestModeIniPath();
+			if (!path.empty()) {
+				return ::GetPrivateProfileIntW(L"Filter", L"ChainCond", 1, path.c_str()) != 0;
 			}
 			return true;
 		}
@@ -830,6 +858,11 @@ namespace SAQ
 			a_stats.infoFilterOff = !infoFilter;
 			std::size_t infoSampleCount = 0;
 
+			// ★★ 第 67 轮：链式门槛（编号任务链的启动边）过滤开关（ini `[Filter] ChainCond`）。
+			const bool chainFilter = ResolveChainCondFilter();
+			a_stats.chainFilterOff = !chainFilter;
+			std::size_t chainSampleCount = 0;
+
 			// ★ 第 27 轮：模式 5（只显示入口条目）跳过整段任务循环（入口在下面单独追加）。
 			const bool entryOnly = (a_testMode == kEntryOnlyTestMode);
 			if (!entryOnly) for (const auto& row : g_runtimeRows) {
@@ -962,9 +995,44 @@ namespace SAQ
 						default:
 							break;
 						}
-					}
+						}
 
-				// ★ 第 20 轮：控制台测试过滤（`set SAQ_TestMode to N`，见 PassesTestFilter）。
+						// ★★ 第 67 轮：链式门槛（「进度没到」的第三判据）—— 编号任务链的后续任务
+						//   （CF02「菜鸟觐见」/ CF06「风驰电掣」这种）只能由前一个任务的收尾阶段自动
+						//   开始；前置没做完时它们**根本接不到**，不该出现在「可接任务」里。
+						//
+						//   数据 = 官方 Papyrus 源码里的启动边（kChainGates；CF01 的 stage 1000
+						//   fragment 里 `CF02.SetStage(10)` 那种，提取见 tools/esm/gen_quest_chain.py）。
+						//   判据：全部启动边都还没触发 ⇒ 隐藏；任一条已触发 / 求值不了 ⇒ 放行（保守）。
+						//   实机案例（玩家反馈）：存档没开深红舰队线，列表里却有 CF02 / CF06。
+						if (info.chainCount) {
+						++a_stats.chainGated;
+						const auto chainGate = EvaluateChainGates(info.chainBegin, info.chainCount);
+						switch (chainGate.verdict) {
+						case CondVerdict::kPass:
+							++a_stats.chainPassed;
+							break;
+						case CondVerdict::kFail:
+							// 名单无条件记录（即使 ini 把过滤关了 —— 那是实机对照的对照物）。
+							if (chainSampleCount < kMaxSamples) {
+								++chainSampleCount;
+								a_stats.chainSamples += std::format("{}[0x{:08X} {}] ",
+									info.nameZh, row.formID, chainGate.detail);
+							}
+							if (chainFilter) {
+								++a_stats.chainHidden;
+								continue;
+							}
+							break;
+						case CondVerdict::kUnknown:
+							++a_stats.chainUnknown;
+							break;
+						default:
+							break;
+						}
+						}
+
+						// ★ 第 20 轮：控制台测试过滤（`set SAQ_TestMode to N`，见 PassesTestFilter）。
 				//   只影响显示，与上面的运行时过滤是「与」的关系。
 				if (!PassesTestFilter(info, a_testMode)) {
 					++a_stats.testFiltered;
@@ -1099,6 +1167,19 @@ namespace SAQ
 			}
 			if (!a_stats.infoSamples.empty()) {
 				out += " INFO没到: " + a_stats.infoSamples;
+			}
+			// ★★ 第 67 轮：链式门槛（编号任务链的启动边）的统计与名单。
+			//   `过` = 至少一条启动边已触发 ⇒ 显示；`藏` = 全部启动边都没触发
+			//   ⇒ 进度没到（前置任务没做，后续任务接不到）；`未知` = 求值不了 ⇒ 放行。
+			//   名单里每条后面括号里是**没触发的前置**（哪个任务、哪个 stage 没完成）。
+			if (a_stats.chainGated) {
+				out += std::format(" 链式门槛={}(过{}/藏{}/未知{}",
+					a_stats.chainGated, a_stats.chainPassed,
+					a_stats.chainHidden, a_stats.chainUnknown);
+				out += a_stats.chainFilterOff ? "｜过滤=ini关闭)" : ")";
+			}
+			if (!a_stats.chainSamples.empty()) {
+				out += " 链式没到: " + a_stats.chainSamples;
 			}
 			if (!a_stats.samples.empty()) {
 				// 完整名单（第 11 轮起不再只记前几条）：玩家反馈「某条任务没显示」时，

@@ -985,6 +985,14 @@ def main() -> int:
         gone = b"\x4c\x89\x1c\x24\x49\x89\x5b\x20" not in blob
         print(("OK  " if gone else "MISS") + " DLL · 旧星图节点解析器特征字节已修正(反向检查)")
         all_ok &= gone
+        # ★★ 第 67 轮：任务链门槛（「上一个任务的收尾 stage 启动下一个任务」）——
+        #   产品侧三处特征：统计/名单日志 + ini 模板里的开关（[Filter] ChainCond）。
+        for name, needle in {
+            "链式门槛统计（链式门槛= 过/藏/未知）": "链式门槛=",
+            "链式门槛名单（链式没到:）": "链式没到: ",
+            "链式门槛 ini 开关（[Filter] ChainCond）": "ChainCond=1",
+        }.items():
+            all_ok &= check(f"DLL · {name}", blob, needle.encode())
         # ★★ 第 49 轮（引擎内 harness）：用例驱动器 + 原语层。
         #   ① 驱动器（SAQ_Test.cpp）：读用例文件、按步骤状态机跑、写结果 JSON；
         #   ② 原语层（SAQ_TestOps.cpp）：日志环形缓冲 / 命令通道（GLOB 0x806~0x80D）/
@@ -1034,13 +1042,19 @@ def main() -> int:
                 plan_text = plan_src.read_text(encoding="utf-8", errors="replace")
                 for cid in ("smoke", "r26_menu_idle", "r44_starmap", "r45_candidates",
                             "r47_board_marker", "r48_info_gate", "r65_icons",
-                            "r62_reload_observe"):
+                            "r67_chain", "r62_reload_observe"):
                     all_ok &= check(f"用例计划 · [case:{cid}]", plan_text.encode(),
                                     f"[case:{cid}]".encode())
                 # ★★ 第 65 轮（任务专属图标）：r65 用例的图标断言必须走**界面报告**
                 #   （assert.ui —— icon= 字段是 SAQ_Report 的实时值，比日志断言更直接）。
                 all_ok &= check("用例计划 · r65 图标断言（assert.ui icon=）",
                                 plan_text.encode(), "assert.ui icon=\\[0x".encode())
+                # ★★ 第 67 轮：r67 用例的两条链式门槛断言
+                #   （A：前置没做 ⇒ 菜鸟觐见被藏；B：推进前置后放行）。
+                all_ok &= check("用例计划 · r67 链式门槛断言（链式没到 + 菜鸟觐见）",
+                                plan_text.encode(), "assert.log 链式没到: .*菜鸟觐见".encode())
+                all_ok &= check("用例计划 · r67 前置推进后放行（assert.nolog）",
+                                plan_text.encode(), "assert.nolog 链式没到:.*菜鸟觐见".encode())
                 plan_deployed = MO2_MOD / "SFSE/Plugins/SAQ_TestPlan.txt"
                 if plan_deployed.exists():
                     same = plan_deployed.read_bytes() == plan_src.read_bytes()
@@ -1408,6 +1422,51 @@ def main() -> int:
         print(("OK  " if ok_bot else "MISS") +
               " 静态表 · 大器晚成 INFO 门槛（孤立无援 0x0027071B 完成）")
         all_ok &= ok_bot
+
+        # ★★ 第 67 轮：任务链门槛（编号任务链的启动边）—— 数据侧完整性：
+        #   ① 结构/数组存在；② 启动边 26 条 / 有边任务 25 条 / 切片不越界；
+        #   ③ 实测样本：CF02「菜鸟觐见」（0x000192D2）的唯一边 =
+        #      CF01「深藏不露」（0x00009136）@ stage 1000（玩家反馈的那条链）。
+        for name, needle in {
+            "链式门槛结构 StaticChainGate": "struct StaticChainGate",
+            "链式门槛数组 kChainGates": "kChainGates[] = {",
+        }.items():
+            ok = needle in blob
+            print(("OK  " if ok else "MISS") + f" 静态表 · {name}")
+            all_ok &= ok
+        chain_total = _num_after(blob, "kChainGateCount = ")
+        c0 = blob.find("kChainGates[] = {")
+        c1 = blob.find("kChainGateCount")
+        c_region = blob[c0:c1] if 0 <= c0 < c1 else ""
+        c_rows = re.findall(r"\{\s*0x([0-9A-F]+)u,\s*(\d+)u,\s*(\d+)u\s*\},", c_region)
+        n_chain_tasks = 0
+        n_oob_c = 0
+        for m in re.finditer(
+                r"\{\s*0x[0-9A-F]+u,\s*\d+u,\s*\d+u,\s*0x[0-9A-F]+u,"
+                r"\s*\d+u,\s*\d+u,\s*\d+u,\s*\d+u,\s*\d+u,\s*\d+u,\s*(\d+)u,\s*(\d+)u,",
+                region):
+            begin, count = int(m.group(1)), int(m.group(2))
+            if count:
+                n_chain_tasks += 1
+                if chain_total >= 0 and begin + count > chain_total:
+                    n_oob_c += 1
+        ok = (chain_total == 26 and len(c_rows) == 26 and n_chain_tasks == 25 and n_oob_c == 0)
+        print(("OK  " if ok else "MISS") +
+              f" 静态表 · 链式门槛完整（启动边 {len(c_rows)} 条 / 有边任务 {n_chain_tasks} / "
+              f"切片越界 {n_oob_c}）")
+        all_ok &= ok
+        m_cf02 = re.search(
+            r"\{\s*0x000192D2u,\s*\d+u,\s*\d+u,\s*0x[0-9A-F]+u,"
+            r"\s*\d+u,\s*\d+u,\s*\d+u,\s*\d+u,\s*\d+u,\s*\d+u,\s*(\d+)u,\s*(\d+)u,", blob)
+        ok_cf02 = False
+        if m_cf02:
+            cb, cc = int(m_cf02.group(1)), int(m_cf02.group(2))
+            if cc == 1 and cb < len(c_rows):
+                host, _master, stage = c_rows[cb]
+                ok_cf02 = host.upper() == "00009136" and stage == "1000"
+        print(("OK  " if ok_cf02 else "MISS") +
+              " 静态表 · 菜鸟觐见链式门槛（CF01 深藏不露 @ stage 1000）")
+        all_ok &= ok_cf02
 
         # ★★ 第 65 轮（任务专属图标）：阵营列（表行尾的 faction）—— 数据侧完整性：
         #   ① 行数 = kQuestTableSize；② 值域 -1..9（-1 = 无阵营；界面另有边界收敛，

@@ -206,6 +206,50 @@ MT_TEST(INFO门槛_全部对话都有已知假才隐藏)
 	MT_CHECK_EQ(DecideInfoGates(allEmpty).detail, std::string("全部对话的条件都为假"));
 }
 
+// ---------------------------------------------------------------- 4b. 链式门槛（第 67 轮）
+
+MT_TEST(链式门槛_任一边触发即放行_全未触发才隐藏)
+{
+	// 边为空 ⇒ 不是链式后续 ⇒ 不做链式过滤
+	MT_CHECK_EQ(DecideChainGates({}).verdict, CondV::kNoGates);
+
+	// 单条边未触发（实机形态：CF02「菜鸟觐见」的前置 CF01 stage 1000 没完成）⇒ 隐藏
+	const std::vector<CondCheck> oneFail = { F("前置 0x00009136 stage 1000 未完成") };
+	const auto h1 = DecideChainGates(oneFail);
+	MT_CHECK_EQ(h1.verdict, CondV::kFail);
+	MT_CHECK_EQ(h1.detail, std::string("前置 0x00009136 stage 1000 未完成"));
+
+	// 多条边全部未触发 ⇒ 隐藏；说明取第一条**非空**的
+	const std::vector<CondCheck> twoFail = { F(""), F("B") };
+	const auto h2 = DecideChainGates(twoFail);
+	MT_CHECK_EQ(h2.verdict, CondV::kFail);
+	MT_CHECK_EQ(h2.detail, std::string("B"));
+
+	// 任一条边已触发 ⇒ 放行（「或」语义 —— 与进度门槛的 AND 相反）
+	const std::vector<CondCheck> mixed = { F("A"), P(), F("C") };
+	MT_CHECK_EQ(DecideChainGates(mixed).verdict, CondV::kPass);
+
+	// 求值不了 ⇒ 放行（保守）：[F,U] ⇒ unknown
+	const std::vector<CondCheck> fu = { F("A"), U("取不到") };
+	const auto h3 = DecideChainGates(fu);
+	MT_CHECK_EQ(h3.verdict, CondV::kUnknown);
+	MT_CHECK_EQ(h3.detail, std::string("取不到"));
+
+	// pass 优先于 unknown（有边已触发 ⇒ 放行）
+	const std::vector<CondCheck> up = { U("X"), P() };
+	MT_CHECK_EQ(DecideChainGates(up).verdict, CondV::kPass);
+
+	// 全 unknown ⇒ unknown（detail = 第一条非空）
+	const std::vector<CondCheck> uu = { U(""), U("Y") };
+	const auto h4 = DecideChainGates(uu);
+	MT_CHECK_EQ(h4.verdict, CondV::kUnknown);
+	MT_CHECK_EQ(h4.detail, std::string("Y"));
+
+	// 全 fail 且说明全空 ⇒ 兜底文案
+	const std::vector<CondCheck> allEmpty = { F(""), F("") };
+	MT_CHECK_EQ(DecideChainGates(allEmpty).detail, std::string("全部链式前置都还没到"));
+}
+
 // ---------------------------------------------------------------- 5. 候选池
 
 MT_TEST(候选选择_第一个可得的即最优)

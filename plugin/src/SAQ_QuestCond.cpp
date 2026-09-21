@@ -121,6 +121,43 @@ namespace SAQ
 			out.verdict = CondVerdict::kPass;
 			return out;
 		}
+
+		// ★★ 第 67 轮：任务链门槛的单边求值 —— 「前置任务的这个 stage 完成了吗」。
+		//   与 EvalOneCond 的区别：这里**固定**就是 StageDone（没有 want/check 字段），
+		//   语义 = 「这条启动边是否已经触发」。
+		Decision::CondCheck EvalChainEdge(const StaticChainGate& a_e)
+		{
+			Decision::CondCheck out;
+			const auto fid = Masters::MakeFormID(a_e.hostMaster, a_e.hostLocal);
+			const auto* form = fid ? RE::TESForm::LookupByID(fid) : nullptr;
+			if (!form) {
+				// 前置任务取不到（master 没解析出来 / 记录不存在）⇒ 放行（kUnknown）。
+				out.verdict = CondVerdict::kUnknown;
+				out.detail = std::format("链式前置 0x{:08X} 取不到", fid);
+				return out;
+			}
+
+			const auto fn = StageDoneFnOrNull();
+			if (!fn) {
+				out.verdict = CondVerdict::kUnknown;
+				out.detail = "IsStageDone 不可用（游戏版本特征不符）";
+				return out;
+			}
+			bool ok = false;
+			if (!CallStageDoneChecked(reinterpret_cast<void*>(fn),
+					const_cast<RE::TESForm*>(form), a_e.hostStage, ok)) {
+				out.verdict = CondVerdict::kUnknown;
+				out.detail = "IsStageDone 调用异常";
+				return out;
+			}
+			if (!ok) {
+				out.verdict = CondVerdict::kFail;
+				out.detail = std::format("前置 0x{:08X} stage {} 未完成", fid, a_e.hostStage);
+				return out;
+			}
+			out.verdict = CondVerdict::kPass;
+			return out;
+		}
 	}
 
 	CondEvalResult EvaluateProgressGates(std::uint32_t a_condBegin, std::uint8_t a_condCount)
@@ -186,5 +223,28 @@ namespace SAQ
 			}
 		}
 		return Decision::DecideInfoGates(evals);
+	}
+
+	CondEvalResult EvaluateChainGates(std::uint32_t a_edgeBegin, std::uint8_t a_edgeCount)
+	{
+		CondEvalResult out;
+		if (a_edgeCount == 0) {
+			return out;  // kNoGates：这条任务不是链式后续
+		}
+		if (a_edgeBegin > kChainGateCount || a_edgeCount > kChainGateCount - a_edgeBegin) {
+			out.verdict = CondVerdict::kUnknown;
+			out.detail = "链式门槛切片越界";
+			return out;
+		}
+
+		// ★★ 第 67 轮：逐条边求值 → 聚合交给离线层纯函数
+		//   （Decision::DecideChainGates：任一边已触发 ⇒ 放行；全部未触发 ⇒ 隐藏；
+		//   有求值不了的边 ⇒ 放行）。
+		std::vector<Decision::CondCheck> edges;
+		edges.reserve(a_edgeCount);
+		for (std::size_t i = 0; i < a_edgeCount; ++i) {
+			edges.push_back(EvalChainEdge(kChainGates[a_edgeBegin + i]));
+		}
+		return Decision::DecideChainGates(edges);
 	}
 }

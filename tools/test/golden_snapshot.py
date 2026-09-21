@@ -102,6 +102,7 @@ def summarize(rel: str, path: pathlib.Path) -> str:
                 "kQuestCondCount": "进度门槛",
                 "kInfoGroupCount": "INFO对话",
                 "kInfoCondCount": "INFO条件",
+                "kChainGateCount": "链式边",     # ★ 第 67 轮：任务链门槛
                 "kEntryTableSize": "入口",
             }
             parts = []

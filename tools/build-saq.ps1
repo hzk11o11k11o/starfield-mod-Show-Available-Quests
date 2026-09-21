@@ -92,6 +92,14 @@ if (-not $SkipTable) {
     Step '1/6' '生成任务阵营映射（gen_faction_types.py → ref\faction_types.json）'
     & python (Join-Path $root 'tools\esm\gen_faction_types.py') | Write-Host
     if ($LASTEXITCODE -ne 0) { throw "gen_faction_types.py 失败（exit $LASTEXITCODE）" }
+    # ★★ 第 67 轮：任务链门槛（「上一个任务的收尾 stage 启动下一个任务」）——
+    #   gen_quest_chain.py 扫官方 Papyrus 源码（Data\Scripts\Source\Base）里的跨任务
+    #   启动调用，只认「编号链路」（前缀相同、编号 +1、调用方是纯编号任务、调用发生在
+    #   stage fragment 里；规则见该文件头注释）⇒ ref\quest_chain.json 由
+    #   gen_quest_table.py 消费（写进静态表的 kChainGates）。
+    Step '1/6' '生成任务链门槛（gen_quest_chain.py → ref\quest_chain.json）'
+    & python (Join-Path $root 'tools\esm\gen_quest_chain.py') | Write-Host
+    if ($LASTEXITCODE -ne 0) { throw "gen_quest_chain.py 失败（exit $LASTEXITCODE）" }
     Step '1/6' '生成静态任务表（gen_quest_table.py）'
     & python (Join-Path $root 'tools\esm\gen_quest_table.py') | Write-Host
     if ($LASTEXITCODE -ne 0) { throw "gen_quest_table.py 失败（exit $LASTEXITCODE）" }

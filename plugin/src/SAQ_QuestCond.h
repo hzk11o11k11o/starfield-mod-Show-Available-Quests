@@ -52,4 +52,17 @@ namespace SAQ
 	// ★ 第 64 轮（大项 K）：本函数只做「逐组求值」（组内短路），**组间聚合**在
 	//   Decision::DecideInfoGates（离线层，有单测）。
 	CondEvalResult EvaluateInfoGates(std::uint32_t a_groupBegin, std::uint8_t a_groupCount);
+
+	// ★★ 第 67 轮：**任务链门槛**求值 —— 「编号任务链」的启动边（数据见
+	//   SAQ_QuestTable.h 的 kChainGates，生成器 tools/esm/gen_quest_chain.py：
+	//   从官方 Papyrus 源码里挖出「上一个任务的收尾 stage 启动了下一个任务」的边）。
+	//
+	//   a_begin / a_count 来自 StaticQuestInfo 的 chainBegin / chainCount。
+	//   每条边只查一次引擎：**前置任务的该 stage 是否已完成**（IsStageDone）。
+	//
+	//   语义（边之间是「或」，聚合在 Decision::DecideChainGates）：
+	//     * 任一条边的 stage 已完成 ⇒ kPass（放行）；
+	//     * 全部边都未完成 ⇒ kFail（进度没到 ⇒ 隐藏 —— 「菜鸟觐见」在「深藏不露」没做之前不显示）；
+	//     * 前置任务取不到 / 求值器不可用 ⇒ kUnknown（放行，保守）。
+	CondEvalResult EvaluateChainGates(std::uint32_t a_edgeBegin, std::uint8_t a_edgeCount);
 }

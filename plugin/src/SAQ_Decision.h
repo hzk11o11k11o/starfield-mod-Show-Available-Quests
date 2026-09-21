@@ -143,6 +143,20 @@ namespace SAQ::Decision
 	//     全空时用兜底文案）。
 	GateDecision DecideInfoGates(std::span<const InfoGroupEval> a_groups);
 
+	// ★★ 第 67 轮：**任务链门槛**（「编号任务链」的启动边 —— 见 SAQ_QuestTable.h 的
+	//   kChainGates 与 tools/esm/gen_quest_chain.py）。
+	//
+	//   每条边 = (前置任务, 触发 stage)：那条 stage 完成 ⇒ 这个后续任务才可能开始
+	//   （例如 `CF01` 的 stage 1000 fragment 里 `CF02.SetStage(10)`）。
+	//
+	//   语义（**边之间是「或」**，与进度门槛的 AND 相反）：
+	//     * a_edges 为空 ⇒ kNoGates（这条任务不是链式后续 ⇒ 不做链式过滤）；
+	//     * 任一条边 kPass（该 stage 已完成）⇒ kPass（前置做到了 ⇒ 放行，保守）；
+	//     * 否则若任一条 kUnknown（前置任务取不到 / 求值器不可用）⇒ kUnknown（放行）；
+	//     * 否则（全部边 kFail）⇒ kFail（**进度没到 ⇒ 隐藏** —— 玩家还没做完前一个
+	//       任务，这个后续任务接不到，例如深红舰队的 CF02「菜鸟觐见」）。
+	GateDecision DecideChainGates(std::span<const CondCheck> a_edges);
+
 	// ========================================================================
 	//  4. 引导候选池：选择 / 需要靠近 判定 / 降级观察期状态机
 	// ========================================================================

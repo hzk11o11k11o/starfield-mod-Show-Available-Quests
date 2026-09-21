@@ -296,6 +296,20 @@ def load_info_gates(path: Path) -> dict[int, list[dict]]:
     return {int(t["formid"]): t.get("infos", []) for t in raw}
 
 
+def load_chain(path: Path) -> dict[int, list[dict]]:
+    """★ 第 67 轮：任务链门槛表（tools/esm/gen_quest_chain.py 生成；没有 ⇒ 不做链式过滤）。
+
+    每条边 = 「上一个任务的某个 stage fragment 启动了这个任务」（从官方 Papyrus 源码
+    里挖出来的，例如 CF01 的 stage 1000 fragment 里 `CF02.SetStage(10)`）。
+    运行时判据：**全部链边都还没触发 ⇒ 隐藏**（详见 SAQ_QuestTable.h 的 kChainGates）。
+    """
+    if not path.exists():
+        print(f"（没有 {path} —— 链式门槛为空，先跑 tools/esm/gen_quest_chain.py）")
+        return {}
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    return {int(t["formid"]): t.get("edges", []) for t in raw}
+
+
 def master_strings_key(master: str) -> str:
     """master 名 -> 字符串表前缀：ShatteredSpace.esm -> shatteredspace（与游戏内文件名一致）。"""
     return Path(master).stem.lower()
@@ -313,6 +327,8 @@ def main() -> int:
                     help="★ 大项 D：对话侧 INFO 门槛（analyze_info_gates.py 产物）")
     ap.add_argument("--factions", default="ref/faction_types.json",
                     help="★ 第 65 轮：任务阵营（gen_faction_types.py 产物；缺失 ⇒ 全无阵营）")
+    ap.add_argument("--chain", default="ref/quest_chain.json",
+                    help="★ 第 67 轮：任务链门槛（gen_quest_chain.py 产物；缺失 ⇒ 不做链式过滤）")
     ap.add_argument("--out-header", default="plugin/src/SAQ_QuestTable.h")
     ap.add_argument("--out-json", default="ref/quest_table_debug.json")
     ap.add_argument("--out-as3", default="ui/missionmenu/saqdata/SaqEmbeddedPayload.inc")
@@ -509,6 +525,39 @@ def main() -> int:
     print(f"INFO 门槛：{n_info_tasks} 条任务 / {len(info_group_flat)} 条对话 / "
           f"{len(info_cond_flat)} 条条件")
 
+    # ★ 第 67 轮：任务链门槛 —— 「上一个任务的收尾 stage 启动下一个任务」的启动边
+    #   （gen_quest_chain.py 从官方 Papyrus 源码里挖出来的）。运行时判据：
+    #   **全部链边都还没触发 ⇒ 隐藏**（详见 SAQ_QuestTable.h 的 kChainGates）。
+    chain_by_fid = load_chain(Path(a.chain))
+    q_master_by_local: dict[int, str] = {}
+    for q in quests:
+        q_master_by_local.setdefault(int(q["local"]), q["master"])
+    chain_flat: list[tuple[int, int, int]] = []   # (hostLocal, hostMaster, hostStage)
+    n_chain_tasks = 0
+    for r in rows:
+        edges = chain_by_fid.get(r["formid"], [])
+        ok_edges = []
+        for e in edges:
+            hm = e.get("host_master", "Starfield.esm")
+            hl = int(e["host_local"]) & 0xFFFFFF
+            if hm not in master_idx:
+                print(f"  !! 链式门槛引用了表里没有的 master（跳过这条边）：{hm}")
+                continue
+            ok_edges.append((hl, master_idx[hm], int(e["host_stage"]) & 0xFFFF,
+                             e.get("host_edid", "")))
+        r["chain_begin"] = len(chain_flat)
+        r["chain_count"] = len(ok_edges)
+        r["chain_edges"] = ok_edges
+        if ok_edges:
+            n_chain_tasks += 1
+        for (hl, hm, hs, _edid) in ok_edges:
+            chain_flat.append((hl, hm, hs))
+    print(f"链式门槛：{n_chain_tasks} 条任务 / {len(chain_flat)} 条启动边")
+    for r in rows:
+        if r["chain_count"]:
+            desc = " | ".join(f"{e[3]}@{e[2]}" for e in r["chain_edges"])
+            print(f"  {r['edid']:<34} 需要其一已触发：{desc}")
+
     per_master = Counter(r["master"] for r in rows)
     print("按 master：" + " ".join(f"{m}={per_master[m]}" for m in masters))
 
@@ -587,6 +636,16 @@ def main() -> int:
     lines.append("\t\t//   infoGroupCount == 0 ⇒ 这条任务不做 INFO 过滤。")
     lines.append("\t\tstd::uint32_t infoGroupBegin;")
     lines.append("\t\tstd::uint8_t  infoGroupCount;")
+    lines.append("\t\t// ★★ 第 67 轮：任务链门槛切片（见下方 kChainGates）——")
+    lines.append("\t\t//   本任务是「编号任务链」里的后续环节（数据来源 = 官方 Papyrus 源码里的")
+    lines.append("\t\t//   启动边，如 `CF01` 的 stage 1000 fragment 里 `CF02.SetStage(10)`）。")
+    lines.append("\t\t//   判据：chainCount > 0 时，**全部链边都还没触发 ⇒ 隐藏**（进度没到 ——")
+    lines.append("\t\t//   玩家还没做完前一个任务，这个后续任务根本接不到，比如深红舰队线的")
+    lines.append("\t\t//   CF02「菜鸟觐见」在 CF01 没做之前不该出现在「可接任务」里）；")
+    lines.append("\t\t//   任一条边已触发（或求值不了）⇒ 放行（保守）。")
+    lines.append("\t\t//   chainCount == 0 ⇒ 这条任务不做链式过滤。")
+    lines.append("\t\tstd::uint32_t chainBegin;")
+    lines.append("\t\tstd::uint8_t  chainCount;")
     lines.append("\t\tconst char*   whereEn;  // 目标所在地（城市/飞船），日志与 UI 提示用")
     lines.append("\t\tconst char*   whereZh;")
     lines.append("\t\tconst char*   nameEn;")
@@ -662,6 +721,30 @@ def main() -> int:
     lines.append("\t};")
     lines.append(f"\tinline constexpr std::size_t kInfoCondCount = {len(info_cond_flat)};")
     lines.append("")
+    lines.append("\t// ★★ 第 67 轮：任务链门槛（「上一个任务的收尾 stage 启动下一个任务」）——")
+    lines.append("\t//   数据来源：官方 Papyrus 源码（CK 的 Data\\Scripts\\Source\\Base）里的跨任务")
+    lines.append("\t//   启动调用；提取规则见 tools/esm/gen_quest_chain.py 头注释（只认「编号链路」：")
+    lines.append("\t//   前缀相同、编号 +1、调用方是纯编号任务、调用发生在 stage fragment 里）。")
+    lines.append("\t//   每条边 = (前置任务, 触发 stage)：后者做完 ⇒ 这条启动边才可能发生。")
+    lines.append("\t//   运行时判据（SAQ_QuestCond.cpp::EvaluateChainGates → Decision::DecideChainGates）：")
+    lines.append("\t//     * 切片越界 ⇒ 放行（kUnknown）；")
+    lines.append("\t//     * 任一条边的 stage 已完成 ⇒ 放行（kPass，保守）；")
+    lines.append("\t//     * 全部边都未完成 ⇒ 隐藏（kFail）—— 这是本 MOD「进度没到不显示」的第三判据。")
+    lines.append("\tstruct StaticChainGate")
+    lines.append("\t{")
+    lines.append("\t\tstd::uint32_t hostLocal;   // 前置任务（记录号）")
+    lines.append("\t\tstd::uint8_t  hostMaster;  // kQuestMasters[] 下标")
+    lines.append("\t\tstd::uint16_t hostStage;   // 该任务的哪个 stage 触发（已完成 ⇒ 边已触发）")
+    lines.append("\t};")
+    lines.append("\tinline constexpr StaticChainGate kChainGates[] = {")
+    if chain_flat:
+        for (hl, hm, hs) in chain_flat:
+            lines.append(f"\t\t{{ 0x{hl:08X}u, {hm}u, {hs}u }},")
+    else:
+        lines.append("\t\t{ 0u, 0u, 0u },  // 占位（表为空时 MSVC 不允许零长数组）")
+    lines.append("\t};")
+    lines.append(f"\tinline constexpr std::size_t kChainGateCount = {len(chain_flat)};")
+    lines.append("")
     lines.append("\t// ★ 第 45 轮：引导目标候选池（按质量排序；每条任务用 candBegin/candCount 切片）。")
     lines.append("\t//   flags bit0 = persistent（常驻引用 —— 脚本任何时候都取得到，是「玩家在远处」的备胎）。")
     lines.append("\t//   生成：gen_guide_targets.py 的 cands 数组（排序规则见那个文件头注释）。")
@@ -690,6 +773,7 @@ def main() -> int:
             f' 0x{flags:08X}u, {int(r["cand_begin"])}u, {int(r["cand_count"])}u,'
             f' {int(r.get("cond_begin", 0))}u, {int(r.get("cond_count", 0))}u,'
             f' {int(r.get("info_group_begin", 0))}u, {int(r.get("info_group_count", 0))}u,'
+            f' {int(r.get("chain_begin", 0))}u, {int(r.get("chain_count", 0))}u,'
             f' "{c_escape(r["guide_where_en"])}", "{c_escape(r["guide_where_zh"])}",'
             f' "{c_escape(r["name_en"])}", "{c_escape(r["name_zh"])}",'
             f' {int(r.get("faction", -1))} }},'

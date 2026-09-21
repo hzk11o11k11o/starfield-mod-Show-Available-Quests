@@ -124,6 +124,43 @@ namespace SAQ::Decision
 		return out;
 	}
 
+	GateDecision DecideChainGates(std::span<const CondCheck> a_edges)
+	{
+		GateDecision out;
+		if (a_edges.empty()) {
+			return out;  // kNoGates：不是链式后续（不做链式过滤）
+		}
+
+		// 边之间是「或」：先看有没有已经触发的前置（有 ⇒ 放行）。
+		std::string firstFail;
+		std::string firstUnknown;
+		for (const auto& e : a_edges) {
+			if (e.verdict == CondVerdict::kPass) {
+				out.verdict = CondVerdict::kPass;
+				return out;
+			}
+			if (e.verdict == CondVerdict::kUnknown) {
+				if (firstUnknown.empty()) {
+					firstUnknown = e.detail;
+				}
+			} else if (firstFail.empty()) {
+				firstFail = e.detail;
+			}
+		}
+
+		// 没有已触发的边：只要有求值不了的边 ⇒ 放行（保守 —— 别因为取不到前置就隐藏）。
+		if (!firstUnknown.empty()) {
+			out.verdict = CondVerdict::kUnknown;
+			out.detail = firstUnknown;
+			return out;
+		}
+
+		// 全部边都「已知未触发」⇒ 进度没到 ⇒ 隐藏。
+		out.verdict = CondVerdict::kFail;
+		out.detail = firstFail.empty() ? "全部链式前置都还没到" : firstFail;
+		return out;
+	}
+
 	// ---------------------------------------------------------------- 4. 候选池
 
 	CandidatePick PickCandidate(std::span<const bool> a_alive)
