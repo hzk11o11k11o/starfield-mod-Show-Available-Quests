@@ -437,8 +437,14 @@ HARNESS_STRINGS = (
     #   （候选可得性只读探针：与产品候选复算同一套查询，结果进步骤 JSON，事后可对账）。
     # ★★ 第 62 轮（大项 I）：自动读档 —— 新 op `save.list`（BGSSaveLoadManager 只读诊断）
     #   与 `save.load`（排队读档 → 加载静默期 → 通道重新就绪 → 叫不醒就开菜单唤醒脚本）。
+    # ★★ 第 66 轮（14:35 会话 r44 的唯一 FAIL = **驱动器窗口太紧**，产品全对）：
+    #   命令回执窗口 3000 → 8000 + ping 用满窗口（此前被 kDefaultStepTimeoutMs 5000
+    #   封顶）+ 回执 ≥2000 ms 留一行 note。实测依据：脚本执行了 seq=17 的 Ping
+    #   （Papyrus `测试命令：seq=17 op=1 结果=0`）但晚了约 3.4 秒；超时瞬间 DLL
+    #   诊断「此刻打开的菜单：无」（不是加载画面）；紧接着的下一条用例 ping 只用 47 ms。
     ("harness 驱动器版本串",
-     "驱动器 v63：主菜单自动读档等主菜单稳定"),
+     "驱动器 v66：命令回执窗口 8000 ms"),
+    ("harness 慢回执留痕文案", "命令回执偏慢："),
     ("harness 主菜单自动读档文案", "主菜单自动读档已排队"),
     ("harness 主菜单自动读档放弃文案", "主菜单自动读档放弃"),
     # ★★ 第 62 轮补②（12:2x 会话实测：自动读档后游戏退回主菜单 + 跳出）：
@@ -1015,8 +1021,9 @@ def main() -> int:
             #   「驱动器 v61：…」是「跑的是不是这一版驱动器」的唯一判据（同 SWF stamp=）。
             gone = ("驱动器 v57".encode() not in blob and "驱动器 v58".encode() not in blob and
                     "驱动器 v59".encode() not in blob and "驱动器 v60".encode() not in blob and
-                    "驱动器 v61".encode() not in blob and "驱动器 v62".encode() not in blob)
-            print(("OK  " if gone else "MISS") + " DLL · 旧驱动器版本串 v57~v62 已替换(反向检查)")
+                    "驱动器 v61".encode() not in blob and "驱动器 v62".encode() not in blob and
+                    "驱动器 v63".encode() not in blob)
+            print(("OK  " if gone else "MISS") + " DLL · 旧驱动器版本串 v57~v63 已替换(反向检查)")
             all_ok &= gone
             # ★★ 第 54 轮：用例计划本身也该被查 —— 历史判据（第 26/44~48 轮）落成用例后，
             #   最怕的是「源码改了没部署」或「用例被误删」。这里只查**开发模式**：

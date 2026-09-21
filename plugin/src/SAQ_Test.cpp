@@ -36,7 +36,19 @@ namespace SAQ::Test
 	{
 		constexpr const char* kMenuName = "BSMissionMenu";
 		constexpr std::uint64_t kDefaultStepTimeoutMs = 5000;
-		constexpr std::uint64_t kCommandAckTimeoutMs = 3000;   // 命令通道（脚本一拍 0.5 秒）
+		// ★★ 第 66 轮（14:35 会话 r44 的唯一 FAIL）：命令回执窗口 3000 → 8000。
+		//   实测形态：r44 的第一步 `ping`（seq=17）在 3000 ms 内没等到回执 ⇒ FAIL；
+		//   而 **Papyrus 日志证明脚本正常执行了这条命令**
+		//   （`测试命令：seq=17 op=1 结果=0 —— Ping`），只是晚了约 **3.4 秒**；
+		//   同一时段的现场：DLL 超时诊断「此刻打开的菜单：无」（不是加载画面）、
+		//   紧随其后的下一条用例 `ping`（seq=18）**只用 47 ms** 就成功
+		//   ⇒ **脚本节拍被偶发拖慢**（菜单刚关、世界活动），既不是产品缺陷也不是通道问题。
+		//   窗口留 8 秒（2.3 倍余量）吸收这类抖动；真·脚本僵死仍由
+		//   「连续 2 次无回执 / 有加载画面立即判卡死」（kStuckAbortTimeouts）兜底。
+		constexpr std::uint64_t kCommandAckTimeoutMs = 8000;   // 命令通道（脚本一拍 0.5 秒）
+		// ★ 第 66 轮：回执 ≥ 这个值就在日志里留一行 note（脚本节拍被拖慢的迹象）——
+		//   没有它的话，「脚本执行了但晚了」与「通道没通」只能靠翻 Papyrus 日志区分。
+		constexpr std::uint64_t kSlowAckNoteMs = 2000;
 		// ★★ 第 56 轮：传送（MoveTo）的回执要**等 cell 加载完**才算完 —— 脚本是在 MoveTo
 		//   返回之后才写 TestResult/TestAck 的。09:22 会话实测：两次 teleport 的回执分别在
 		//   提交后 4.3 s / 4.5 s 才到（Papyrus 侧 `结果=0`，传送确实成功），而 3 秒窗口把
@@ -561,6 +573,9 @@ namespace SAQ::Test
 			if (op == "ping") {
 				a_step.kind = Kind::kCmd;
 				a_step.op = Op::kPing;
+				// ★★ 第 66 轮：ping 也支持 `timeout=`（不写就用命令默认窗口 ——
+				//   见文件末尾 kCmd 分支的 kCommandAckTimeoutMs 取法）。
+				rest = ExtractTimeout(rest, a_step.timeoutMs);
 			} else if (op == "quest.reset" || op == "quest.start" || op == "quest.complete" || op == "teleport") {
 				a_step.kind = Kind::kCmd;
 				a_step.op = (op == "quest.reset")    ? Op::kQuestReset
@@ -710,11 +725,18 @@ namespace SAQ::Test
 				return false;
 			}
 
-			// 命令类步骤：回执超时常量与步骤超时取小（避免「脚本没跑」时白等 5 秒以上）。
+			// 命令类步骤的回执窗口（见 kCommandAckTimeoutMs 的说明）。
 			// ★ 第 56 轮：传送例外 —— MoveTo 的等待窗口由 cell 加载决定，见 kTeleportAckTimeoutMs。
+			// ★★ 第 66 轮：**不写 `timeout=` 就用 kCommandAckTimeoutMs** —— 此前是
+			//   `min(step.timeoutMs, kCommandAckTimeoutMs)`，而 step 的默认值
+			//   kDefaultStepTimeoutMs(5000) 会把窗口封在 5 秒（14:35 会话那次 3.4 秒的
+			//   节拍停摆只剩 1.6 秒余量）。写在用例里的 `timeout=` 仍然生效（调小可用，
+			//   调大封顶在 kCommandAckTimeoutMs）。
 			if (a_step.kind == Kind::kCmd) {
 				if (a_step.op == Op::kTeleport) {
 					a_step.timeoutMs = kTeleportAckTimeoutMs;
+				} else if (a_step.timeoutMs == kDefaultStepTimeoutMs) {
+					a_step.timeoutMs = kCommandAckTimeoutMs;
 				} else {
 					a_step.timeoutMs = std::min(a_step.timeoutMs, kCommandAckTimeoutMs);
 				}
@@ -1476,6 +1498,13 @@ namespace SAQ::Test
 						return true;
 					}
 					if (step.op != Op::kTeleport) {
+						// ★ 第 66 轮：回执偏慢（≥ kSlowAckNoteMs）就在日志里留痕 ——
+						//   14:35 会话 r44 的 ping 正是这一类（脚本执行了、结果=0，但晚了
+						//   3.4 秒），当时只能翻 Papyrus 日志才能与「通道没通」区分开。
+						if (const auto took = now - SubmittedAtMs(); took >= kSlowAckNoteMs) {
+							REX::INFO("harness：  [note] 命令回执偏慢：{} 用了 {} ms（脚本节拍被拖慢的迹象；判据不受影响）",
+								step.raw, took);
+						}
 						CompleteStep(true, detail, {});
 						return true;
 					}
@@ -1639,13 +1668,12 @@ namespace SAQ::Test
 		// ★ 第 56 轮：带上**驱动器版本串** —— 与 SWF 的 `stamp=` 同一个道理：日志里有没有
 		//   这一串，是「跑的是不是修好窗口 bug 的那版驱动器」的唯一判据（旧版会把
 		//   断言窗口起点清 0 ⇒ 假 PASS/假 FAIL）。
-		REX::INFO("harness：已启用（{} 个用例；驱动器 v63：主菜单自动读档等主菜单稳定 {} ms 再排队"
-				  " + 排队失败侦测（回主菜单 ⇒ WARN） + save.list / save.load（BGSSaveLoadManager 排队读档"
-				  " + 加载静默期 + 通道重新就绪）"
-				  "（沿用：guide.probe / ~0x 参数写回 / 清场延迟复查 / 日志窗口按步保留 /"
+		REX::INFO("harness：已启用（{} 个用例；驱动器 v66：命令回执窗口 8000 ms + ping 用满窗口"
+				  "（14:35 会话 r44 实测：脚本执行了但晚了 3.4 秒）+ 回执 ≥ {} ms 留一行 note"
+				  "（沿用：v63 主菜单稳定 {} ms 后自动读档 / save.list / save.load / guide.probe /"
 				  " 传送 20 秒窗口 / 落地静默期每 Tick 推进 / 加载画面证据 / 卡死自动中止））"
 				  " —— 等脚本通道就绪后自动开跑",
-			g_cases.size(), kAutoLoadMinMenuAgeMs);
+			g_cases.size(), kSlowAckNoteMs, kAutoLoadMinMenuAgeMs);
 	}
 
 	namespace
