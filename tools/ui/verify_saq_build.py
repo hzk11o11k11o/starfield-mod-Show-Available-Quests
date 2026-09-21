@@ -682,7 +682,10 @@ def main() -> int:
         #     描述第一句改用说明 + 新增 `pin=` 探针（说明真的进了描述）。
         #   ★★ 第 80 轮（可重复 NPC 入口）：stamp 58 —— type 101 条目文案
         #     （子项「与他交谈（可重复任务）」+ 可重复任务描述）+ `rep=` 探针。
-        "构建指纹 stamp=58": b"stamp=58",
+        #   ★★ 第 81 轮（地球地标任务）：stamp 59 —— **AS3 代码本身没改**，改的是
+        #     内嵌回退载荷（+10 条地标任务 + 其说明文本）⇒ 重编译 SWF 让内嵌数据
+        #     与 C++ 载荷重新逐条对齐（协议纪律：先改 SWF 必须留下指纹）。
+        "构建指纹 stamp=59": b"stamp=59",
         # ★★ 第 80 轮（可重复 NPC 入口）：type 101 的界面链路 ——
         #   ① 常量与合并判据（SaqIsEntryType —— 子项/描述/不可导航提示统一用它）；
         #   ② 子项名与描述文案（中英各一段，证明不是只改了判据没接文案）；
@@ -1077,6 +1080,10 @@ def main() -> int:
             "势力说明数据(UC)": "加入联合殖民地先锋队",
             "势力说明数据(深红舰队)": "加入深红舰队",
             "势力名数据(kFactionEntryNamesZh)": "联合殖民地先锋队",
+            # ★★ 第 81 轮（地球地标任务）：说明数组（kLandmarkNotesZh/En）编进 DLL ——
+            #   两条样本（阿波罗 / 上海）证明数组真的在（描述第一句会用它）。
+            "地标说明数据(阿波罗)": "拾取《利文斯通爵士的第二篇日志》",
+            "地标说明数据(上海)": "拾取《现代宏观经济学概论》",
         }.items():
             all_ok &= check(f"DLL · {name}", blob, needle.encode())
         # ★★ 第 49 轮（引擎内 harness）：用例驱动器 + 原语层。
@@ -1151,6 +1158,9 @@ def main() -> int:
                             # ★★ 第 80 轮：提供无限任务的 NPC 条目（8 条 + 名字前缀 +
                             #   引导落常驻 marker）
                             "r80_repeatable_npc",
+                            # ★★ 第 81 轮：地球地标任务（10 条进列表 + 引导落常驻兜底 +
+                            #   伦敦只给说明）
+                            "r81_landmark",
                             "r62_reload_observe"):
                     all_ok &= check(f"用例计划 · [case:{cid}]", plan_text.encode(),
                                     f"[case:{cid}]".encode())
@@ -1396,6 +1406,19 @@ def main() -> int:
                 all_ok &= check("用例计划 · r80 引导落常驻 marker 断言",
                                 plan_text.encode(),
                                 "assert.log 引导请求：（可重复）贸易管理局 · 邓肯·林奇.*新建常驻 marker（精确）".encode())
+                # ★★ 第 81 轮（地球地标任务）：r81 用例的三条判据 ——
+                #   ① 阿波罗地标任务能选中（条目真的进了列表）；
+                #   ② 按 R ⇒ 引导落**第 2 候选 = 同 cell 常驻兜底 0x0008C3E8**
+                #      （第 1 候选是陋室里的书，非常驻 ⇒ 站远处取不到）；
+                #   ③ 伦敦地标任务「只给说明」⇒ 按 R 只给「暂无导航目标」提示。
+                all_ok &= check("用例计划 · r81 地标条目可选中",
+                                plan_text.encode(), "ui.select 0x00026EB0".encode())
+                all_ok &= check("用例计划 · r81 引导落常驻兜底断言",
+                                plan_text.encode(),
+                                "assert.log 引导请求：阿波罗地标任务（0x00026EB0）→ 引用 0x0008C3E8.*候选 \\[2/4\\]".encode())
+                all_ok &= check("用例计划 · r81 伦敦只给说明断言",
+                                plan_text.encode(),
+                                "assert.ui guide=\\d+\\|\\d+\\|该任务暂无导航目标:伦敦地标任务".encode())
                 #   ★ 第 80 轮更新：r47 的入口统计从 12 → **20**（任务板 12 + NPC 8）——
                 #   反向钉住「改回 12」的回归（NPC 条目静默消失时这条会 MISS）。
                 all_ok &= check("用例计划 · r47 入口统计 20 条（含第 80 轮 NPC）",
@@ -1603,9 +1626,12 @@ def main() -> int:
                 n_with += 1
                 if cand_total >= 0 and begin + count > cand_total:
                     n_oob += 1
-        ok = cand_total > 200 and n_with == 208 and n_oob == 0
+        #   ★★ 第 81 轮（地球地标任务）：候选 924 → **960**、有目标任务 208 → **217**
+        #   （+10 条地标任务；其中 9 条各 4 个候选（书/书商 + 3 兜底）= +36 候选，
+        #   伦敦那条只给说明 ⇒ 0 候选 —— 所以有目标数是 +9 而不是 +10）。
+        ok = cand_total > 200 and n_with == 217 and n_oob == 0
         print(("OK  " if ok else "MISS") +
-              f" 静态表 · 候选池完整（候选 {cand_total} 条 / 有目标任务 {n_with}（第 75 轮起 208）"
+              f" 静态表 · 候选池完整（候选 {cand_total} 条 / 有目标任务 {n_with}（第 81 轮起 217）"
               f" / 切片越界 {n_oob}）")
         all_ok &= ok
         gone = "guideRefLocal" not in blob and "guideRefMaster" not in blob
@@ -1896,21 +1922,25 @@ def main() -> int:
         #   ★★ 第 75 轮：再追加一列（factionEntry，-1 = 不是势力开头任务）⇒ 正则更新为
         #   行尾四列（faction / companion / companionPin / factionEntry）+ 开头补上
         #   记录号（第 75 轮的势力入口完整性检查要按记录号对账）。
+        #   ★★ 第 81 轮（地球地标任务）：再追加一列（landmark，-1 = 不是地标任务）⇒
+        #   行尾五列（faction / companion / companionPin / factionEntry / landmark）。
         fac_rows = re.findall(
             r'\{\s*0x([0-9A-F]+)u,\s*\d+u,\s*\d+u,\s*0x[0-9A-F]+u,\s*\d+u,\s*\d+u,'
             r'\s*\d+u,\s*\d+u,\s*\d+u,\s*\d+u,\s*\d+u,\s*\d+u,'
-            r'.*?,\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(\d+)u\s*,\s*(-?\d+)\s*\},',
+            r'.*?,\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(\d+)u\s*,\s*(-?\d+)\s*,\s*(-?\d+)\s*\},',
             region)
         table_size = _num_after(blob, "kQuestTableSize = ")
-        n_with_fac = sum(1 for _l, v, _c, _p, _fe in fac_rows if int(v) >= 0)
+        n_with_fac = sum(1 for _l, v, _c, _p, _fe, _lm in fac_rows if int(v) >= 0)
         fac_ok = (len(fac_rows) == table_size and table_size > 0
-                  and all(-1 <= int(v) <= 9 for _l, v, _c, _p, _fe in fac_rows)
+                  and all(-1 <= int(v) <= 9 for _l, v, _c, _p, _fe, _lm in fac_rows)
                   and n_with_fac == 74)
         print(("OK  " if fac_ok else "MISS") +
               f" 静态表 · 阵营列完整（行 {len(fac_rows)}/{table_size} / 有阵营 {n_with_fac} /"
               f" 值域 -1..9）")
         all_ok &= fac_ok
-        m_fac = re.search(r"\{\s*0x00009136u,.*?,\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(\d+)u\s*,\s*(-?\d+)\s*\},", blob)
+        m_fac = re.search(
+            r"\{\s*0x00009136u,.*?,\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(\d+)u\s*,\s*(-?\d+)\s*,"
+            r"\s*(-?\d+)\s*\},", blob)
         ok_fac = m_fac is not None and int(m_fac.group(1)) == 5
         print(("OK  " if ok_fac else "MISS") +
               " 静态表 · 样本「深藏不露」阵营（Crimson Fleet = 5）")
@@ -1924,7 +1954,7 @@ def main() -> int:
         #   ④ 实测样本：「巴雷特：违约」（0x000369AB）= Barrett(1) + pin 1；
         #      「巴雷特：承诺」（0x001C7185）= Barrett(1) + pin 0（**后续** ⇒ 走链式门槛）。
         comp_rows = [(int(l, 16), int(c), int(p))
-                     for (l, _f, c, p, _fe) in fac_rows if int(c) >= 0]
+                     for (l, _f, c, p, _fe, _lm) in fac_rows if int(c) >= 0]
         n_pin = sum(1 for _f, _c, p in comp_rows if p)
         comp_json = ROOT / "ref" / "companion_quests.json"
         names_zh, names_en, n_json_q = [], [], 0
@@ -1949,7 +1979,8 @@ def main() -> int:
                 ("001C7185", 0, "巴雷特：承诺", "后续·链式门槛"),
                 ("00263262", 1, "萨姆·科尔：哈特家事", "入口·固定显示"),
                 ("0027B667", 0, "莎拉·摩根：承诺", "后续·链式门槛")):
-            m = re.search(r"\{\s*0x" + local + r"u,.*?,\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(\d+)u\s*,\s*(-?\d+)\s*\},", blob)
+            m = re.search(r"\{\s*0x" + local + r"u,.*?,\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(\d+)u\s*,\s*(-?\d+)\s*,"
+                          r"\s*(-?\d+)\s*\},", blob)
             ok_row = (m is not None and int(m.group(3)) == want_pin
                       and f'"{want_name}"' in blob)
             print(("OK  " if ok_row else "MISS") +
@@ -1962,7 +1993,7 @@ def main() -> int:
         #   ③ 「深红舰队」那条（guide=false）的**引导候选被清空**（candCount == 0）——
         #      界面因此走「不可导航」通路（只给说明）；
         #   ④ 样本：「深藏不露」= 下标 3 + 阵营 5 + 候选 0；「超越极限」= 下标 0 + 候选 > 0。
-        fe_rows = [(l, int(fe)) for (l, _f, _c, _p, fe) in fac_rows if int(fe) >= 0]
+        fe_rows = [(l, int(fe)) for (l, _f, _c, _p, fe, _lm) in fac_rows if int(fe) >= 0]
         fe_json = ROOT / "ref" / "faction_entry_quests.json"
         fe_ok = len(fe_rows) == 4 and sorted(v for _f, v in fe_rows) == [0, 1, 2, 3]
         want_fe = []
@@ -1989,7 +2020,8 @@ def main() -> int:
                 ("002C9C97", 2, 2, True, "龙神·重返职场（可引导）"),
                 ("00009136", 3, 5, False, "深红舰队·深藏不露（只给说明 → 候选被清空）")):
             m = re.search(r"\{\s*0x" + local + r"u,\s*\d+u,\s*\d+u,\s*0x[0-9A-F]+u,"
-                          r"\s*\d+u,\s*(\d+)u,.*?,\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(\d+)u\s*,\s*(-?\d+)\s*\},",
+                          r"\s*\d+u,\s*(\d+)u,.*?,\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(\d+)u\s*,\s*(-?\d+)\s*,"
+                          r"\s*(-?\d+)\s*\},",
                           blob)
             #   组号：1 = candCount；2 = faction；3 = companion；4 = companionPin；
             #         5 = factionEntry（行尾四列的顺序见 StaticQuestInfo）
@@ -1998,6 +2030,57 @@ def main() -> int:
                       and ((int(m.group(1)) > 0) == want_cands))
             print(("OK  " if ok_row else "MISS") +
                   f" 静态表 · 势力入口样本 {tag}（下标 {want_fe_idx} / 阵营 {want_fac} / "
+                  f"候选{'>0' if want_cands else '=0'}）")
+            all_ok &= ok_row
+
+        # ★★ 第 81 轮（地球地标任务）：「雪景球」收集线 10 条 —— 数据侧完整性：
+        #   ① 表里恰好 10 条 landmark ≥ 0，下标 = 0..9（与 ref/landmark_quests.json 逐项一致）；
+        #   ② 说明文本（kLandmarkNotesZh/En）逐条编进静态表（描述第一句用它）；
+        #   ③ 样本：「阿波罗地标任务」（0x0026EB0）= 下标 0 + 候选 4；
+        #      「开罗地标任务」（0x00009A2C）= 下标 1 + 候选 4（书商引导）；
+        #      「伦敦地标任务」（0x0000994A）= 下标 4 + 候选 0（只给说明 —— 界面走
+        #      「不可导航」通路）。
+        lm_rows = [(l, int(lm)) for (l, _f, _c, _p, _fe, lm) in fac_rows if int(lm) >= 0]
+        lm_json = ROOT / "ref" / "landmark_quests.json"
+        lm_ok = len(lm_rows) == 10 and sorted(v for _f, v in lm_rows) == list(range(10))
+        if lm_json.exists():
+            lmj = json.loads(lm_json.read_text(encoding="utf-8"))
+            want_lm = [(f"{int(g['quest']['local']):08X}", i) for i, g in enumerate(lmj)]
+            lm_ok = lm_ok and sorted(lm_rows) == sorted(want_lm)
+
+            def _c_esc(s: str) -> str:
+                # 生成器（gen_quest_table.py::c_escape）把头文件里的字符串做 C 转义
+                # （`"` → `\"`、`\` → `\\`）—— 比对前做同样处理。
+                # ★ 第 81 轮踩过：英文说明里的书名带引号 ⇒ 原文比对永远匹配不上。
+                return (s.replace("\\", "\\\\").replace('"', '\\"')
+                        .replace("\n", "\\n").replace("\t", "\\t"))
+
+            for g in lmj:
+                if _c_esc(g["noteZh"]) not in blob or _c_esc(g["noteEn"]) not in blob:
+                    lm_ok = False
+                    print(f"MISS 静态表 · 地标说明文本缺失（{g['key']}）")
+                    break
+            lm_ok = lm_ok and _num_after(blob, "kLandmarkCount = ") == len(lmj)
+        print(("OK  " if lm_ok else "MISS") +
+              f" 静态表 · 地球地标任务完整（标记 {len(lm_rows)}/10、"
+              f"下标 {sorted(v for _f, v in lm_rows)}"
+              + ("、与 ref 逐项一致" if lm_json.exists() else "（缺 ref/landmark_quests.json）")
+              + "）")
+        all_ok &= lm_ok
+        for local, want_lm_idx, want_cands, tag in (
+                ("00026EB0", 0, True, "阿波罗（可引导，候选 4）"),
+                ("00009A2C", 1, True, "开罗（书商引导，候选 4）"),
+                ("0000994A", 4, False, "伦敦（只给说明 → 候选为空）")):
+            m = re.search(r"\{\s*0x" + local + r"u,\s*\d+u,\s*\d+u,\s*0x[0-9A-F]+u,"
+                          r"\s*\d+u,\s*(\d+)u,.*?,\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*(\d+)u\s*,\s*(-?\d+)\s*,"
+                          r"\s*(-?\d+)\s*\},",
+                          blob)
+            #   组号：1 = candCount；2 = faction；3 = companion；4 = companionPin；
+            #         5 = factionEntry；6 = landmark（行尾五列的顺序见 StaticQuestInfo）
+            ok_row = (m is not None and int(m.group(6)) == want_lm_idx
+                      and ((int(m.group(1)) > 0) == want_cands))
+            print(("OK  " if ok_row else "MISS") +
+                  f" 静态表 · 地标样本 {tag}（下标 {want_lm_idx} / "
                   f"候选{'>0' if want_cands else '=0'}）")
             all_ok &= ok_row
 
@@ -2079,10 +2162,10 @@ def main() -> int:
         #   ★★ 第 74 轮：行尾多了 companion / companionPin 两列 ⇒ 这里显式取
         #   「type + faction」（此前用 `.*?,\s*(-?\d+)\s*\},` 取最后一个数 —— 会读到
         #   companionPin，把图标映射检查变成瞎猜）；★★ 第 75 轮行尾再多一列
-        #   （factionEntry）⇒ 尾部模式跟着更新。
+        #   （factionEntry）⇒ 尾部模式跟着更新；★★ 第 81 轮再多一列（landmark）⇒ 同步。
         tf_pairs = {(int(m.group(1)), int(m.group(2))) for m in re.finditer(
             r"\{\s*0x[0-9A-F]+u,\s*\d+u,\s*(\d+)u,\s*0x[0-9A-F]+u,"
-            r".*?,\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*\d+u\s*,\s*-?\d+\s*\},", region)}
+            r".*?,\s*(-?\d+)\s*,\s*(-?\d+)\s*,\s*\d+u\s*,\s*-?\d+\s*,\s*-?\d+\s*\},", region)}
         tf_bad = sorted(p for p in tf_pairs if icon_label(p[1], p[0]) not in icon_frames)
         ok_icon = not tf_bad and len(tf_pairs) > 0
         print(("OK  " if ok_icon else "MISS") +

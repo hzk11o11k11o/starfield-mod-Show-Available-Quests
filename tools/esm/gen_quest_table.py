@@ -80,11 +80,16 @@ def clean_name(raw: str, zh: bool) -> str:
     return out
 
 
-def filter_reason(row: dict, raw_en: str, raw_zh: str) -> str | None:
+def filter_reason(row: dict, raw_en: str, raw_zh: str, is_landmark: bool = False) -> str | None:
     """判断一条任务是不是「内部任务」（不该出现在可接列表里）。
 
     返回 None = 保留；否则返回被排除的原因标签（统计/日志用）。
     所有判据都是**离线可验证**的显示层信号；运行时状态过滤（已接/条件）在 C++/AS3 侧。
+
+    ★★ 第 81 轮（地球地标任务）：新增 is_landmark —— 在
+    ref/landmark_quests.json 里的任务**豁免「地标」规则**（第 7 轮的判断
+    「走近即完成、无从『接』」已被复查否定：它们是「拾取对应书籍 ⇒ SetStage(100)」
+    的正常 Activities，见 gen_landmark_quests.py 头注释）。
     """
     edid = row.get("edid") or ""
     edid_l = edid.lower()
@@ -100,8 +105,8 @@ def filter_reason(row: dict, raw_en: str, raw_zh: str) -> str | None:
         return "任务板生成"           # 任务板上的无限生成任务（入口另行处理）
     if "pointer" in edid_l or "pointer" in en_l or "指示器" in zh or "指示器" in en:
         return "指示器"               # Misc pointer 系统
-    if "landmark" in edid_l or "地标任务" in zh or "地标任务" in en:
-        return "地标"                 # 地球地标探索（走近即完成，无从「接」）
+    if not is_landmark and ("landmark" in edid_l or "地标任务" in zh or "地标任务" in en):
+        return "地标"                 # ★ 第 81 轮：地标任务表里的 10 条豁免（见上）
     if "tutorial" in edid_l or "tutorial" in en_l:
         return "教学"
     # 测试内容（第 17 轮，DLC 实测）：`SFBGS00D_CruiseMode_TestSupport`「巡航模式测试支援」。
@@ -215,8 +220,11 @@ def build_payload(rows: list[dict], title_zh: str = "可接任务", title_en: st
         approach = "1" if r.get("needs_approach") else "0"
         faction = int(r.get("faction", -1))
         companion = "1" if int(r.get("companion", -1)) >= 0 else "0"
-        note_zh = sanitize_name(r["noteZh"]) if int(r.get("faction_entry", -1)) >= 0 else ""
-        note_en = sanitize_name(r["noteEn"]) if int(r.get("faction_entry", -1)) >= 0 else ""
+        # ★★ 第 81 轮：说明文本的来源有两类 —— 势力开头任务（kFactionEntryNotes*）与
+        #   地球地标任务（kLandmarkNotes*）；其余任务空串。
+        has_note = int(r.get("faction_entry", -1)) >= 0 or int(r.get("landmark", -1)) >= 0
+        note_zh = sanitize_name(r.get("noteZh", "")) if has_note else ""
+        note_en = sanitize_name(r.get("noteEn", "")) if has_note else ""
         lines.append(
             f'Q\t{fid}\t{r["itype"]}\t{sanitize_name(r["name_zh"])}'
             f'\t{sanitize_name(r["name_en"])}\t{has_target}\t{approach}\t{faction}'
@@ -302,6 +310,29 @@ def load_faction_entries(path: Path) -> list[dict]:
     if not path.exists():
         print(f"（没有 {path} —— 四大势力开头任务不会被固定显示，"
               f"先跑 tools/esm/gen_faction_entry_quests.py）")
+        return []
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def load_landmark_quests(path: Path) -> list[dict]:
+    """★★ 第 81 轮（地球地标任务）：「雪景球」收集线（tools/esm/gen_landmark_quests.py 生成）。
+
+    这 10 条（阿波罗 / 开罗 / 迪拜 / 香港 / 伦敦 / 洛杉矶 / 纽约 / 大阪 / 上海 / 圣路易斯）
+    在数据里是「**拾取对应书籍 ⇒ 任务 SetStage(100)**」的 Activities（书上挂着官方脚本
+    `defaultrefoncontainerchangedto`）⇒ 符合 MOD 的收录标准。本表提供三件事：
+
+      ① **过滤豁免**：filter_reason 的「地标」规则跳过它们（见 is_landmark 参数）；
+      ② **引导候选**：书的世界放置引用（精确）+ 同 cell / world 级常驻兜底
+         （Cairo 的书在商店库存里 ⇒ 用书商 AhnjongSinclair 的引用；London 无固定
+         接取点 ⇒ guide=false，候选在生成期被清空，只给说明）；
+      ③ **说明文本**（载荷最后两列）：去哪拿哪本书（书被拾取后任务即已接取，
+         运行时「已接取 ⇒ 隐藏」照常生效）。
+
+    缺失 ⇒ 这 10 条继续被「地标」规则排除（功能退化，不会写错数据）。
+    """
+    if not path.exists():
+        print(f"（没有 {path} —— 地球地标任务不会被豁免过滤，"
+              f"先跑 tools/esm/gen_landmark_quests.py）")
         return []
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -441,6 +472,9 @@ def main() -> int:
     ap.add_argument("--faction-entries", default="ref/faction_entry_quests.json",
                     help="★★ 第 75 轮：四大势力开头任务（gen_faction_entry_quests.py 产物；"
                          "缺失 ⇒ 不标记，这四条不会固定排前四）")
+    ap.add_argument("--landmarks", default="ref/landmark_quests.json",
+                    help="★★ 第 81 轮：地球地标任务（gen_landmark_quests.py 产物；"
+                         "缺失 ⇒ 这 10 条继续被「地标」规则排除）")
     ap.add_argument("--out-header", default="plugin/src/SAQ_QuestTable.h")
     ap.add_argument("--out-json", default="ref/quest_table_debug.json")
     ap.add_argument("--out-as3", default="ui/missionmenu/saqdata/SaqEmbeddedPayload.inc")
@@ -485,6 +519,11 @@ def main() -> int:
 
     # ★ 第 65 轮（任务专属图标）：阵营映射（FTYP 关键字 -> UI 枚举）
     fac_map = load_faction_types(Path(a.factions))
+
+    # ★★ 第 81 轮（地球地标任务）：「雪景球」收集线 —— ① 豁免「地标」过滤；
+    #   ② 引导候选来自该书目表；③ 说明文本写进载荷最后两列。见 load_landmark_quests。
+    landmarks = load_landmark_quests(Path(a.landmarks))
+    lm_by_local = {int(g["quest"]["local"]): i for i, g in enumerate(landmarks)}
 
     rows = []
     skipped_no_type = 0
@@ -535,9 +574,15 @@ def main() -> int:
             # ★★ 第 75 轮（四大势力开头任务）：-1 = 不是；≥0 = kFactionEntry* 下标
             #   （同时是**固定顺序**：0 = 联合殖民地 … 3 = 深红舰队）。同样在两遍里做。
             "faction_entry": -1,
+            # ★★ 第 81 轮（地球地标任务）：-1 = 不是；≥0 = kLandmarkNotes* 下标
+            #   （同时是说明文本的下标）。豁免「地标」过滤的判据也是它。
+            "landmark": -1,
         }
+        row_is_landmark = int(row["local"]) in lm_by_local
+        if row_is_landmark:
+            row["landmark"] = lm_by_local[int(row["local"])]
         if not a.keep_internal:
-            reason = filter_reason(row, raw_en, raw_zh)
+            reason = filter_reason(row, raw_en, raw_zh, is_landmark=row_is_landmark)
             if reason:
                 skipped_reasons[reason] = skipped_reasons.get(reason, 0) + 1
                 samples = skipped_samples.setdefault(reason, [])
@@ -633,6 +678,31 @@ def main() -> int:
                       f"（{g['nameZh']} / {g['nameEn']}）"
                       f"{'可引导' if g['guide'] else '只给说明（候选会被清空）'}")
 
+    # ★★ 第 81 轮（地球地标任务）：说明文本（载荷最后两列）—— 与势力开头的说明同一通路，
+    #   只是数据源换成 kLandmarkNotes*（下标 = landmark 列）。
+    n_landmark = 0
+    for r in rows:
+        idx = int(r.get("landmark", -1))
+        if idx < 0:
+            continue
+        g = landmarks[idx]
+        r["noteZh"] = g["noteZh"]
+        r["noteEn"] = g["noteEn"]
+        n_landmark += 1
+    missing_lm = [f"{g['key']}(0x{g['quest']['formid']:06X})" for g in landmarks
+                  if int(g["quest"]["formid"]) not in rows_formids]
+    if missing_lm:
+        print(f"  !! 地标任务表里有、但静态表里没有的任务（不会显示）：{missing_lm}")
+    if landmarks:
+        print(f"地球地标任务：{n_landmark}/{len(landmarks)} 条进表"
+              f"（豁免「地标」过滤；说明写进载荷最后两列）")
+        for i, g in enumerate(landmarks):
+            if int(g["quest"]["formid"]) in rows_formids:
+                tag = (f"候选 {len(g['cands'])}（{g['cands'][0]['src']} 起）"
+                       if g["guide"] else "只给说明（候选在生成期清空）")
+                print(f"  {i}. {g['quest']['nameZh']} / {g['quest']['nameEn']}"
+                      f"（书：{g['book']['nameZh']}）[{tag}]")
+
     # 引导目标（第 10 轮；★ 第 45 轮升级为「候选池」）：每条任务在世界里的
     # 「去哪里接」引用序列（gen_guide_targets.py 按质量排序 —— 有名字的 NPC >
     # 可读名落脚点 > 通用名 NPC > 内部名落脚点；同级内常驻优先）。
@@ -644,8 +714,15 @@ def main() -> int:
     unknown_guide_master: set[str] = set()
     cand_flat: list[tuple[int, int, int, str]] = []   # (refrLocal, refrMaster, persistent, 展示名)
     for r in rows:
-        g = guides.get(r["formid"])
-        cands = (g or {}).get("cands") or ([g] if g and g.get("refr") else [])
+        lm_idx = int(r.get("landmark", -1))
+        if lm_idx >= 0:
+            # ★★ 第 81 轮（地球地标任务）：候选来自 ref/landmark_quests.json ——
+            #   首选 = 书（或书商）的引用，随后是同 cell / world 级常驻兜底；
+            #   guide=false 的那条（伦敦）候选为空 ⇒ 界面走「不可导航」通路（只给说明）。
+            cands = landmarks[lm_idx].get("cands", [])
+        else:
+            g = guides.get(r["formid"])
+            cands = (g or {}).get("cands") or ([g] if g and g.get("refr") else [])
         ok_cands: list[dict] = []
         for c in cands:
             cm = c.get("refrMaster") or r["master"]
@@ -917,6 +994,16 @@ def main() -> int:
     lines.append("\t\t//   数据源：ref/faction_entry_quests.json（tools/esm/gen_faction_entry_quests.py；")
     lines.append("\t\t//   核验「势力线第一环」+ 引导候选 + 阵营枚举 + 说明文本）。")
     lines.append("\t\tstd::int8_t   factionEntry;")
+    lines.append("\t\t// ★★ 第 81 轮（地球地标任务）：「雪景球」收集线的 10 条 ——")
+    lines.append("\t\t//   -1 = 不是；>= 0 = kLandmarkNotesZh/En 的下标（**描述里的说明文本**，")
+    lines.append("\t\t//   载荷最后两列）。这 10 条（阿波罗 / 开罗 / … / 圣路易斯）在数据里是")
+    lines.append("\t\t//   「拾取对应书籍 ⇒ 任务 SetStage(100)」的 Activities（书上挂着官方脚本")
+    lines.append("\t\t//   defaultrefoncontainerchangedto）⇒ 进「可接任务」列表（豁免 filter_reason")
+    lines.append("\t\t//   的「地标」规则），引导目标 = 书（或书商）的引用 + 同 cell / world 级常驻兜底。")
+    lines.append("\t\t//   伦敦那条没有固定接取点（书在各书店/书堆）⇒ 候选为空，只给说明。")
+    lines.append("\t\t//   数据源：ref/landmark_quests.json（tools/esm/gen_landmark_quests.py；")
+    lines.append("\t\t//   核验「书的 VMAD 属性 QuestToSetOrCheck/StageToSet」+ 世界引用 + 兜底常驻）。")
+    lines.append("\t\tstd::int8_t   landmark;")
     lines.append("\t};")
     lines.append("")
     lines.append("\t// 进度门槛（第 35 轮，「游戏进度还不能让玩家接到 ⇒ 不显示」）：")
@@ -1073,6 +1160,23 @@ def main() -> int:
     lines.append("\t};")
     lines.append(f"\tinline constexpr std::size_t kFactionEntryCount = {len(faction_entries)};")
     lines.append("")
+    lines.append("\t// ★★ 第 81 轮（地球地标任务）：「去哪拿哪本书」（下标 = StaticQuestInfo::landmark）——")
+    lines.append("\t//   与势力开头的说明同一个通路（载荷最后两列，界面把它当描述第一句）。")
+    lines.append("\t//   数据源：ref/landmark_quests.json（gen_landmark_quests.py）。")
+    lines.append("\tinline constexpr const char* kLandmarkNotesZh[] = {")
+    for g in landmarks:
+        lines.append(f'\t\t"{c_escape(g["noteZh"])}",')
+    if not landmarks:
+        lines.append('\t\t"",  // 占位（表为空时 MSVC 不允许零长数组）')
+    lines.append("\t};")
+    lines.append("\tinline constexpr const char* kLandmarkNotesEn[] = {")
+    for g in landmarks:
+        lines.append(f'\t\t"{c_escape(g["noteEn"])}",')
+    if not landmarks:
+        lines.append('\t\t"",  // 占位（表为空时 MSVC 不允许零长数组）')
+    lines.append("\t};")
+    lines.append(f"\tinline constexpr std::size_t kLandmarkCount = {len(landmarks)};")
+    lines.append("")
     lines.append(f"\tinline constexpr StaticQuestInfo kQuestTable[] = {{")
     for r in rows:
         flags = int(r.get("dnam_flags", 0))
@@ -1085,7 +1189,8 @@ def main() -> int:
             f' "{c_escape(r["guide_where_en"])}", "{c_escape(r["guide_where_zh"])}",'
             f' "{c_escape(r["name_en"])}", "{c_escape(r["name_zh"])}",'
             f' {int(r.get("faction", -1))}, {int(r.get("companion", -1))},'
-            f' {int(r.get("companion_pin", 0))}u, {int(r.get("faction_entry", -1))} }},'
+            f' {int(r.get("companion_pin", 0))}u, {int(r.get("faction_entry", -1))},'
+            f' {int(r.get("landmark", -1))} }},'
         )
     lines.append("\t};")
     lines.append(f"\tinline constexpr std::size_t kQuestTableSize = {len(rows)};")

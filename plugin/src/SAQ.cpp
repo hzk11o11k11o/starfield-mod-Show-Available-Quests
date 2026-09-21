@@ -1214,6 +1214,14 @@ namespace SAQ
 					entry.noteZh = kFactionEntryNotesZh[info.factionEntry];
 					entry.noteEn = kFactionEntryNotesEn[info.factionEntry];
 				}
+				// ★★ 第 81 轮（地球地标任务）：说明文本的第二个来源 —— 这 10 条「雪景球」
+				//   收集线的描述第一句 = 「去哪拿哪本书」（载荷最后两列）。两类互斥
+				//   （factionEntry 与 landmark 不会同时 >= 0），这里排在势力之后只为次序。
+				else if (info.landmark >= 0 &&
+					static_cast<std::size_t>(info.landmark) < kLandmarkCount) {
+					entry.noteZh = kLandmarkNotesZh[info.landmark];
+					entry.noteEn = kLandmarkNotesEn[info.landmark];
+				}
 				// ★ 第 65 轮（任务专属图标）：type 推真实任务类型（此前推 6「可接任务」
 				//   统一值）—— 界面按它 + faction 选图标，与原版任务菜单一致。
 				entry.type = info.type;

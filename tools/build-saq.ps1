@@ -137,6 +137,14 @@ if (-not $SkipTable) {
     Step '1/6' '生成可重复任务 NPC 入口表（gen_repeatable_givers.py → ref\repeatable_givers.json）'
     & python (Join-Path $root 'tools\esm\gen_repeatable_givers.py') | Write-Host
     if ($LASTEXITCODE -ne 0) { throw "gen_repeatable_givers.py 失败（exit $LASTEXITCODE）" }
+    # ★★ 第 81 轮：地球地标任务（「雪景球」收集线，10 条）——
+    #   gen_landmark_quests.py 扫 Starfield.esm 核验「书上的 VMAD 属性
+    #   （defaultrefoncontainerchangedto / QuestToSetOrCheck / StageToSet=100）」
+    #   + 书的世界引用 + 同 cell / world 级常驻兜底，产物 ref\landmark_quests.json
+    #   由 gen_quest_table.py 消费（豁免「地标」过滤 + 引导候选 + 说明文本）。
+    Step '1/6' '生成地球地标任务表（gen_landmark_quests.py → ref\landmark_quests.json）'
+    & python (Join-Path $root 'tools\esm\gen_landmark_quests.py') | Write-Host
+    if ($LASTEXITCODE -ne 0) { throw "gen_landmark_quests.py 失败（exit $LASTEXITCODE）" }
     Step '1/6' '生成静态任务表（gen_quest_table.py）'
     & python (Join-Path $root 'tools\esm\gen_quest_table.py') | Write-Host
     if ($LASTEXITCODE -ne 0) { throw "gen_quest_table.py 失败（exit $LASTEXITCODE）" }
@@ -401,9 +409,9 @@ if (-not $SkipDeploy) {
     }
 
     $meta = Join-Path $dest 'meta.ini'
-    # ★ 第 53 轮（大项 F）：meta.ini 的版本号与 xmake.lua / main.cpp 同步（本次 0.1.4）。
+    # ★ 第 53 轮（大项 F）：meta.ini 的版本号与 xmake.lua / main.cpp 同步（本次 0.1.5）。
     #   老逻辑只在文件不存在时创建 ⇒ 升级版本后 MO2 里显示的还是旧版本号。
-    $metaVer = '0.1.4'
+    $metaVer = '0.1.5'
     if (-not (Test-Path $meta)) {
         @"
 [General]

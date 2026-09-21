@@ -41,15 +41,20 @@
       "sha256": "01af5049026c459c2f65403a5b4e23f192e4d4d17d7e04a9a88db0a6e71ceb08",
       "summary": "势力 4（可引导 3）"
     },
+    "ref/landmark_quests.json": {
+      "desc": "地球地标任务（gen_landmark_quests.py）",
+      "sha256": "c8253c8500d0398dd3fa11e154209b06c42a04181a265caa1a862520576b62b1",
+      "summary": "地标 10（可引导 9 / 候选 36）"
+    },
     "plugin/src/SAQ_QuestTable.h": {
       "desc": "静态任务表（gen_quest_table.py，DLL 编译进去）",
-      "sha256": "d4696e4544f8592e819149c3e5080d3b264a3a070cec352ae7cdf3277c24d869",
-      "summary": "任务 261 / 候选 924 / 进度门槛 9 / INFO对话 418 / INFO条件 492 / 链式边 63 / 同伴 4 / 势力入口 4"
+      "sha256": "ff36d3da49739cf31619f0dcdc7f740768c784675ad0d697449aed6d1d41af32",
+      "summary": "任务 271 / 候选 960 / 进度门槛 9 / INFO对话 418 / INFO条件 492 / 链式边 63 / 同伴 4 / 势力入口 4 / 地标 10"
     },
     "ui/missionmenu/saqdata/SaqEmbeddedPayload.inc": {
       "desc": "内嵌回退载荷（gen_quest_table.py）",
-      "sha256": "bf8bf7d4f4d36cf3eea0d64b251867f0d7231ce850d3ea8fc999797f5d2ae64e",
-      "summary": "条目 202 / 第一条 2905089"
+      "sha256": "5887b19d36d0e2e776d698ce3df56e35d42414c0152ea28ae7bb21e7e344494b",
+      "summary": "条目 212 / 第一条 2905089"
     },
     "plugin/src/SAQ_EntryTable.h": {
       "desc": "入口条目表（gen_entry_table.py，DLL 编译进去）",

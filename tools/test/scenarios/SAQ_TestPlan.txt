@@ -863,6 +863,62 @@ step = assert.log 引导已生效 scope=prev timeout=15000
 step = guide.clear
 
 ; ----------------------------------------------------------------------------
+;  用例：第 81 轮 —— 地球地标任务（「雪景球」收集线，10 条进列表）
+;
+;  起因（玩家 2026-09-21）：「我发现『地球地标』系列任务好像在可接任务列表里
+;  一个都没有，检查一下」。复查：它们此前被第 7 轮的「地标」过滤规则排除（当时的
+;  判断「走近即完成、无从『接』」**不准确**）—— 数据证据：每条地标任务都有一本对应
+;  的书（如「利文斯通爵士的第二篇日志」），书上挂着官方脚本
+;  `defaultrefoncontainerchangedto`，书被拾取 / 购买（进入玩家物品栏）时把任务
+;  `SetStage(100)` ⇒ 这就是「接取」：去哪拿到那本书。
+;  ⇒ 本轮把它们收录（豁免「地标」规则）+ 引导目标 = 书（或书商）的引用 + 同 cell /
+;  world 级常驻兜底 + 说明文本（载荷最后两列 = 描述第一句）。
+;  见 tools/esm/gen_landmark_quests.py 的头注释与 docs/03 的「第 81 轮复查」。
+;
+;  判据（本用例的 PASS 线）：
+;    ① 「阿波罗地标任务」（0x00026EB0）能选中 = 条目真的进了列表；
+;    ② 按 R ⇒ `引导请求：阿波罗地标任务（0x00026EB0）→ 引用 0x0008C3E8｜
+;       候选 [2/4]「LodgeInt_MatteoSandboxRef」…` —— 第 1 候选（陋室里的书）是
+;       **非常驻**引用、站在赛多尼亚（跨星球，cell 已卸载）取不到 ⇒ 落到第 2 候选
+;       （同 cell 常驻兜底 0x0008C3E8；常驻 ⇒ 任何位置都取得到）；关菜单后
+;       `引导已生效`（引擎真的接受了它）；
+;    ③ 「伦敦地标任务」（0x0000994A）**只给说明**（书在各大书店 / 书堆，没有固定
+;       接取点 ⇒ 生成期清空候选）⇒ 按 R 不发引导请求、只给「暂无导航目标」提示
+;       （与 CF01「深藏不露」同款通路）。
+;
+;  ★ 本用例会把玩家放到赛多尼亚（远处）；收尾清引导。
+; ----------------------------------------------------------------------------
+[case:r81_landmark]
+desc = 第 81 轮：地球地标任务（条目进列表 + 引导落常驻兜底 + 伦敦只给说明）
+step = note === 准备：站到赛多尼亚（远处，让陋室的 cell 卸载）+ 清引导 ===
+step = ping
+step = guide.clear
+step = teleport.entry 0x001DF853
+step = wait 3000
+step = note === 开菜单 ===
+step = menu.open
+step = assert.log 推送成功 scope=prev timeout=12000
+step = ui.tab
+step = note === 阿波罗地标任务在列表里（能选中 = 条目真的进了列表）===
+step = ui.select 0x00026EB0
+step = note === 按 R：书（非常驻）取不到 ⇒ 落第 2 候选（同 cell 常驻兜底 0x0008C3E8）===
+step = ui.key XButton
+step = assert.log 引导请求：阿波罗地标任务（0x00026EB0）→ 引用 0x0008C3E8.*候选 \[2/4\] scope=prev timeout=6000
+step = menu.close
+step = assert.log 引导已生效 scope=prev timeout=15000
+step = guide.clear
+step = note === 伦敦地标任务：只给说明（按 R 不发引导请求、给「暂无导航目标」提示）===
+step = menu.open
+step = ui.tab
+step = ui.select 0x0000994A
+step = ui.key XButton
+step = wait 800
+step = assert.ui guide=\d+\|\d+\|该任务暂无导航目标:伦敦地标任务 timeout=6000
+step = assert.nolog 引导请求：伦敦地标任务 scope=prev timeout=1000
+step = menu.close
+step = guide.clear
+
+; ----------------------------------------------------------------------------
 ;  用例 8：第 62 轮（大项 I）—— 自动读档（**指定存档**）
 ;
 ;  目的 = 把「读档 / 加载窗口」引入 harness —— 候选降级观察期（第 49 轮补丁②）那半段

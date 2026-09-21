@@ -51,6 +51,8 @@ ITEMS: list[tuple[str, str]] = [
     ("ref/companion_quests.json", "同伴好感度任务（gen_companion_quests.py）"),
     # ★★ 第 75 轮：四大势力开头任务（固定显示 + 固定排前四；gen_faction_entry_quests.py）
     ("ref/faction_entry_quests.json", "四大势力开头任务（gen_faction_entry_quests.py）"),
+    # ★★ 第 81 轮：地球地标任务（「雪景球」收集线；gen_landmark_quests.py）
+    ("ref/landmark_quests.json", "地球地标任务（gen_landmark_quests.py）"),
     ("plugin/src/SAQ_QuestTable.h", "静态任务表（gen_quest_table.py，DLL 编译进去）"),
     # ★★ 第 74 轮续：内嵌回退载荷（顺序与 C++ 载荷逐条对齐 —— 同伴任务前置参见 verify）
     ("ui/missionmenu/saqdata/SaqEmbeddedPayload.inc", "内嵌回退载荷（gen_quest_table.py）"),
@@ -111,6 +113,11 @@ def summarize(rel: str, path: pathlib.Path) -> str:
                 # ★★ 第 75 轮：四大势力开头任务 —— 条数 + 可引导数（其余只给说明）
                 n_guide = sum(1 for g in obj if g.get("guide"))
                 return f"势力 {len(obj)}（可引导 {n_guide}）"
+            if rel.endswith("landmark_quests.json") and isinstance(obj, list):
+                # ★★ 第 81 轮：地球地标任务 —— 条数 + 可引导数（伦敦只给说明）
+                n_guide = sum(1 for g in obj if g.get("guide"))
+                cands = sum(len(g.get("cands", [])) for g in obj)
+                return f"地标 {len(obj)}（可引导 {n_guide} / 候选 {cands}）"
             if rel.endswith("repeatable_givers.json") and isinstance(obj, list):
                 # ★★ 第 80 轮：可重复任务 NPC —— 条数 + 内景建档数（外景的不建 marker）
                 n_int = sum(1 for g in obj if g.get("interior"))
@@ -132,6 +139,7 @@ def summarize(rel: str, path: pathlib.Path) -> str:
                 "kChainGateCount": "链式边",     # ★ 第 67 轮：任务链门槛
                 "kCompanionCount": "同伴",       # ★★ 第 74 轮：同伴好感度任务
                 "kFactionEntryCount": "势力入口",  # ★★ 第 75 轮：四大势力开头任务
+                "kLandmarkCount": "地标",        # ★★ 第 81 轮：地球地标任务
                 "kEntryTableSize": "入口",
             }
             parts = []
