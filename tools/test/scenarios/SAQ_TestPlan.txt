@@ -850,7 +850,15 @@ step = teleport.entry 0x001DF853
 step = wait 3000
 step = note === 开菜单：DLL 侧「任务板 12 + 可重复 NPC 8」计数 ===
 step = menu.open
-step = assert.log 入口条目表=20 条（任务板 12 \+ 可重复 NPC 8\) scope=prev timeout=12000
+; ★★ 第 83 轮两处修正（22:52 会话这条唯一的 FAIL，产品全对）：
+;   ① **括号**：产品那行是**全角** `（…）`（SAQ.cpp: `入口条目表={} 条（任务板 {} + 可重复 NPC {}）`），
+;      用例原来写成半角转义 `8\)` ⇒ 正则合法、但**永不匹配**（与第 68 轮的 `\\d` 同一类病：
+;      症状都是「日志里没出现 /…/」的超时，看着像产品没打这行）。全角括号**不需要**转义。
+;   ② **窗口**：这行由 menu.open **同一次 Tick 里的产品处理**打印（收集阶段，早于首次推送
+;      尝试）——`scope=prev`（窗口起点 = 上一步开始）的基准值在个别时序下会落在它之后 ⇒
+;      改用 `scope=case`（本用例窗口），与 r74/r75 对同类「菜单打开处理行」的写法一致。
+;      判据不变：`入口条目表=20 条（任务板 12 + 可重复 NPC 8）`（第 80 轮两类计数）。
+step = assert.log 入口条目表=20 条（任务板 12 \+ 可重复 NPC 8） scope=case timeout=12000
 step = assert.log 推送成功 scope=case timeout=12000
 step = ui.tab
 step = note === 界面 rep= 探针：8 条 + 第一条名字带「（可重复）」前缀 ===
@@ -910,6 +918,11 @@ step = assert.log 引导已生效 scope=prev timeout=15000
 step = guide.clear
 step = note === 伦敦地标任务：只给说明（按 R 不发引导请求、给「暂无导航目标」提示）===
 step = menu.open
+; ★★ 第 83 轮（22:52 会话 ui.tab FAIL「桥没通」的真因）：菜单刚（重）打开时，DLL 对
+;   Movie/ASMovieRoot 的解析**还没就绪**（同一次 Tick 的首次推送也失败、约 0.8 秒后重试
+;   成功）——此时调 AS3 入口必然「桥没通」。红线（第 57 轮）：**切 tab 之前等推送成功**。
+;   驱动器也已加固（v70：`ui.*` 遇到「桥没通」会在步骤超时内自动重试），两条一起生效。
+step = assert.log 推送成功 scope=prev timeout=12000
 step = ui.tab
 step = ui.select 0x0000994A
 step = ui.key XButton

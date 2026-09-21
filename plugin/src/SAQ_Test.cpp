@@ -264,6 +264,9 @@ namespace SAQ::Test
 			std::uint64_t loadWakeAtMs{};        // 上一次「开菜单唤醒」的时刻
 			std::uint32_t loadWakeCount{};       // 已唤醒次数（上限 kSaveLoadWakeMax）
 			bool          loadWakeOpen{};        // 唤醒用的菜单此刻是否开着（下一拍关掉）
+			// ★★ 第 83 轮：`ui.*` 遇到「桥没通」时的重试节流（见 kUi 分支）——
+			//   桥解析（EnsureResolved）不便宜，别每帧都试。
+			std::uint64_t uiRetryAtMs{};
 		};
 		StepState g_cur;
 
@@ -976,15 +979,25 @@ namespace SAQ::Test
 					REX::INFO("harness：用例收尾：任务菜单还开着 —— 已请求关闭（{}）", detail);
 				}
 			}
+			// ★★ 第 83 轮：清场这一刻星图**就已经开着**（r44 式用例：R 的星图在用例内
+			//   就打开了）⇒ 不会再有「稍后才打开」那一幕 —— 关掉它，并把延迟复查窗口
+			//   缩短成「只等引擎把 kHide 处理掉」；否则白等满 4 秒。
+			bool starMapOpenNow = false;
 			if (MenuIsOpen("GalaxyStarMapMenu")) {
 				if (SetMenuOpenByName("GalaxyStarMapMenu", false, detail)) {
 					REX::INFO("harness：用例收尾：星图还开着 —— 已请求关闭（{}）", detail);
+					starMapOpenNow = true;
 				}
 			}
 			// ★★ 第 57 轮：本用例按过 R（请求过星图）⇒ 开一段延迟复查窗口 —— 星图很可能
 			//   在清场**之后**才真的打开（见 g_cleanupRecheckUntilMs 的注释）。
 			if (g_caseStarMapRisk) {
-				g_cleanupRecheckUntilMs = NowMs() + kCleanupRecheckWindowMs;
+				g_cleanupRecheckUntilMs = NowMs() + (starMapOpenNow ? kInterCaseDelayMs
+																   : kCleanupRecheckWindowMs);
+				g_nextCaseAtMs = std::max(g_nextCaseAtMs, NowMs() + kInterCaseDelayMs);
+				REX::INFO("harness：用例收尾：本条按过 R —— 延迟复查窗口开启（{} ms{}）",
+					starMapOpenNow ? kInterCaseDelayMs : kCleanupRecheckWindowMs,
+					starMapOpenNow ? "；星图已在清场时关掉，只等关闭生效" : "");
 			}
 		}
 
@@ -998,16 +1011,21 @@ namespace SAQ::Test
 				if (SetMenuOpenByName("GalaxyStarMapMenu", false, detail)) {
 					REX::INFO("harness：用例收尾复查：星图在清场后才打开 —— 已请求关闭（{}）", detail);
 					closedStarMap = true;
+					// 刚请求关闭星图 ⇒ 别立刻开下一条：等引擎把 kHide 处理掉
+					// （星图也是暂停菜单：没关掉就切下一条，`ping` 会撞上「游戏仍暂停」）。
+					g_nextCaseAtMs = std::max(g_nextCaseAtMs, NowMs() + kInterCaseDelayMs);
 				}
 			}
 			if (MissionMenuIsOpen()) {
 				if (SetMenuOpen(false, detail)) {
 					REX::INFO("harness：用例收尾复查：任务菜单还开着 —— 已请求关闭（{}）", detail);
-					closedStarMap = true;
 				}
 			}
-			// 星图既然已经出现过并被关掉，就没有「稍后再打开」的可能了 —— 提前结束窗口，
-			// 别白等（脚本一次引导只开一次星图）。
+			// ★★ 第 83 轮修：**只有真的看到并关掉星图**才算「稍后打开那一幕已经发生」——
+			//   第 57 轮的实现把「关掉残留的任务菜单」也当成结束条件。22:52 会话实测的真因：
+			//   r81 用例在 `ui.tab` 失败中止时，清场复查先关掉残留的任务菜单 ⇒ 窗口被提前
+			//   结束 ⇒ 约 1 秒后才由**脚本节拍**打开的星图没人管 ⇒ 下一条用例的 `ping`
+			//   在「星图开着（暂停、脚本定时器冻结）」下超时 FAIL（三条 FAIL 里的第三条）。
 			if (closedStarMap || NowMs() >= g_cleanupRecheckUntilMs) {
 				g_cleanupRecheckUntilMs = 0;
 			}
@@ -1383,7 +1401,16 @@ namespace SAQ::Test
 				return false;
 
 			case Kind::kUi: {
-				if (!g_cur.kicked) {
+				// ★★ 第 83 轮：`ui.*` 的「桥没通」重试 —— 节流期里什么都不做
+				//   （桥解析 `EnsureResolved` 不便宜，每帧调一次等于每帧做一次解析）。
+				constexpr std::uint64_t kUiBridgeRetryIntervalMs = 250;
+				if (g_cur.uiRetryAtMs != 0) {
+					if (now < g_cur.uiRetryAtMs) {
+						return false;
+					}
+					g_cur.uiRetryAtMs = 0;  // 到点：放行这一次尝试
+				}
+				{
 					const char* fn = (step.opName == "ui.select")      ? "SAQ_TestDriveSelect"
 						: (step.opName == "ui.selectchild")            ? "SAQ_TestDriveSelectChild"
 						: (step.opName == "ui.key")                    ? "SAQ_TestDriveKey"
@@ -1412,6 +1439,22 @@ namespace SAQ::Test
 						g_caseStarMapRisk = true;
 					}
 					if (!ok) {
+						// ★★ 第 83 轮修（22:52 会话 r81 的 `ui.tab` FAIL「桥没通」的真因）：
+						//   菜单刚（重）打开的那一两拍里，DLL 还没解析出 Movie/ASMovieRoot
+						//   （产品侧同一次 Tick 的首次推送也会失败、约 0.8 秒后重试成功）——
+						//   此时调 AS3 入口必然「桥没通」。这**不是**用例失败：在步骤超时
+						//   内重试，等桥就绪（AS3 函数一次都没被调到，重试不会重复触发动作）。
+						//   仅在「桥没通」这一种回执上重试；其它原因（函数不存在等）照旧立刻失败。
+						//   重试节拍 = 本分支开头的 kUiBridgeRetryIntervalMs（250 ms）。
+						if (reply == "桥没通" && now < g_cur.deadlineMs) {
+							if (!g_cur.kicked) {
+								g_cur.kicked = true;  // 只在第一次重试时记一行，别刷屏
+								REX::INFO("harness：  {} 桥没通 —— 等界面桥就绪后重试"
+										  "（菜单刚打开时首次解析常失败，产品侧同一拍也会重推）", fn);
+							}
+							g_cur.uiRetryAtMs = now + kUiBridgeRetryIntervalMs;
+							return false;
+						}
 						CompleteStep(false, std::format("{} 调用失败：{}", fn, reply),
 							LogSince(g_cur.logMark, kEvidenceMaxLines));
 						return true;
@@ -1441,11 +1484,17 @@ namespace SAQ::Test
 					return true;
 				}
 				if (now >= g_cur.deadlineMs) {
+					// ★★ 第 83 轮：把**三个打点**都写进报文 —— 「窗口起点怎么算的」是这类
+					//   超时最费解的一点（r80 那次只有一个数字，无从判断是窗口偏了还是
+					//   正则没匹配上；配上「本步/用例」两个基准，一眼就能定位）。
 					timeoutFail(std::format("日志里没出现 /{}/", step.text),
-						std::format("窗口从 idx {} 起（scope={}）；本窗口的日志见 evidence", from,
+						std::format("窗口从 idx {} 起（scope={}；本步起点 idx={}；用例起点 idx={}）"
+									"；本窗口的日志见 evidence",
+							from,
 							step.logScope == LogScope::kPrev ? "prev"
 							: step.logScope == LogScope::kCase ? "case"
-															   : "this"));
+															   : "this",
+							g_cur.logMark, g_caseMark));
 					return true;
 				}
 				return false;
@@ -1466,7 +1515,9 @@ namespace SAQ::Test
 				const auto from = EffectiveLogFrom(step);
 				if (LogFind(from, step.text, line)) {
 					CompleteStep(false,
-						std::format("出现了不该出现的日志 /{}/（窗口从 idx {} 起）", step.text, from) +
+						std::format("出现了不该出现的日志 /{}/（窗口从 idx {} 起；本步起点 idx={}；"
+									"用例起点 idx={}）",
+							step.text, from, g_cur.logMark, g_caseMark) +
 							" ← " + line,
 						LogSince(g_cur.logMark, kEvidenceMaxLines));
 					return true;
@@ -1724,13 +1775,17 @@ namespace SAQ::Test
 		//   断言窗口起点清 0 ⇒ 假 PASS/假 FAIL）。
 		//   ★★ 第 69 轮：**用例文件解析失败 ⇒ 该用例直接判 FAIL**（老行为只留 WARN +
 		//   丢步 —— 15:43 会话 r65_icons 的 `step = ui.state` 就是这样「少测一步还 PASS」）。
-		REX::INFO("harness：已启用（{} 个用例；驱动器 v69：用例文件解析失败 ⇒ 该用例判 FAIL"
-				  "（不再静默丢步 —— 15:43 会话 r65_icons 的 `ui.state` 踩过）；沿用 v68"
-				  " 断言正则解析期编译校验（非法正则立刻报「正则非法」，不再退化成「日志里没出现」"
-				  "的误导性超时）；回执 ≥ {} ms 留一行 note"
-				  "（沿用：v66 命令回执窗口 8000 ms + ping 用满窗口 / v63 主菜单稳定 {} ms 后自动读档 /"
-				  " save.list / save.load / guide.probe / 传送 20 秒窗口 / 落地静默期每 Tick 推进 /"
-				  " 加载画面证据 / 卡死自动中止））"
+		//   ★★ 第 83 轮（v70）：`ui.*` 桥没通自动重试 + 清场延迟复查只在「真的见到星图」
+		//   时提前结束 + 断言超时报文带上三个打点。
+		REX::INFO("harness：已启用（{} 个用例；驱动器 v70：`ui.*` 遇到「桥没通」在步骤超时内"
+				  "自动重试（菜单刚打开那一两拍，产品侧首次推送同样会失败）；清场延迟复查只在"
+				  "**真的看到并关掉星图**时才提前结束（关残留任务菜单不算 —— 22:52 会话 r62 的"
+				  " ping 超时就是这么来的）；断言超时报文带「窗口/本步/用例」三个打点；"
+				  "沿用以来的：v69 用例解析失败 ⇒ 判 FAIL / v68 断言正则解析期编译校验"
+				  "（非法正则立刻报「正则非法」，不再退化成「日志里没出现」的误导性超时）/"
+				  " 回执 ≥ {} ms 留一行 note / v66 命令回执窗口 8000 ms + ping 用满窗口 /"
+				  " v63 主菜单稳定 {} ms 后自动读档 / save.list / save.load / guide.probe /"
+				  " 传送 20 秒窗口 / 落地静默期每 Tick 推进 / 加载画面证据 / 卡死自动中止））"
 				  " —— 等脚本通道就绪后自动开跑",
 			g_cases.size(), kSlowAckNoteMs, kAutoLoadMinMenuAgeMs);
 	}

@@ -445,8 +445,25 @@ HARNESS_STRINGS = (
     # ★★ 第 69 轮（15:43 会话复查：r65_icons 的 `step = ui.state` 是未知步骤，
     #   老驱动器只留 WARN + 丢步 ⇒ 用例照样 PASS —— 「少测一步」看不出来）：
     #   解析失败 ⇒ 该用例直接判 FAIL（证据进结果 JSON 的 parse 步骤）。
+    # ★★ 第 83 轮（22:52 会话：22 条用例 19 PASS / 3 FAIL，**三条 FAIL 全在用例/驱动器
+    #   侧、产品全对** —— 判据见下）：
+    #   ① `r80_repeatable_npc`：断言把产品日志里的**全角** `）` 写成半角转义 `\)`
+    #      ⇒ 正则合法但永不匹配（与第 68 轮 `\\d` 同一类病；症状是「日志里没出现 /…/」）。
+    #      顺带把这条断言的窗口从 `scope=prev` 改成 `scope=case`（该行由 menu.open 同一次
+    #      Tick 的产品处理打印，窗口基准在个别时序下会落在它之后）。
+    #   ② `r81_landmark`：第二次 `menu.open` 之后立刻 `ui.tab` —— 那一两拍 DLL 还没解析出
+    #      Movie/ASMovieRoot（产品侧同一次 Tick 的首次推送同样失败、约 0.8 秒后重试成功）
+    #      ⇒ 「桥没通」。修法：驱动器 v70 在步骤超时内重试 + 用例补「等推送成功再切 tab」。
+    #   ③ `r62_reload_observe` 的首步 `ping` 超时：r81 中止后清场复查先关掉残留的**任务
+    #      菜单**就提前结束了延迟复查窗口 ⇒ 约 1 秒后由脚本节拍打开的星图没人管
+    #      （星图 = 暂停菜单 ⇒ 脚本定时器冻结 ⇒ ping 无回执）。修法：只有**真的看到并
+    #      关掉星图**才提前结束窗口；关掉星图后再留一段（kInterCaseDelayMs）才开下一条。
     ("harness 驱动器版本串",
-     "驱动器 v69：用例文件解析失败 ⇒ 该用例判 FAIL"),
+     "驱动器 v70：`ui.*` 遇到「桥没通」在步骤超时内自动重试"),
+    ("harness ui 桥没通重试文案", "桥没通 —— 等界面桥就绪后重试"),
+    ("harness 清场延迟复查窗口开启文案", "延迟复查窗口开启"),
+    ("harness 清场时星图已开（短窗口）文案", "星图已在清场时关掉，只等关闭生效"),
+    ("harness 断言超时三打点文案", "；本步起点 idx="),
     ("harness 用例解析失败文案", "用例文件解析失败（修复用例文件后重跑）"),
     # ★★ 第 68 轮（15:24 会话 r67_chain 的唯一 FAIL = **用例自己的正则写错**，产品全对）：
     #   断言正则此前只会在运行期由 `LogFind` 静默编译失败 ⇒ 报文退化成
@@ -1264,6 +1281,25 @@ def main() -> int:
                 for item in bad_asserts:
                     print("         - " + item)
                 all_ok &= ok_asserts
+                # ★★ 第 83 轮（22:52 会话 r80 的唯一 FAIL）：断言把产品日志里的**全角** `）`
+                #   写成**半角转义** `\)` —— 正则合法（上面的编译校验查不出）、但永不匹配；
+                #   症状是同第 68 轮 `\\d` 那类：「日志里没出现 /…/」的超时（看着像产品
+                #   没打这行）。全角括号**不需要**转义（正向检查见上面 r80 那条）。
+                #   通用的体检见 tools/test/plan_regex_audit.py（拿真实日志逐条试跑）。
+                bad_paren = "可重复 NPC 8\\)" in plan_text
+                print(("MISS" if bad_paren else "OK  ") +
+                      " 用例计划 · r80 旧的全角/半角括号混写已修（反向检查）")
+                all_ok &= not bad_paren
+                # ★★ 第 83 轮（22:52 会话 r81 的 `ui.tab` FAIL = 桥没通）：r81 的**两段**
+                #   都要「先等推送成功再切 tab」（第 57 轮红线）—— 判据：r81 段里
+                #   `assert.log 推送成功` 出现 ≥2 次（第一段本来就有，第二段是本轮补的）。
+                i81 = plan_text.find("[case:r81_landmark]")
+                i81_end = plan_text.find("[case:", i81 + 1) if i81 >= 0 else -1
+                sec81 = plan_text[i81:i81_end if i81_end > i81 else len(plan_text)] if i81 >= 0 else ""
+                ok81 = sec81.count("assert.log 推送成功") >= 2
+                print(("OK  " if ok81 else "MISS") +
+                      " 用例计划 · r81 两段都「等推送成功再切 tab」（第 57 轮红线）")
+                all_ok &= ok81
                 plan_deployed = MO2_MOD / "SFSE/Plugins/SAQ_TestPlan.txt"
                 if plan_deployed.exists():
                     same = plan_deployed.read_bytes() == plan_src.read_bytes()
@@ -1406,9 +1442,13 @@ def main() -> int:
                 #   ① DLL 两类计数（`入口条目表=20 条（任务板 12 + 可重复 NPC 8）`）；
                 #   ② 界面 `rep=` 探针（8 条 + 名字前缀「（可重复）」进了载荷/解析）；
                 #   ③ 点邓肯·林奇 ⇒ 引导目标 = 新建常驻 marker（NPC marker 的实机判据）。
-                all_ok &= check("用例计划 · r80 NPC 两类计数断言",
+                #   ★★ 第 83 轮修正（22:52 会话这条断言的唯一 FAIL）：产品那行是**全角**
+                #      `（…）`，用例原来写成半角转义 `\)` ⇒ 正则合法但**永不匹配**；
+                #      同时把窗口从 `scope=prev` 改成 `scope=case`（该行由 menu.open 同一次
+                #      Tick 的产品处理打印，窗口基准在个别时序下会落在它之后）。
+                all_ok &= check("用例计划 · r80 NPC 两类计数断言（全角括号 + scope=case）",
                                 plan_text.encode(),
-                                "assert.log 入口条目表=20 条（任务板 12 \\+ 可重复 NPC 8\\)".encode())
+                                "assert.log 入口条目表=20 条（任务板 12 \\+ 可重复 NPC 8） scope=case".encode())
                 all_ok &= check("用例计划 · r80 界面 rep= 探针断言（8 条 + 名字前缀）",
                                 plan_text.encode(),
                                 "assert.ui rep=\\[8\\|0x214684=（可重复）贸易管理局 · 邓肯·林奇".encode())

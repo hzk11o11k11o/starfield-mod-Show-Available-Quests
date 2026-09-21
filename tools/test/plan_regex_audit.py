@@ -1,0 +1,127 @@
+#!/usr/bin/env python3
+r"""plan_regex_audit.py —— 用例文件里的断言正则「体检」（第 83 轮）。
+
+背景（两次同类事故）：
+  * 第 68 轮：`r67_chain` 把 `\d` 写成 `\\d` —— ECMAScript 下等于「字面反斜杠 + d」，
+    永不匹配；症状却是「日志里没出现 /…/」的超时（误导成产品没打这行）。
+  * 第 83 轮：`r80_repeatable_npc` 把**全角** `）` 写成半角转义 `\)` —— 同一类病：
+    正则合法（解析期编译校验查不出来），但永远匹配不到。
+
+本工具做的事：拿一份**真实跑过的日志**，按**用例分段**（`===== 开始用例 <id> =====`
+到下一个用例开始）逐条试跑所有断言正则：
+  * `assert.log`  / `assert.ui`：本用例段里一次都没命中 ⇒ 报告（要么正则写错，
+    要么这条断言的前置步骤没跑到 —— 报告里会区分「用例没跑到」和「段内没命中」）；
+  * `assert.nolog`：本用例段里命中了 ⇒ 提示（驱动器看的是更小的窗口，段内命中
+    未必是问题，人工过一眼）。
+
+用法：
+    python tools/test/plan_regex_audit.py                     # 默认读 MO2 部署目录的日志
+    python tools/test/plan_regex_audit.py <日志路径> [用例文件]
+"""
+from __future__ import annotations
+
+import pathlib
+import re
+import sys
+
+DEFAULT_LOG = pathlib.Path(
+    r"D:\Mod Organizer 2\starfield_mods\mods\Show Available Quests (SFSE)"
+    r"\SFSE\Plugins\SAQ_ShowAvailableQuests.log"
+)
+DEFAULT_PLAN = pathlib.Path("tools/test/scenarios/SAQ_TestPlan.txt")
+
+# 驱动器在解析后就从断言文本里摘掉的 token（见 SAQ_Test.cpp 的 ExtractTimeout/ExtractScope）
+TOKEN_RE = re.compile(r"\s*(?:timeout=\d+|scope=\w+)")
+CASE_START_RE = re.compile(r"===== 开始用例 (\S+?)（")
+
+
+def split_cases(lines: list[str]) -> dict[str, list[str]]:
+    """把日志按用例切成段（断言只认产品日志 —— harness 自己的行会复述命中文本）。"""
+    cases: dict[str, list[str]] = {}
+    cur: str | None = None
+    for ln in lines:
+        if "harness：" in ln:
+            m = CASE_START_RE.search(ln)
+            if m:
+                cur = m.group(1)
+                cases.setdefault(cur, [])
+                continue
+            if "全部用例结束" in ln:
+                cur = None
+            continue
+        if cur is not None:
+            cases[cur].append(ln)
+    return cases
+
+
+def main() -> int:
+    try:
+        sys.stdout.reconfigure(errors="replace")
+    except Exception:
+        pass
+
+    log_path = pathlib.Path(sys.argv[1]) if len(sys.argv) > 1 else DEFAULT_LOG
+    plan_path = pathlib.Path(sys.argv[2]) if len(sys.argv) > 2 else DEFAULT_PLAN
+    if not log_path.exists():
+        print(f"没有日志文件：{log_path}")
+        return 2
+    if not plan_path.exists():
+        print(f"没有用例文件：{plan_path}")
+        return 2
+
+    lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    cases = split_cases(lines)
+
+    plan = plan_path.read_text(encoding="utf-8")
+    case = "?"
+    checked = 0
+    bad: list[tuple[str, str, str, str]] = []
+    info: list[tuple[str, str, str, str]] = []
+    for raw in plan.splitlines():
+        s = raw.strip()
+        if s.lower().startswith("[case:"):
+            case = s[len("[case:"):].rstrip("]").strip()
+            continue
+        if not s.lower().startswith("step = assert"):
+            continue
+        body = s[len("step = "):]
+        op, _, rest = body.partition(" ")
+        if op == "assert.menu":  # 看的是菜单开关状态，不是日志行 —— 本工具不适用
+            continue
+        rest = TOKEN_RE.sub("", rest.strip())
+        if not rest:
+            continue
+        try:
+            rx = re.compile(rest, re.I)
+        except re.error as e:
+            bad.append((case, op, rest, f"正则非法：{e}"))
+            continue
+        checked += 1
+        seg = cases.get(case)
+        if seg is None:
+            bad.append((case, op, rest, "这次日志里根本没有这个用例（没跑到 / 中途中止）"))
+            continue
+        pool = seg
+        if op == "assert.ui":
+            pool = [ln for ln in seg if "_root.SAQ_Report=" in ln]
+        hit = any(rx.search(ln) for ln in pool)
+        if op == "assert.nolog":
+            if hit:
+                info.append((case, op, rest, "本用例段里出现了（驱动器窗口更小，人工确认）"))
+        elif not hit:
+            bad.append((case, op, rest, "本用例段里一次都没命中"))
+
+    print(f"检查 {checked} 条断言（日志 {log_path.name}｜用例段 {len(cases)} 个）")
+    if bad:
+        print(f"有 {len(bad)} 条未命中（人工过一眼：写错的正则 / 前置步骤没跑到）：")
+        for case_, op, regex, why in bad:
+            print(f"  [{case_}] {op} —— {why}\n      /{regex[:150]}/")
+    else:
+        print("全部命中：没有「永不匹配」的断言正则。")
+    for case_, op, regex, why in info:
+        print(f"  （提示）[{case_}] {op} —— {why}\n      /{regex[:150]}/")
+    return 1 if bad else 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
