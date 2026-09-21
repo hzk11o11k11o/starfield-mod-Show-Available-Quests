@@ -58,12 +58,12 @@ Starfield 从不告诉你去哪接任务，全靠自己撞见。这个 mod 在�
 [*] 261 条任务中有 52 条暂无导航目标：界面会如实提示，不会假装能引导
 [*] 无限生成任务本身不显示，但其接取入口（12 处任务板）作为独立条目列出；任何位置都能一键导航过去——在远处先给你一个大致方位，等你走到那块任务板所在的区域，蓝点会自动落到任务板上（不会停在几米外；读档或重启游戏后也会自动校正）
 [*] 引导在关闭任务菜单后生效（与原版一致：HUD 蓝点本来就要关菜单才可见）
-[*] 「进度没到就不显示」覆盖**两层条件**：任务记录级条件里「引用别的任务」的那一类（7 条任务 / 9 条门槛，例如「要先完成 A 才能接到 B」），以及任务对话（INFO）里的同类条件（60 条任务 / 290 条对话 / 341 条条件，例如「大器晚成」要「孤立无援」完成）；位置/遭遇类条件暂未覆盖
+[*] 「进度没到就不显示」覆盖**两层条件**：任务记录级条件里「引用别的任务」的那一类（7 条任务 / 9 条门槛，例如「要先完成 A 才能接到 B」），以及任务对话（INFO）里的同类条件（80 条任务 / 418 条对话 / 492 条条件，含官方 DLC，例如「大器晚成」要「孤立无援」完成）；另有**任务链门槛**（后续任务在前置完成前不显示）；位置/遭遇类条件暂未覆盖
 [*] 会覆盖任务菜单的 UI 文件（missionmenu.swf / missionmenu_lrg.swf），与其它改任务菜单的 mod 需要打补丁
 [/list]
 
 [b]兼容性[/b]
-仅使用 SFSE + ESM。**不改任何原版数据**：本插件只往那 12 个城市/据点的任务板所在 cell 里**新增**自己的常驻标记引用（用于精确导航）；为了让引擎接受这些新增引用，我们对这些 cell 各写一条**只含 EDID 的空壳 CELL 记录**（官方 Creation 对同一条 cell 用的就是这种写法），**不覆盖 cell 的任何数据字段**。与不触碰任务菜单 UI 的 mod 完全兼容；与修改任务菜单 SWF 的 mod 冲突（需补丁）。
+仅使用 SFSE + ESM。**不改任何原版数据**：本插件只往那些任务板 / 可重复任务 NPC 所在的 12 个 cell 里**新增**自己的常驻标记引用（用于精确导航）；为了让引擎接受这些新增引用，我们对这些 cell 各写一条**只含 EDID 的空壳 CELL 记录**（官方 Creation 对同一条 cell 用的就是这种写法），**不覆盖 cell 的任何数据字段**。与不触碰任务菜单 UI 的 mod 完全兼容；与修改任务菜单 SWF 的 mod 冲突（需补丁）。
 
 [b]反馈[/b]
 遇到问题请附上：SFSE\Plugins\SAQ_ShowAvailableQuests.log、安装方式（MO2 / 手动）、游戏与 SFSE 版本号。
@@ -79,7 +79,7 @@ Starfield never tells you where to pick up quests — you just have to stumble i
 [b]Features[/b]
 [list]
 [*] Lists all available non-main quests in one place
-[*] Includes the pickup points of radiant quests: 12 mission boards (New Atlantis / Akila City / Neon / Cydonia / Hopetown / New Homestead / staryards / The Key...), one click to navigate
+[*] Includes the pickup points of radiant quests: 12 mission boards (New Atlantis / Akila City / Neon / Cydonia / Hopetown / New Homestead / staryards / The Key...) plus 8 repeatable-job NPCs (4 Trade Authority merchants, 4 Trackers Alliance agents - their entries are tagged "(Repeatable)"), one click to navigate
 [*] Native guidance: quest marker + scanner route line to the quest giver
 [*] Guidance prefers the **named quest giver (NPC)** over nearby signposts / internal markers; from a distance it falls back to a persistent target and automatically upgrades back to the NPC once you get close
 [*] SET COURSE (R / X) goes one step further: it also opens the star map with the route plotted to the pickup location, exactly like a vanilla quest
@@ -107,14 +107,14 @@ Mission menu (TAB) -> "Available Quests" -> select an entry -> expand the "Go to
 [b]Known limitations[/b]
 [list]
 [*] 52 of 261 quests currently have no navigation target; the UI says so honestly
-[*] Radiant quests themselves are not listed, but their pickup points (12 mission boards) are listed as entries; every entry can be navigated to from anywhere — far away you get the approximate direction, and once you reach the board's area the marker automatically snaps onto the board itself (no more stopping a few metres short; it also self-corrects after a save reload or restart)
+[*] Radiant quests themselves are not listed, but their pickup points (12 mission boards + 8 repeatable-job NPCs) are listed as entries; every entry can be navigated to from anywhere — far away you get the approximate direction, and once you reach the board's area the marker automatically snaps onto the board itself (no more stopping a few metres short; it also self-corrects after a save reload or restart)
 [*] Guidance applies after you close the mission menu (same as vanilla: the HUD marker only appears outside menus)
-[*] "Hidden when your progress isn't far enough" covers **two layers**: record-level preconditions that reference another quest (7 quests / 9 gates, e.g. "you must finish A before B shows up") and the same kind of conditions inside a quest's dialogues (INFOs: 60 quests / 290 dialogues / 341 conditions); location/encounter based conditions are not covered yet
+[*] "Hidden when your progress isn't far enough" covers **two layers**: record-level preconditions that reference another quest (7 quests / 9 gates, e.g. "you must finish A before B shows up") and the same kind of conditions inside a quest's dialogues (INFOs: 80 quests / 418 dialogues / 492 conditions, official DLC included), plus a quest-chain gate (a follow-up quest stays hidden until its prerequisite is done); location/encounter based conditions are not covered yet
 [*] Overrides the mission menu UI (missionmenu.swf / missionmenu_lrg.swf): patching needed with other mission-menu mods
 [/list]
 
 [b]Compatibility[/b]
-SFSE + ESM only. **No vanilla data is changed**: the plugin only *adds* its own persistent marker references inside the cells that contain those 12 mission boards. So the engine accepts them, one EDID-only "stub" CELL record is written per cell (the exact pattern the official Creations use for the same cells) — **none of the cell's data fields are overridden**. Fully compatible with mods that don't touch the mission menu UI; conflicts with mission-menu SWF mods (patch required).
+SFSE + ESM only. **No vanilla data is changed**: the plugin only *adds* its own persistent marker references inside the cells that contain those mission boards / NPCs. So the engine accepts them, one EDID-only "stub" CELL record is written per cell (the exact pattern the official Creations use for the same cells) — **none of the cell's data fields are overridden**. Fully compatible with mods that don't touch the mission menu UI; conflicts with mission-menu SWF mods (patch required).
 
 [b]Feedback[/b]
 Please include SFSE\Plugins\SAQ_ShowAvailableQuests.log, install method (MO2 / manual), and your game & SFSE versions.
@@ -123,6 +123,15 @@ Please include SFSE\Plugins\SAQ_ShowAvailableQuests.log, install method (MO2 / m
 ---
 
 ## 更新日志（Changelog）
+
+### v0.1.4（2026-09-21）
+- 新增：**「提供无限任务的 NPC」入口** —— 8 位会提供可重复任务的 NPC（贸易管理局商人 ×4、追踪者联盟探员 ×4）现在也出现在「可接任务」列表里，名字带「（可重复）」标记；点一下即可导航到他们（远处先落常驻标记，走近自动精确到本人）
+- 新增：**四大势力开头任务固定显示**（联合殖民地「超越极限」/ 自由星「枝节横生」/ 龙神「重返职场」/ 深红舰队「深藏不露」），固定排在最前，右侧描述写明加入方式；其中深红舰队只给说明（按设计不提供导航）
+- 新增：**同伴好感度任务**入口固定显示（任务名前带同伴名，描述提示好感度要求）；后续「承诺任务」仍按进度条件显示
+- 新增：**任务链门槛** —— 后续任务在前置任务完成前不再出现在列表里（含官方 DLC 的对话条件）
+- 新增：**任务专属图标** —— 列表图标现在与原版任务菜单一致（阵营徽记 / 活动 / 杂项 / 任务）
+- 改进：「进度没到就不显示」覆盖范围翻倍（60 → 80 条任务 / 418 条对话 / 492 条条件，含官方 DLC）
+- 其它：内部测试与验证设施更新（不影响游戏内行为；发布包仍不包含任何测试代码）
 
 ### v0.1.3（2026-09-21）
 - 修复：**读档过程中的一个稳定性问题** —— 极少数情况下，读档时插件仍在后台做例行刷新（查任务状态 / 校正导航目标），可能让读档失败退回主菜单，甚至导致游戏崩溃。现在**读档 / 加载画面期间会暂停这些后台工作**，读档完成后自动恢复（对正常游玩无任何影响）
@@ -149,7 +158,7 @@ Please include SFSE\Plugins\SAQ_ShowAvailableQuests.log, install method (MO2 / m
 
 | 项 | 说明 |
 | --- | --- |
-| 上传包 | `dist\SAQ-ShowAvailableQuests-0.1.3.zip`（由 `tools\package-saq.ps1` 生成；会先以发布构建重编 DLL —— 包里不含任何 harness/测试代码） |
+| 上传包 | `dist\SAQ-ShowAvailableQuests-0.1.4.zip`（由 `tools\package-saq.ps1` 生成；会先以发布构建重编 DLL —— 包里不含任何 harness/测试代码） |
 | 测试功能 | 包内**不含任何测试资产**（用例文件 / 结果 JSON），配置强制为「正常玩」的默认值（ini `[Test] Mode=0 / Harness=0`）；发布 DLL 不含 harness 编译 —— 由打包脚本 + `verify_saq_build.py` 三层校验把守 |
 | 版本号 | 三处一致：`plugin\xmake.lua`、`plugin\src\main.cpp`、`meta.ini` |
 | 依赖声明 | Nexus 上标注 SFSE 为必需依赖（版本 0.2.21+） |
