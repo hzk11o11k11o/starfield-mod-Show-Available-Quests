@@ -36,5 +36,5 @@ D:\Mod Organizer 2
 - 所有工具的源代码允许你可以自己修改，添加自己想要的能力
 - 每次任务完成后，需要提交本地git，同时.gitignore也要添加必要忽略项
 - mod文件生成后要部署到Mod Organizer并配置启用
-- mod文件生成后帮我打包成nexus mods能接受的上传包文件，并帮我写一个介绍文案
+- mod文件生成后帮我打包成nexus mods能接受的上传包文件，并帮我写一个介绍文案，注意打包时不要把自动化测试功能开启了，所有配置项也要还原到正常玩的默认值
 - 日志文件位置：D:\Mod Organizer 2\starfield_mods\mods\Show Available Quests (SFSE)\SFSE\Plugins

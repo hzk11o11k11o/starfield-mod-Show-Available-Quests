@@ -150,7 +150,7 @@ SFSE_PLUGIN_LOAD(const SFSE::LoadInterface* a_sfse)
 	SFSE::Init(a_sfse, { .logName = kLogName });
 	ApplyLogSizeLimit();
 
-	REX::INFO("SAQ_ShowAvailableQuests v0.1.1 loading (SFSE build {})", SFSE::GetSFSEVersion());
+	REX::INFO("SAQ_ShowAvailableQuests v0.1.2 loading (SFSE build {})", SFSE::GetSFSEVersion());
 
 	if (auto* messaging = SFSE::GetMessagingInterface()) {
 		messaging->RegisterListener(OnMessage);

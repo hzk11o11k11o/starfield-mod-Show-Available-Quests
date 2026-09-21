@@ -16,6 +16,9 @@
 #       手动安装 = 把包内 SFSE\ / Interface\ / Scripts\ 与 esm 放进 Starfield\Data\
 #     · 包内 README.txt 的 {{VERSION}} 会替换为本次版本号
 #     · 打包前会跑 tools\ui\verify_saq_build.py（产物特征检查），失败即终止
+#     · ★★ 第 62 轮（用户要求）：包里**不含任何测试资产**、配置**强制还原成正常玩的
+#       默认值** —— 打包清单里没有 SAQ_TestPlan.txt / SAQ_testresults.json；包内 ini 的
+#       [Test] 段（Mode / Harness）在组装时被强制写回 0 并校验（见第 4/5 步）。
 #
 #  ★★ 第 53 轮（大项 F · 发布就绪）：本脚本现在**自己完成发布构建** ——
 #     ① 以 xmake `saq_harness=n` 重新编译 DLL（DLL 里彻底没有 harness/测试代码）
@@ -27,7 +30,7 @@
 #       & ".\tools\build-saq.ps1" -SkipTable -SkipSwf -SkipPapyrus -Harness
 # ============================================================================
 param(
-    [string]$Version = '0.1.1',
+    [string]$Version = '0.1.2',
     [switch]$SkipVerify,
     # ★ 第 53 轮：跳过「发布构建 + 部署」这一步（用当前产物打包 —— 只用于调试脚本本身；
     #   正常打包必须让它跑，否则可能把含 harness 的 DLL 打进包里）。
@@ -113,6 +116,32 @@ foreach ($it in $items) {
     New-Item -ItemType Directory -Force -Path (Split-Path $dst) | Out-Null
     Copy-Item $src $dst -Force
 }
+# ★★ 第 62 轮（用户要求）：包里的配置必须是「正常玩」的默认值 ——
+#   ini 的 [Test] 段（Mode / Harness）是**测试开关**，源文件偶尔会被调试改脏，
+#   这里**强制还原**成默认值（不是只报警），并在写盘前校验（还原失败即终止打包）。
+#   为什么值得写进脚本：「打包时忘了关测试开关」是最危险的失败模式之一 ——
+#   玩家拿到手会看到满屏 harness 日志、任务被自动回滚（hreness 会 Reset/Start 任务）。
+#   注：发布构建 DLL 已不含 harness 编译（第 53 轮），这里管的是**配置侧**双保险。
+$iniSrc  = Join-Path $root 'resources\SAQ_ShowAvailableQuests.ini'
+$iniDst  = Join-Path $stageDir 'SFSE\Plugins\SAQ_ShowAvailableQuests.ini'
+$iniText = [System.IO.File]::ReadAllText($iniSrc, [System.Text.Encoding]::UTF8)
+$iniOrig = $iniText
+if ($iniText -notmatch '(?m)^\s*\[Test\]\s*$') {
+    Warn '源 ini 里没有 [Test] 段 —— 已追加默认段（Mode=0 / Harness=0）'
+    $iniText = $iniText.TrimEnd() + "`r`n[Test]`r`nMode=0`r`nHarness=0`r`n"
+} else {
+    $iniText = [regex]::Replace($iniText, '(?m)^\s*Mode\s*=.*$', 'Mode=0')
+    $iniText = [regex]::Replace($iniText, '(?m)^\s*Harness\s*=.*$', 'Harness=0')
+}
+if ($iniText -notmatch '(?m)^\s*Mode\s*=\s*0\s*$' -or $iniText -notmatch '(?m)^\s*Harness\s*=\s*0\s*$') {
+    throw 'ini 的玩家默认值还原失败（[Test] Mode=0 / Harness=0 校验不过）—— 已终止打包'
+}
+if ($iniText -ne $iniOrig) {
+    Warn '源 ini 的 [Test] Mode/Harness 不是默认值 —— 已还原为 0 打进包（建议把源文件也改回默认）'
+} else {
+    Ok 'ini 玩家默认值（[Test] Mode=0 / Harness=0）'
+}
+[System.IO.File]::WriteAllText($iniDst, $iniText, (New-Object System.Text.UTF8Encoding $false))
 # 包内 README：把 {{VERSION}} 换成实际版本号
 $readmeSrc = Join-Path $root 'resources\README-mod.txt'
 $readmeTxt = [System.IO.File]::ReadAllText($readmeSrc, [System.Text.Encoding]::UTF8)

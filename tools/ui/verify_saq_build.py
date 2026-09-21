@@ -127,6 +127,14 @@
            `MoveTo` 到赛多尼亚成功、后续用例全 PASS）⇒ 产品行为正确（保持精确目标）。
            本脚本检查：新 op `guide.probe`（候选可得性只读探针）+ 驱动器版本串 v60 +
            用例计划里「探针步骤在、旧『先保持』断言不在」+ 反向检查（v59 及更早不在）。
+  第 62 轮（大项 I · 自动读档）：新 op `save.list`（BGSSaveLoadManager 只读诊断：单例 /
+           built / count / 前几个存档名 —— 偏移不对会被 shape 校验挡下）+ `save.load
+           <存档名子串>`（与游戏「读取存档」菜单同一写侧排队；驱动器等「加载画面消失 +
+           静默 2 秒 + 距排队 ≥5 秒 + 命令通道重新就绪」，通道叫不醒就开一次任务菜单
+           唤醒脚本 —— 游戏内读档会重建 Papyrus VM，定时器可能没恢复）。
+           本脚本检查：驱动器版本串 v61 + 存档列表诊断/读档排队/读档完成/唤醒脚本四条
+           文案 + 两个 op 名 + 反向检查（v60 及更早不在）+ 用例计划（r62 用例在、
+           **只用用户指定的存档** Save7_3AB5A2FA）。
 
 用法：python tools/ui/verify_saq_build.py [--release|--dev]
 """
@@ -395,10 +403,18 @@ HARNESS_STRINGS = (
     #   ③ 静默期完成时把证据写进步骤结果（回执后 ms + 加载画面已关 ms）。
     # ★★ 第 60 轮（11:26 会话 r45 的「先保持」断言不可达 —— 见文件头）：新 op `guide.probe`
     #   （候选可得性只读探针：与产品候选复算同一套查询，结果进步骤 JSON，事后可对账）。
+    # ★★ 第 62 轮（大项 I）：自动读档 —— 新 op `save.list`（BGSSaveLoadManager 只读诊断）
+    #   与 `save.load`（排队读档 → 加载静默期 → 通道重新就绪 → 叫不醒就开菜单唤醒脚本）。
     ("harness 驱动器版本串",
-     "驱动器 v60：候选可得性探针（guide.probe）"),
+     "驱动器 v61：自动读档（save.list / save.load"),
     ("harness 候选可得性探针文案", "候选可得性："),
     ("harness 探针 op 名", "guide.probe"),
+    ("harness 存档列表诊断文案", "单例=OK built="),
+    ("harness 读档排队文案", "已排队读档："),
+    ("harness 读档完成文案", "读档完成（排队后"),
+    ("harness 读档唤醒脚本文案", "唤醒脚本（第"),
+    ("harness 读档 op 名", "save.load"),
+    ("harness 存档列表 op 名", "save.list"),
     ("harness 落地静默期解耦文案", "落地静默期完成（回执后"),
     ("harness 传送落地静默期文案", "传送落地中（回执已到，但加载画面还没关"),
     ("harness 传送落地超限判定", "疑似卡在加载画面"),
@@ -922,21 +938,21 @@ def main() -> int:
             print(("OK  " if gone else "MISS") +
                   " DLL · 旧「确认此刻菜单是关的」静态提示已替换(反向检查)")
             all_ok &= gone
-            # 反向检查（第 58~60 轮）：v59 及更早的驱动器版本串不应再出现 —— 日志里那串
-            #   「驱动器 v60：…」是「跑的是不是这一版驱动器」的唯一判据（同 SWF stamp=）。
+            # 反向检查（第 58~62 轮）：旧驱动器版本串不应再出现 —— 日志里那串
+            #   「驱动器 v61：…」是「跑的是不是这一版驱动器」的唯一判据（同 SWF stamp=）。
             gone = ("驱动器 v57".encode() not in blob and "驱动器 v58".encode() not in blob and
-                    "驱动器 v59".encode() not in blob)
-            print(("OK  " if gone else "MISS") + " DLL · 旧驱动器版本串 v57/v58/v59 已替换(反向检查)")
+                    "驱动器 v59".encode() not in blob and "驱动器 v60".encode() not in blob)
+            print(("OK  " if gone else "MISS") + " DLL · 旧驱动器版本串 v57~v60 已替换(反向检查)")
             all_ok &= gone
             # ★★ 第 54 轮：用例计划本身也该被查 —— 历史判据（第 26/44~48 轮）落成用例后，
             #   最怕的是「源码改了没部署」或「用例被误删」。这里只查**开发模式**：
-            #   ① 6 条用例都在（smoke + 5 条历史判据）；
+            #   ① 7 条用例都在（smoke + 5 条历史判据 + 第 62 轮自动读档）；
             #   ② MO2 部署副本与工作区**字节一致**（部署未落后 —— 与 DLL 同一条教训）。
             plan_src = ROOT / "tools/test/scenarios/SAQ_TestPlan.txt"
             if plan_src.exists():
                 plan_text = plan_src.read_text(encoding="utf-8", errors="replace")
                 for cid in ("smoke", "r26_menu_idle", "r44_starmap", "r45_candidates",
-                            "r47_board_marker", "r48_info_gate"):
+                            "r47_board_marker", "r48_info_gate", "r62_reload_observe"):
                     all_ok &= check(f"用例计划 · [case:{cid}]", plan_text.encode(),
                                     f"[case:{cid}]".encode())
                 plan_deployed = MO2_MOD / "SFSE/Plugins/SAQ_TestPlan.txt"
@@ -1000,6 +1016,12 @@ def main() -> int:
                 print(("OK  " if gone else "MISS") +
                       " 用例计划 · 旧「先保持」断言（需读档窗口，不可达）已替换(反向检查)")
                 all_ok &= gone
+                # ★★ 第 62 轮（大项 I）：自动读档用例 —— ① 只允许用**用户指定的那个存档**
+                #   （子串 Save7_3AB5A2FA）；② 读档步骤在；③ 存档列表诊断在。
+                all_ok &= check("用例计划 · r62 自动读档（指定存档）",
+                                plan_text.encode(), "save.load Save7_3AB5A2FA".encode())
+                all_ok &= check("用例计划 · r62 存档列表诊断步骤",
+                                plan_text.encode(), "save.list".encode())
             else:
                 print(f"MISS 缺少用例计划 {plan_src}")
                 all_ok = False
@@ -1324,6 +1346,43 @@ def main() -> int:
         else:
             print(f"MISS 缺少 {path}")
             all_ok = False
+
+    # ★★ 第 62 轮（用户要求）：打包产物不许带测试功能 / 测试配置 —— 三层检查：
+    #   ① 源 ini（resources）：[Test] 段必须是玩家默认值（Mode=0 / Harness=0）；
+    #   ② dist\stage（上次打包的 staging；存在时查）：**包内实际那份** ini 同样必须
+    #      是默认值（package-saq.ps1 组装时会强制还原，这里是「真的还原了吗」的事后校验）；
+    #   ③ dist 里最新的上传包：文件清单不许含测试资产
+    #      （SAQ_TestPlan.txt / SAQ_testresults.json）。
+    #   为什么放在 verify 里：脚本是「构建/打包流程的守门人」，把用户要求变成机器判据，
+    #   以后谁改脏了 ini 或者往打包清单里塞了测试文件，这里立刻 MISS。
+    def _ini_is_default(text: str) -> bool:
+        return (re.search(r"(?m)^\s*Mode\s*=\s*0\s*$", text) is not None
+                and re.search(r"(?m)^\s*Harness\s*=\s*0\s*$", text) is not None)
+
+    ini_src = ROOT / "resources/SAQ_ShowAvailableQuests.ini"
+    if ini_src.exists():
+        ok = _ini_is_default(ini_src.read_text(encoding="utf-8", errors="replace"))
+        print(("OK  " if ok else "MISS") + " 打包源 ini · 玩家默认值（[Test] Mode=0 / Harness=0）")
+        all_ok &= ok
+    ini_stage = ROOT / "dist/stage/SFSE/Plugins/SAQ_ShowAvailableQuests.ini"
+    if ini_stage.exists():
+        ok = _ini_is_default(ini_stage.read_text(encoding="utf-8", errors="replace"))
+        print(("OK  " if ok else "MISS") +
+              " 上传包 staging ini · 玩家默认值（[Test] Mode=0 / Harness=0）")
+        all_ok &= ok
+    zips = sorted((ROOT / "dist").glob("SAQ-ShowAvailableQuests-*.zip"),
+                  key=lambda p: p.stat().st_mtime)
+    if zips:
+        import zipfile
+        with zipfile.ZipFile(zips[-1]) as zf:
+            names = zf.namelist()
+        bad = [n for n in names
+               if "TestPlan" in n or "testresults" in n or "SAQ_Test" in n]
+        ok = not bad
+        print(("OK  " if ok else "MISS") +
+              f" 上传包({zips[-1].name}) · 不含测试资产（{len(names)} 个文件）"
+              + ("" if ok else "（含：" + "、".join(bad) + "）"))
+        all_ok &= ok
 
     print("---")
     print("全部通过" if all_ok else "存在缺失（见上面的 MISS）")

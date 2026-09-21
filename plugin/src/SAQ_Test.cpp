@@ -66,6 +66,19 @@ namespace SAQ::Test
 		// 落地静默期的上限：超了说明加载画面一直没结束 ⇒ 判这一步 FAIL 并标记「游戏端
 		// 卡死」（剩余用例转 SKIP，见 MarkStuck —— 免得后面每条用例都白等一次超时）。
 		constexpr std::uint64_t kTeleportSettleMaxMs = 25000;
+		// ★★ 第 62 轮（大项 I）：自动读档（save.load）的等待窗口 —— 读档比传送慢得多
+		//   （世界重载 + Papyrus VM 重建 + 脚本重新回写「通道就绪」），整套给 120 秒。
+		//   「完成」判据与传送的落地静默期同款：加载画面消失 + 连续静默 2 秒 +
+		//   距排队 ≥5 秒 + 命令通道重新就绪（读档后 GLOB 回到存档值，脚本要重新握手）。
+		constexpr std::uint64_t kSaveLoadTimeoutMs = 120000;
+		constexpr std::uint64_t kSaveLoadSettleCleanMs = 2000;
+		constexpr std::uint64_t kSaveLoadMinGapMs = 5000;
+		// 读档后命令通道迟迟不就绪 ⇒ **唤醒脚本**：开一次任务菜单再关掉（第 26 轮的机制 ——
+		//   脚本在 OnMenuOpenCloseEvent 里重挂轮询定时器）。为什么需要：游戏内读档会重建
+		//   Papyrus VM，脚本实例是从存档恢复的（OnInit 不跑、定时器也可能没恢复），而
+		//   harness 通道的「1→2」回写靠的就是这个轮询节拍。最多唤醒 4 次（每次间隔 3 秒）。
+		constexpr std::uint64_t kSaveLoadWakeIntervalMs = 3000;
+		constexpr std::uint32_t kSaveLoadWakeMax = 4;
 		// 连续多少次「命令无回执」就判定游戏端卡死（若此刻有加载画面，1 次就够）。
 		constexpr int kStuckAbortTimeouts = 2;
 		constexpr std::uint64_t kReadyCheckIntervalMs = 500;
@@ -93,6 +106,8 @@ namespace SAQ::Test
 			kNote,
 			kGuideClear,   // 取消引导（DLL 自己的产品路径：Guide::SetGuideTarget(0)）
 			kGuideProbe,   // ★ 第 60 轮：候选可得性探针（只读，见 ProbeGuideCandidates）
+			kSaveList,     // ★★ 第 62 轮：存档列表诊断（BGSSaveLoadManager，只读）
+			kSaveLoad,     // ★★ 第 62 轮：自动读档（排队 → 等加载走完 → 通道重新就绪）
 		};
 
 		// ★ 第 54 轮：日志断言的时间窗口起点（见 SAQ_Test.h 的 `scope=` 说明）
@@ -203,6 +218,14 @@ namespace SAQ::Test
 			std::uint64_t settleCleanSinceMs{};  // 「没见过加载画面」这段连续时间的起点
 			bool          settleNoted{};         // 已记过一行「传送落地中」
 			std::string   settleAckDetail;       // 回执文案（第 59 轮）
+			// ★★ 第 62 轮：自动读档（save.load）的状态（与传送的 settle* 分开，语义不同）
+			std::uint64_t loadQueuedAtMs{};      // 排队成功时刻（静默期与 5 秒下限从它起算）
+			std::uint64_t loadCleanSinceMs{};    // 「没见过加载画面」这段连续时间的起点
+			bool          loadSeenLoading{};     // 观察过加载画面（LoadingMenu/FaderMenu）
+			bool          loadNoted{};           // 「列表未构建 / 读档加载中」已记过一行
+			std::uint64_t loadWakeAtMs{};        // 上一次「开菜单唤醒」的时刻
+			std::uint32_t loadWakeCount{};       // 已唤醒次数（上限 kSaveLoadWakeMax）
+			bool          loadWakeOpen{};        // 唤醒用的菜单此刻是否开着（下一拍关掉）
 		};
 		StepState g_cur;
 
@@ -635,6 +658,21 @@ namespace SAQ::Test
 				//   「此刻哪些取得到」写进步骤结果（不改任何状态，见 ProbeGuideCandidates）。
 				a_step.kind = Kind::kGuideProbe;
 				if (!needFormID(a_step.formId)) {
+					return false;
+				}
+			} else if (op == "save.list") {
+				// ★★ 第 62 轮（大项 I）：存档列表只读诊断 —— 单例 / built / count /
+				//   前几个存档名（判「BGSSaveLoadManager 偏移对不对」的第一现场）。
+				a_step.kind = Kind::kSaveList;
+			} else if (op == "save.load") {
+				// ★★ 第 62 轮：自动读档 —— `save.load <存档名子串>`（大小写不敏感）。
+				//   驱动器：排队 → 等「加载画面消失 + 连续静默 2 秒 + 距排队 ≥5 秒 +
+				//   通道重新就绪」⇒ 这一步才算完（整个过程默认给 120 秒）。
+				a_step.kind = Kind::kSaveLoad;
+				rest = ExtractTimeout(rest, a_step.timeoutMs);
+				a_step.text = Trim(rest);
+				if (a_step.text.empty()) {
+					a_error = "需要存档名子串（如 save.load Save7_3AB5A2FA）";
 					return false;
 				}
 			} else if (op == "note") {
@@ -1080,6 +1118,119 @@ namespace SAQ::Test
 				return true;
 			}
 
+			case Kind::kSaveList: {
+				CompleteStep(true, SaveGameListSummary(), {});
+				return true;
+			}
+
+			// ★★ 第 62 轮（大项 I）：自动读档。为什么放在驱动器而不是 Papyrus 命令通道：
+			//   读档会**重建世界与脚本 VM** —— 命令通道（GLOB）自己会被存档值覆盖，让脚本
+			//   去执行「读档」既没接口也自相矛盾；这本来就是引擎侧的排队动作
+			//   （BGSSaveLoadManager::QueueLoadGame，与游戏「读取存档」菜单同一个写侧）。
+			//
+			//   完成判据（与传送的落地静默期同款，但窗口更长）：
+			//     ① 加载画面（LoadingMenu/FaderMenu）消失，且连续静默 ≥2 秒；
+			//     ② 距排队 ≥5 秒（读档不可能更快）；
+			//     ③ 命令通道**重新就绪** —— 读档后 GLOB 回到存档值，脚本要重新握手
+			//        （EnableHarnessIfNeeded 重写 1、脚本回 2；HarnessReady 会重新追平 seq）。
+			case Kind::kSaveLoad: {
+				if (!g_cur.kicked) {
+					// 时序红线：读档要在「游戏在跑」的状态下排队（菜单开着时游戏暂停）。
+					if (a_menuOpen) {
+						std::string detail;
+						REX::WARN("harness：  读档步骤出现在菜单开着时（用例 {} 的 {}）—— 自动关菜单后继续",
+							c.id, step.raw);
+						SetMenuOpen(false, detail);
+						return false;
+					}
+					// 读档会重载世界：在飞的命令一律作废（读档后 seq/ack 都会回到存档值）。
+					Abandon("自动读档会重置世界");
+					std::string detail;
+					if (!QueueLoadSaveByName(step.text, detail)) {
+						// 「列表未构建」是可等待的中间态（引擎异步构建中）—— 等；
+						// 其它失败（找不到存档 / 形状不对）直接判 FAIL，不白等 120 秒。
+						if (detail.rfind("存档列表未构建", 0) == 0 && now < g_cur.deadlineMs) {
+							if (!g_cur.loadNoted) {
+								g_cur.loadNoted = true;
+								REX::INFO("harness：  {}", detail);
+							}
+							return false;
+						}
+						CompleteStep(false, "排队读档失败：" + detail,
+							LogSince(g_cur.logMark, kEvidenceMaxLines));
+						return true;
+					}
+					g_cur.kicked = true;
+					g_cur.kickDetail = detail;
+					g_cur.loadQueuedAtMs = now;
+					g_cur.deadlineMs = now + step.timeoutMs;
+					REX::INFO("harness：  {} —— 等加载画面走完 + 通道重新就绪（最久 {} ms）",
+						detail, step.timeoutMs);
+					return false;
+				}
+				// —— 等读档完成（每 Tick 推进，与第 59 轮的传送静默期同一原则）——
+				if (AnyLoadingMenuOpen()) {
+					g_cur.loadSeenLoading = true;
+					g_cur.loadCleanSinceMs = 0;
+					if (!g_cur.loadNoted) {
+						g_cur.loadNoted = true;
+						REX::INFO("harness：  读档加载中（{}）—— 等它走完", OpenMenusSummary());
+					}
+				} else if (g_cur.loadSeenLoading || now - g_cur.loadQueuedAtMs >= kSaveLoadMinGapMs) {
+					// 加载画面已关（或「从没观察到加载画面」但等待已过下限 —— 读档照样在跑）。
+					if (g_cur.loadCleanSinceMs == 0) {
+						g_cur.loadCleanSinceMs = now;
+					}
+				}
+				// 通道重新就绪（读档后 VM 重建：脚本要重新回写「已就绪」；seq 走追平/跳号）。
+				std::string readyDetail;
+				const bool ready = HarnessReady(readyDetail);
+				if (!ready) {
+					EnableHarnessIfNeeded();  // 幂等：把总开关顶回「请求启用」等脚本回 2
+				}
+				// 通道迟迟没恢复 ⇒ 唤醒脚本（开一次任务菜单再关 —— 见 kSaveLoadWakeIntervalMs）。
+				//   只在「加载确实走完」之后做，免得在加载过程中乱开菜单。
+				if (!ready && g_cur.loadCleanSinceMs != 0 && g_cur.loadWakeCount < kSaveLoadWakeMax) {
+					if (g_cur.loadWakeOpen) {
+						std::string detail;
+						SetMenuOpen(false, detail);
+						g_cur.loadWakeOpen = false;
+						g_cur.loadWakeAtMs = now;
+						REX::INFO("harness：  通道还没恢复 —— 已开/关一次任务菜单唤醒脚本（第 {} 次，"
+								  "第 26 轮的定时器重挂机制）",
+							g_cur.loadWakeCount);
+					} else if (now - g_cur.loadWakeAtMs >= kSaveLoadWakeIntervalMs) {
+						std::string detail;
+						SetMenuOpen(true, detail);
+						g_cur.loadWakeOpen = true;
+						++g_cur.loadWakeCount;
+						g_cur.loadWakeAtMs = now;
+					}
+				}
+				const bool clean = g_cur.loadCleanSinceMs != 0 &&
+					now - g_cur.loadCleanSinceMs >= kSaveLoadSettleCleanMs;
+				const bool gap = now - g_cur.loadQueuedAtMs >= kSaveLoadMinGapMs;
+				if (clean && gap && ready) {
+					const auto cleanMs = g_cur.loadCleanSinceMs != 0 ? (now - g_cur.loadCleanSinceMs) : 0;
+					CompleteStep(true,
+						std::format("{}；读档完成（排队后 {} ms，加载画面已关 {} ms，通道重新就绪：{}）",
+							g_cur.kickDetail, now - g_cur.loadQueuedAtMs, cleanMs, readyDetail),
+						{});
+					return true;
+				}
+				if (now >= g_cur.deadlineMs) {
+					if (g_cur.loadWakeOpen) {
+						std::string detail;
+						SetMenuOpen(false, detail);  // 别把唤醒用的菜单留在开着（收尾更干净）
+					}
+					timeoutFail("读档没有完成",
+						std::format("此刻打开的菜单：{}；通道：{}；加载画面{}观察到", OpenMenusSummary(),
+							readyDetail, g_cur.loadSeenLoading ? "已" : "未"));
+					return true;
+				}
+				return false;
+			}
+
 			case Kind::kWait:
 				if (now - g_cur.startedAtMs >= step.timeoutMs) {
 					CompleteStep(true, std::format("等了 {} ms", step.timeoutMs), {});
@@ -1461,10 +1612,10 @@ namespace SAQ::Test
 		// ★ 第 56 轮：带上**驱动器版本串** —— 与 SWF 的 `stamp=` 同一个道理：日志里有没有
 		//   这一串，是「跑的是不是修好窗口 bug 的那版驱动器」的唯一判据（旧版会把
 		//   断言窗口起点清 0 ⇒ 假 PASS/假 FAIL）。
-		REX::INFO("harness：已启用（{} 个用例；驱动器 v60：候选可得性探针（guide.probe）"
-				  " / r45 尾段改「不许早降级 + 引导仍指向精确候选」"
-				  "（沿用：~0x 参数写回 / 清场延迟复查 / 日志窗口按步保留 / 传送 20 秒窗口 /"
-				  " 落地静默期每 Tick 推进 / 加载画面证据 / 卡死自动中止））"
+		REX::INFO("harness：已启用（{} 个用例；驱动器 v61：自动读档（save.list / save.load ——"
+				  " BGSSaveLoadManager 排队读档 + 加载静默期 + 通道重新就绪）"
+				  "（沿用：guide.probe / ~0x 参数写回 / 清场延迟复查 / 日志窗口按步保留 /"
+				  " 传送 20 秒窗口 / 落地静默期每 Tick 推进 / 加载画面证据 / 卡死自动中止））"
 				  " —— 等脚本通道就绪后自动开跑",
 			g_cases.size());
 	}

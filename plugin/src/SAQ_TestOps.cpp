@@ -11,6 +11,8 @@
 #include "SAQ_Guide.h"  // FindGlob（按已认领的前缀取 GLOB）
 #include "SAQ_UI.h"     // UI::InvokeUiTestDrive
 
+#include "RE/B/BGSSaveLoad.h"  // ★★ 第 62 轮：自动读档（BGSSaveLoadManager —— 排队读档是内联写）
+#include "RE/IDs.h"            // ★★ 第 62 轮：BGSSaveLoadManager::Singleton 的地址库 ID
 #include "RE/T/TESGlobal.h"
 #include "RE/U/UI.h"
 #include "RE/U/UIMessageQueue.h"
@@ -22,7 +24,9 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cctype>
 #include <cmath>
+#include <cstring>
 #include <deque>
 #include <format>
 #include <mutex>
@@ -478,6 +482,225 @@ namespace SAQ::Test
 		}
 		a_detail = detail;
 		return true;
+	}
+
+	// ==================================================================
+	//  ★★ 第 62 轮（大项 I）：自动读档（BGSSaveLoadManager）
+	// ==================================================================
+	//  路线（零新 RE 的完整推导，先读这里再看代码）：
+	//
+	//  ① 单例：commonlibsf 的 `ID::BGSSaveLoadManager::Singleton = 883588` 是**非 0**（可用）；
+	//     而 `QueueBuildSaveGameList` / `DeleteSaveFile` / `BGSSaveLoadGame::LoadGame` 那几个
+	//     都是 0（不可用）⇒ **不能**走它们的函数指针。
+	//  ② 排队读档：`BGSSaveLoadManager::QueueLoadGame(entry)` 在 commonlibsf 里是**内联**的：
+	//         queuedEntryToLoad = entry;  queuedTasks.set(QueuedTask::kLoadGame);
+	//     游戏自己的「读取存档」菜单排的就是这两行（同一个写侧）—— 我们不复制逻辑，
+	//     直接调这个内联函数。
+	//  ③ 拿 entry：`saveGameList`（BSTArray<BGSSaveLoadFileEntry*>，偏移 0x018）里按
+	//     `fileName`（entry 偏移 0x00）找。前提 `saveGameListBuilt`（0x030）为真 ——
+	//     进过一次主菜单/「读取存档」界面就会被引擎构建。没构建时：把
+	//     `kBuildSaveGameList`（0x1000）位写进 `queuedTasks`（偏移 0x050）—— 这是
+	//     `QueueBuildSaveGameList` 的写侧等价（它的 ID=0，只能这样触发）；它的事务回调
+	//     我们用不上 —— 驱动器轮询 `saveGameListBuilt` 变真就行。
+	//
+	//  ★ 安全性（项目通则：commonlibsf 偏移不可信）：
+	//    · 结构体偏移来自 BGSSaveLoad.h 的 static_assert（saveGameList=0x018 / built=0x030 /
+	//      count=0x034 / queuedTasks=0x050 / queuedEntryToLoad=0x058），但仍**先自校验**：
+	//      built 只接受 0/1、count/list.size() 在 [0, 10000]、entry 名字必须全可打印 ASCII；
+	//    · 所有指针解引用都走 SafeReadAt / SafeCopySaveName（__try 保护）——
+	//      坏指针只付一次结构化异常；
+	//    · 带 __try 的函数里不能有需要栈展开的对象（MSVC C2712）⇒ 探针函数统统只收裸指针、
+	//      返回 POD（字符串拼装全在外面做）。
+	//    · 写内存（queuedTasks / queuedEntryToLoad）前必须**已通过 shape 校验**；
+	//      写完之后**读回校验**一次（对不上 ⇒ 报「偏移可能不对」并判失败，不静默）。
+	// ==================================================================
+
+	static_assert(RE::ID::BGSSaveLoadManager::Singleton.id() != 0,
+		"自动读档依赖 BGSSaveLoadManager::Singleton（ID 883588）—— 为 0 时这套原语不可用");
+
+	namespace
+	{
+		// 读一个 POD（SEH 保护）。注意：只放进「无栈展开对象」的小函数里（见上方 C2712 说明）。
+		template <class T>
+		bool SafeReadAt(const void* a_src, T& a_out)
+		{
+			__try {
+				a_out = *static_cast<const T*>(a_src);
+				return true;
+			} __except (EXCEPTION_EXECUTE_HANDLER) {
+				return false;
+			}
+		}
+
+		// 把 C 字符串拷进定长缓冲（POD-only）。要求**非空且全可打印 ASCII** —— 存档名本来
+		// 就是这样；读出一堆控制字符说明指针/偏移不对，返回 false。
+		bool SafeCopySaveName(const char* a_src, char* a_out, std::size_t a_outSize)
+		{
+			a_out[0] = '\0';
+			if (a_src == nullptr || a_outSize < 2) {
+				return false;
+			}
+			__try {
+				std::size_t i = 0;
+				for (; i + 1 < a_outSize && a_src[i] != '\0'; ++i) {
+					const unsigned char ch = static_cast<unsigned char>(a_src[i]);
+					if (ch < 0x20 || ch > 0x7E) {
+						a_out[0] = '\0';
+						return false;  // 不可打印 ⇒ 形状不对
+					}
+					a_out[i] = static_cast<char>(ch);
+				}
+				if (i == 0 || i + 1 >= a_outSize) {
+					a_out[0] = '\0';
+					return false;
+				}
+				a_out[i] = '\0';
+				return true;
+			} __except (EXCEPTION_EXECUTE_HANDLER) {
+				a_out[0] = '\0';
+				return false;
+			}
+		}
+
+		// 大小写不敏感的「a_haystack 含 a_needle」。
+		bool ContainsNoCase(std::string_view a_haystack, std::string_view a_needle)
+		{
+			if (a_needle.empty() || a_needle.size() > a_haystack.size()) {
+				return false;
+			}
+			auto lower = [](char c) {
+				return static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+			};
+			for (std::size_t i = 0; i + a_needle.size() <= a_haystack.size(); ++i) {
+				std::size_t j = 0;
+				for (; j < a_needle.size(); ++j) {
+					if (lower(a_haystack[i + j]) != lower(a_needle[j])) {
+						break;
+					}
+				}
+				if (j == a_needle.size()) {
+					return true;
+				}
+			}
+			return false;
+		}
+	}
+
+	std::string SaveGameListSummary()
+	{
+		auto* mgr = RE::BGSSaveLoadManager::GetSingleton();
+		if (mgr == nullptr) {
+			return "BGSSaveLoadManager 单例取不到（地址库 ID 883588 没解析出来？）";
+		}
+		bool          built = false;
+		std::uint32_t count = 0;
+		if (!SafeReadAt(&mgr->saveGameListBuilt, built) || !SafeReadAt(&mgr->saveGameCount, count)) {
+			return "读 saveGameListBuilt/saveGameCount 触发异常 —— 单例或偏移不对（拒绝使用）";
+		}
+		std::string out = std::format("单例=OK built={} count={}", built ? 1 : 0, count);
+		if (!built) {
+			out += "（列表未构建 —— 进过一次「读取存档」界面就会构建；save.load 会先请求构建）";
+			return out;
+		}
+		const auto n = mgr->saveGameList.size();
+		out += std::format(" listSize={}", n);
+		if (n == 0) {
+			out += "（列表是空的？）";
+			return out;
+		}
+		if (n > 10000) {
+			out += " —— listSize 不合理（偏移可能不对，拒绝继续读）";
+			return out;
+		}
+		const auto* base = mgr->saveGameList.data();
+		if (base == nullptr) {
+			out += " —— 列表数据指针为空（偏移可能不对）";
+			return out;
+		}
+		const std::uint32_t shown = std::min<std::uint32_t>(n, 8);
+		std::uint32_t       readable = 0;
+		for (std::uint32_t i = 0; i < shown; ++i) {
+			RE::BGSSaveLoadFileEntry* e = nullptr;
+			char                      name[192]{};
+			if (!SafeReadAt(base + i, e) || e == nullptr) {
+				out += std::format("｜[{}]=空", i);
+				continue;
+			}
+			if (!SafeCopySaveName(e->fileName, name, sizeof(name))) {
+				out += std::format("｜[{}]=(名字不可读 —— 偏移可能不对)", i);
+				continue;
+			}
+			out += std::format("｜[{}]{}", i, name);
+			++readable;
+		}
+		out += std::format("（前 {} 个里 {} 个名字可读）", shown, readable);
+		return out;
+	}
+
+	bool QueueLoadSaveByName(const std::string& a_nameSubstring, std::string& a_detail)
+	{
+		if (a_nameSubstring.empty()) {
+			a_detail = "存档名子串为空";
+			return false;
+		}
+		auto* mgr = RE::BGSSaveLoadManager::GetSingleton();
+		if (mgr == nullptr) {
+			a_detail = "BGSSaveLoadManager 单例取不到（地址库 ID 883588 没解析出来？）";
+			return false;
+		}
+		bool          built = false;
+		std::uint32_t count = 0;
+		if (!SafeReadAt(&mgr->saveGameListBuilt, built) || !SafeReadAt(&mgr->saveGameCount, count) ||
+			count > 10000) {
+			a_detail = "存档列表形状不对（built/count 读数异常）—— 拒绝使用（偏移可能不对）";
+			return false;
+		}
+		if (!built) {
+			// 触发异步构建（等价于 QueueBuildSaveGameList 的写侧 —— 它的事务回调我们用不上）。
+			mgr->queuedTasks.set(RE::BGSSaveLoadManager::QueuedTask::kBuildSaveGameList);
+			a_detail = "存档列表未构建 —— 已请求构建（驱动器下一拍再试）";
+			return false;
+		}
+		const auto n = mgr->saveGameList.size();
+		const auto* base = mgr->saveGameList.data();
+		if (base == nullptr || n == 0 || n > 10000) {
+			a_detail = std::format("存档列表形状不对（size={}）—— 拒绝使用", n);
+			return false;
+		}
+		RE::BGSSaveLoadFileEntry* hit = nullptr;
+		std::uint32_t             hitIndex = 0;
+		char                      hitName[192]{};
+		std::string               listed;
+		for (std::uint32_t i = 0; i < n; ++i) {
+			RE::BGSSaveLoadFileEntry* e = nullptr;
+			char                      name[192]{};
+			if (!SafeReadAt(base + i, e) || e == nullptr ||
+				!SafeCopySaveName(e->fileName, name, sizeof(name))) {
+				continue;
+			}
+			if (i < 8) {
+				listed += std::format("{}「{}」", listed.empty() ? "" : "｜", name);
+			}
+			if (hit == nullptr && ContainsNoCase(name, a_nameSubstring)) {
+				hit = e;
+				hitIndex = i;
+				std::memcpy(hitName, name, sizeof(hitName));
+			}
+		}
+		if (hit == nullptr) {
+			a_detail = std::format("没找到名字含「{}」的存档（共 {} 个；前几个：{}）",
+				a_nameSubstring, n, listed.empty() ? std::string{ "（都不可读）" } : listed);
+			return false;
+		}
+		// ★ 排队读档 —— 与游戏「读取存档」菜单同一个写侧（commonlibsf 的内联 QueueLoadGame）。
+		mgr->QueueLoadGame(hit);
+		// 写回校验：队列字段确实指向我们挑的 entry 吗（偏移不对时不静默）。
+		RE::BGSSaveLoadFileEntry* check = nullptr;
+		const bool queuedOk = SafeReadAt(&mgr->queuedEntryToLoad, check) && check == hit;
+		a_detail = std::format("已排队读档：{}（列表第 {} 个 / 共 {}）{}", hitName, hitIndex, n,
+			queuedOk ? "｜队列字段写回校验通过"
+					 : "｜⚠ 队列字段写回校验失败（偏移可能不对，读档可能不会发生）");
+		return queuedOk;
 	}
 
 	// ==================================================================

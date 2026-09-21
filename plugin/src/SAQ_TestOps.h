@@ -128,6 +128,28 @@ namespace SAQ::Test
 	bool ClearGuide(std::string& a_detail);
 
 	// ------------------------------------------------------------------
+	// ★★ 第 62 轮（大项 I）：**自动读档**（BGSSaveLoadManager）
+	//
+	//  为什么需要：候选降级观察期（第 49 轮补丁②）那半段「目标 cell 未加载 ⇒ 候选取不到
+	//  ⇒ 先保持 20 秒 ⇒ 降级」**只能靠读档 / 加载窗口**触发（第 60/61 轮的实测结论），
+	//  一直挂在「等自动读档落地后补用例」。
+	//
+	//  实现路线（为什么零新 RE —— 见 SAQ_TestOps.cpp 里的完整说明）：
+	//    · 单例 ID 可用：`ID::BGSSaveLoadManager::Singleton{ 883588 }`；
+	//    · `QueueLoadGame(entry)` 在 commonlibsf 里是**内联实现**（只写 `queuedEntryToLoad`
+	//      与 `queuedTasks` 的 `kLoadGame` 位）—— 游戏自己的「读取存档」菜单排的就是这一队；
+	//    · entry 从 `saveGameList` 里按**文件名子串**（大小写不敏感）找；列表没构建时
+	//      把 `kBuildSaveGameList` 位写进 `queuedTasks`（内联版 QueueBuildSaveGameList 的
+	//      写侧 —— 那个函数的 ID 是 0 不可用），回调用不上（驱动侧轮询 `saveGameListBuilt`）。
+	//
+	//  ★ 成员偏移全部来自 commonlibsf 的 static_assert，但按项目通则（commonlibsf 偏移
+	//    不可信）**先自校验后使用**：shape 不对（built 非 0/1、count 越界、名字不可读）
+	//    ⇒ 拒绝写内存并把「偏移可能不对」写进详情。
+	// ------------------------------------------------------------------
+	std::string SaveGameListSummary();   // 一行诊断：单例 / built / count / 前几个存档名（save.list）
+	bool QueueLoadSaveByName(const std::string& a_nameSubstring, std::string& a_detail);
+
+	// ------------------------------------------------------------------
 	//  UI 测试驱动（调 AS3 的 SAQ_TestDrive*，见 MissionMenu.as）
 	//
 	//  ★ 这些入口在 AS3 侧**调用真实的处理函数**（选中 / 按键 / 展开），不复制逻辑 ——

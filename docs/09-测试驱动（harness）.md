@@ -890,3 +890,61 @@ DLL **934400 B**（开发构建；工作区与 MO2 部署字节一致）、用�
 用例集（`smoke` + r26/r44/r45/r47/r48）第 54 轮落地、第 55~60 轮七轮修复，
 第 61 轮 6/6 全绿 ⇒ **可以把它当作「回归闸门」使用**（以后每次改产品都跑一遍，
 判据 = 日志里的 `驱动器 v60` 串 + 6 条全 PASS）。
+
+## 十五、第 62 轮（大项 I）：自动读档 —— `save.list` / `save.load`
+
+### 1. 为什么（唯一覆盖缺口）
+
+候选降级观察期（第 49 轮补丁②）那半段「目标 cell 未加载 ⇒ 候选取不到 ⇒ 先保持 20 秒
+⇒ 降级」只能靠**读档 / 加载窗口**触发 —— 第 60/61 轮实测（走远后引导别名一直持有目标）
+把它记为 harness 的唯一覆盖缺口。这一轮把「读档」变成可编程步骤。
+
+### 2. 路线（零新 RE —— 每一环都是内联/已实测接口）
+
+| 环 | 做法 | 为什么可行 |
+| --- | --- | --- |
+| 单例 | `ID::BGSSaveLoadManager::Singleton{ 883588 }` | **非 0 可用**（同仓库 `QueueBuildSaveGameList` / `DeleteSaveFile` / `BGSSaveLoadGame::LoadGame` 都是 0 = 不可用） |
+| 排队读档 | `BGSSaveLoadManager::QueueLoadGame(entry)` | commonlibsf 里是**内联实现**：只写 `queuedEntryToLoad`（0x058）+ `queuedTasks`（0x050）的 `kLoadGame`(0x40) 位 —— 与游戏「读取存档」菜单同一写侧 |
+| entry | `saveGameList`（`BSTArray<BGSSaveLoadFileEntry*>`，0x018）按 `fileName`（entry 0x00）子串找 | 列表构建过一次（进过读档界面）就一直在 |
+| 列表没构建 | 把 `kBuildSaveGameList`(0x1000) 位写进 `queuedTasks` | = ID=0 的 `QueueBuildSaveGameList` 的写侧等价；事务回调不需要（驱动器轮询 built） |
+
+### 3. 安全性（项目通则：commonlibsf 偏移不可信）
+
+* 偏移来自 `BGSSaveLoad.h` 的 `static_assert`，但**先自校验后使用**：
+  `SafeReadAt` / `SafeCopySaveName`（`__try` + POD-only 小函数 —— 带 `__try` 的函数里
+  不能有需栈展开的对象，MSVC C2712）；
+* shape 校验：built 只接受 0/1、count / listSize ≤ 10000、entry 名字必须**全可打印 ASCII**；
+* 写内存（`queuedTasks` / `queuedEntryToLoad`）前必须通过 shape 校验；写完**读回校验**
+  `queuedEntryToLoad == hit`，对不上就报「偏移可能不对（读档可能不会发生）」而**不是静默**。
+
+### 4. 驱动器语义（v61）
+
+* `save.list` → 一行诊断（单例 / built / count / 前 8 个名字 + 可读数）；
+* `save.load <子串>`：
+  1. 起点：菜单开着先关（读档要在游戏在跑时排队）；`Abandon` 掉在飞的命令（读档会重置世界）；
+  2. 排队：`QueueLoadSaveByName` 失败时区分「**列表未构建**」（可等待，引擎在异步构建）
+     与其它失败（找不到存档 / 形状不对 ⇒ 立即 FAIL，不白等 120 秒）；
+  3. 等待：加载画面（LoadingMenu/FaderMenu）消失 + 连续静默 2 秒 + 距排队 ≥5 秒 +
+     **通道重新就绪**（读档后 GLOB 回到存档值 ⇒ 脚本重新握手）；
+  4. 唤醒兜底：通道迟迟不就绪 ⇒ **开一次任务菜单再关掉**（第 26 轮的重挂机制：
+     脚本在 OnMenuOpenCloseEvent 里重挂轮询定时器）—— 游戏内读档会重建 Papyrus VM，
+     `OnInit` 不跑、定时器可能没恢复；最多 4 次，每次间隔 3 秒；
+  5. 超时（默认 120 秒）时把「此刻打开的菜单 / 通道状态 / 是否见过加载画面」写进证据。
+
+### 5. 用例与判据
+
+* 用例 7 `r62_reload_observe`（★ **只用用户指定存档**
+  `Save7_3AB5A2FAM4848485A5A5A_000554_20260920135803_9_0_4.sfs` —— 2026-09-20 21:58 保存，
+  第 49 轮补丁②观察期现场；用例里写子串 `Save7_3AB5A2FA`）；
+* PASS 线：`save.list` 形状自校验通过 + `save.load` 走到「读档完成（排队后 … ms，
+  加载画面已关 … ms，通道重新就绪）」+ 读档后 `save.list` / `guide.probe` 仍出结果；
+* 观察期尾段（候选取不到 ⇒ 先保持 ⇒ 降级）的判据等**首次实测看到现场**后再收紧
+  （存档里玩家位置 / 引导状态决定候选可得性）。
+
+### 6. 待实测判据（重进游戏一次）
+
+1. 日志串 `驱动器 v61：自动读档（save.list / save.load`（没有 = 旧驱动器）；
+2. `python tools\test\check_results.py` ⇒ 期望 **7 条全 PASS**；
+3. 新用例看点：`save.list` 的 `单例=OK built=1 count=…`；`save.load` 的完成文案；
+   若出现「唤醒脚本（第 N 次）」= 定时器确实没恢复（预期内兜底，不是缺陷）；
+   读档后两条 `guide.probe` 正常出结果。
