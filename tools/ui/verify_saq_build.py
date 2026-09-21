@@ -1127,6 +1127,8 @@ def main() -> int:
                             "r75_faction_entry",
                             # ★★ 第 77 轮：龙神线后续（「RIR 留专项」收口）—— A/B 两条
                             "r77_chain_ryujin", "r77_chain_ryujin_pass",
+                            # ★★ 第 78 轮：DLC 的 INFO 门槛（地球舰队的后续被藏）
+                            "r78_dlc_info_gate",
                             "r62_reload_observe"):
                     all_ok &= check(f"用例计划 · [case:{cid}]", plan_text.encode(),
                                     f"[case:{cid}]".encode())
@@ -1337,6 +1339,15 @@ def main() -> int:
                 all_ok &= check("用例计划 · r77 前置推进后放行（assert.nolog）",
                                 plan_text.encode(),
                                 "assert.nolog 链式没到:.*人生处处有意外".encode())
+                # ★★ 第 78 轮（DLC 的 INFO 门槛）：断言 = 统计行（scope=case，周期行红利）
+                #   + 两条地球舰队后续在「INFO没到」名单里。
+                #   ★ 不写 FormID：DLC 的运行期 FormID 依赖加载顺序（高字节会变）。
+                all_ok &= check("用例计划 · r78 DLC INFO 门槛统计（scope=case）",
+                                plan_text.encode(),
+                                "assert.log INFO门槛=\\d+\\(过\\d+/藏\\d+/放行\\d+/未知\\d+ scope=case".encode())
+                all_ok &= check("用例计划 · r78 DLC 后续被藏（失踪的华庭号）",
+                                plan_text.encode(),
+                                "assert.log INFO没到: .*失踪的华庭号 scope=case".encode())
                 #   ★ r71 用例的修正（第 75 轮）：CF01 升格为固定显示 ⇒ 它**不该**再出现在
                 #   「链式没到」名单里（否则「固定显示」没生效）；这条反向断言同时是
                 #   「两类名单必须分行」那条纪律的落点（见 DLL · FormatPinStats）。

@@ -787,6 +787,34 @@ step = wait 2500
 step = menu.close
 
 ; ----------------------------------------------------------------------------
+;  用例：第 78 轮 —— DLC 的 INFO 门槛（地球舰队的后续任务「进度没到 ⇒ 藏」）
+;
+;  起因：玩家要求「再检查一下其他任务是不是也有类似现象」。官方 DLC 不发 .psc（只有 .pex）
+;  ⇒ 基础游戏那套「Papyrus 启动边」用不了；改用 **ESM 里的 DIAL/INFO 条件**（本轮的修复，
+;  见 docs/08 十二·补二）：
+;    * `scan_info_gates.py --self-master` 逐 master 扫 4 份 → `analyze_info_gates.py` 合并；
+;    * 前置任务的 master 写进 `kInfoConds` 第 2 列（kQuestMasters 下标）⇒ DLL 侧零改动。
+;
+;  判据（本用例的 PASS 线）：
+;    ① `INFO门槛=\d+\(过\d+/藏\d+/放行\d+/未知\d+` 统计行在（周期行 ⇒ `scope=case`）；
+;    ② **失踪的华庭号**（SFTER_MQ01，地球舰队主线第一环）在 `INFO没到:` 名单里
+;       —— 它的对话条件要求「地球舰队侵袭」（SFTER_MQIntro）@75 完成；
+;       ★ 名片断言**不写 FormID**：DLC 的运行期 FormID 依赖加载顺序（高字节会变）；
+;       ★ 前提：本存档的**地球舰队线还没推进到 MQIntro@75**（新活动/未开始）。若已推进过，
+;       这条会 FAIL —— 那是存档状态变化，不是产品回归（与 r71/r77 的存档前提同一类）。
+; ----------------------------------------------------------------------------
+[case:r78_dlc_info_gate]
+desc = 第 78 轮：DLC 的 INFO 门槛 —— 地球舰队的「失踪的华庭号」在「进度没到」名单里
+step = note === 开菜单：INFO 门槛统计 + DLC 后续被藏 ===
+step = ping
+step = menu.open
+step = assert.log 推送成功 scope=prev timeout=12000
+step = assert.log INFO门槛=\d+\(过\d+/藏\d+/放行\d+/未知\d+ scope=case timeout=3000
+step = assert.log INFO没到: .*失踪的华庭号 scope=case timeout=3000
+step = assert.log INFO没到: .*隐蔽入侵 scope=case timeout=3000
+step = menu.close
+
+; ----------------------------------------------------------------------------
 ;  用例 8：第 62 轮（大项 I）—— 自动读档（**指定存档**）
 ;
 ;  目的 = 把「读档 / 加载窗口」引入 harness —— 候选降级观察期（第 49 轮补丁②）那半段
