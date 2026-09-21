@@ -109,6 +109,19 @@ namespace SAQ::Test
 	bool MenuIsOpen(const char* a_name);
 	bool SetMenuOpenByName(const char* a_name, bool a_open, std::string& a_detail);
 
+	// ------------------------------------------------------------------
+	// ★★ 第 58 轮：诊断助手 —— 「此刻还开着的菜单」一行 + 「是否有加载画面」。
+	//
+	//  为什么需要（10:31 会话的实测现象）：harness 传送玩家的 `MoveTo` 触发了一次加载，
+	//  而那次加载**永远没结束**（Papyrus 日志停在 10:34:37、界面停在「加载转圈 + HUD
+	//  蓝点」、之后所有命令无回执）。事后复查时，唯一能区分「游戏卡在加载画面」与
+	//  「脚本 VM 僵死」的证据就是 LoadingMenu / FaderMenu 此刻是否开着 —— 而当时的
+	//  超时文案只有一句静态猜测（「确认此刻菜单是关的」），什么也证明不了。
+	//  ⇒ 超时/落地等待时把这一行写进日志与证据。
+	// ------------------------------------------------------------------
+	std::string OpenMenusSummary();     // 例："LoadingMenu, FaderMenu" / "无"
+	bool        AnyLoadingMenuOpen();   // LoadingMenu / FaderMenu 任一开着
+
 	// 取消引导（用例 teardown 用）。走的是**产品路径**：DLL 把引导目标写成 0、状态清 0，
 	// 与「玩家自己取消引导 / 接取后自动取消」完全同一个调用（Guide::SetGuideTarget(0)）。
 	// 注意：真正生效仍要等脚本的轮询节拍（菜单关着时），所以放在最后一步就行。

@@ -43,6 +43,27 @@ namespace SAQ::Test
 		//   两条用例判成 FAIL（还让「teleport 之后玩家在哪」这条用例前提变成假象）。
 		//   ⇒ 传送单独给 20 秒（冷加载余量），其余命令保持 3 秒（脚本没跑时要快速失败）。
 		constexpr std::uint64_t kTeleportAckTimeoutMs = 20000;
+		// ★★ 第 58 轮（10:31 会话实测「MoveTo 永不返回」）：传送**成功（收到回执）之后**
+		//   也不能立刻做下一步 —— 回执是「cell 加载完成」时写的，但加载画面
+		//   （LoadingMenu/FaderMenu）与随后的淡入淡出还会持续一会儿。
+		//
+		//   实测形态（10:31 会话）：第 3 次传送的回执 10:34:35 到，**38 ms 后**又提交了一条
+		//   MoveTo（脚本约 2 秒后执行它）⇒ 第二次加载**永远没结束**：
+		//     · Papyrus 日志停在 10:34:37（VM 卡在 MoveTo 里，`测试命令` 再没出现过）；
+		//     · 界面停在「右下角加载转圈 + HUD 任务蓝点」（玩家截图为证）；
+		//     · 之后 3 条用例的命令全部无回执（r45 FAIL + r48/r44 陪跑）。
+		//   为什么以前没遇到过：这是「走远」那一步**第一次**真正跑到（第 56/57 轮都更早
+		//   就失败退出了），而历史上成功的传送间隔都是 5~10 秒。
+		//   ⇒ 传送后加一道「落地静默期」：
+		//     ① 加载画面（LoadingMenu/FaderMenu）必须**先消失**，再连续静默 1.5 秒；
+		//     ② 距回执至少 3.5 秒。
+		constexpr std::uint64_t kTeleportSettleCleanMs = 1500;
+		constexpr std::uint64_t kTeleportMinGapMs = 3500;
+		// 落地静默期的上限：超了说明加载画面一直没结束 ⇒ 判这一步 FAIL 并标记「游戏端
+		// 卡死」（剩余用例转 SKIP，见 MarkStuck —— 免得后面每条用例都白等一次超时）。
+		constexpr std::uint64_t kTeleportSettleMaxMs = 25000;
+		// 连续多少次「命令无回执」就判定游戏端卡死（若此刻有加载画面，1 次就够）。
+		constexpr int kStuckAbortTimeouts = 2;
 		constexpr std::uint64_t kReadyCheckIntervalMs = 500;
 		constexpr std::size_t   kEvidenceMaxLines = 60;
 
@@ -171,8 +192,18 @@ namespace SAQ::Test
 			std::size_t   logMark{};
 			bool          kicked{};
 			std::string   kickDetail;
+			// ★★ 第 58 轮：传送步骤的「落地静默期」状态（见 kTeleportSettleCleanMs）。
+			std::uint64_t settleAckAtMs{};       // 收到回执的时刻（静默期从它起算）
+			std::uint64_t settleCleanSinceMs{};  // 「没见过加载画面」这段连续时间的起点
+			bool          settleNoted{};         // 已记过一行「传送落地中」
 		};
 		StepState g_cur;
+
+		// ★★ 第 58 轮：游戏端卡死（脚本 VM 无响应 / 卡在加载画面）的检测与中止 ——
+		//   见 MarkStuck 的说明。只在 harness 会话内有效。
+		int         g_consecutiveTimeouts{};
+		bool        g_stuckAbort{};
+		std::string g_stuckReason;
 
 		// ----------------------------------------------------------------
 		//  小工具
@@ -811,6 +842,45 @@ namespace SAQ::Test
 			}
 		}
 
+		// ★★ 第 58 轮：判定「游戏端卡死」并中止剩余用例。
+		//
+		//  为什么需要（10:31 会话的实测）：一条 `teleport.entry` 把游戏卡在加载画面后，
+		//  r48/r44 两条用例各自白等一次超时 —— 它们只是同一次卡死的陪葬，却在报告里
+		//  显示成两个独立失败。现在：一旦确认（此刻有加载画面，或连续多次命令无回执），
+		//  就把剩余用例标成 SKIP 并写明原因，报告一眼可读。
+		//
+		//  ★ 顺手做一次**安全冲刷**：把通道里最新一条命令换成无害的 Ping。脚本只执行
+		//    「最新序号」那条命令（见 SAQ_Main.psc 的 ProcessTestCommand）—— 如果游戏
+		//    之后自己恢复了，它执行的会是这条 Ping，而不是「卡住时排队的那条传送」
+		//    （否则玩家会莫名其妙被传走）。
+		void MarkStuck(const std::string& a_why)
+		{
+			if (g_stuckAbort) {
+				return;
+			}
+			g_stuckAbort = true;
+			g_stuckReason = a_why;
+			std::string detail;
+			if (Submit(Op::kPing, 0, 0, detail)) {
+				Abandon("游戏端卡死冲刷（用 Ping 顶掉通道里未执行的命令）");
+			}
+			REX::WARN("harness：游戏端疑似卡死 —— {}；剩余用例将全部 SKIP（证据见结果 JSON）", a_why);
+		}
+
+		// ★★ 第 58 轮：卡死中止时，把没跑到的用例补成 SKIP（报告里不缺项、原因统一）。
+		void FillRemainingSkipped()
+		{
+			while (g_results.size() < g_cases.size()) {
+				const auto idx = g_results.size();
+				CaseResult r;
+				r.id = g_cases[idx].id;
+				r.desc = g_cases[idx].desc;
+				r.status = "SKIP";
+				r.reason = "游戏端疑似卡死（未执行）：" + g_stuckReason;
+				g_results.push_back(std::move(r));
+			}
+		}
+
 		void FinishCase(bool a_ok, const std::string& a_reason)
 		{
 			if (g_caseIdx >= g_results.size()) {
@@ -1145,9 +1215,54 @@ namespace SAQ::Test
 				std::string detail;
 				const int rc = Poll(code, detail);
 				if (rc == 1) {
+					g_consecutiveTimeouts = 0;  // ★ 第 58 轮：通道活着（回执到了）
 					const bool pass = (code == 0);
-					CompleteStep(pass, detail + (pass ? "" : std::format("；命令={} {}", step.raw, ResultText(code))),
-						pass ? std::string{} : LogSince(g_cur.logMark, kEvidenceMaxLines));
+					if (!pass) {
+						CompleteStep(false, detail + std::format("；命令={} {}", step.raw, ResultText(code)),
+							LogSince(g_cur.logMark, kEvidenceMaxLines));
+						return true;
+					}
+					// ★★ 第 58 轮：传送的「落地静默期」（见 kTeleportSettleCleanMs 的说明）。
+					//   回执 = cell 加载完成，但加载画面/黑幕可能还在 —— 这一步要等
+					//   「加载菜单消失 + 连续静默 1.5 秒 + 距回执 ≥3.5 秒」才算真正做完。
+					if (step.op == Op::kTeleport) {
+						if (g_cur.settleAckAtMs == 0) {
+							g_cur.settleAckAtMs = now;
+						}
+						if (AnyLoadingMenuOpen()) {
+							g_cur.settleCleanSinceMs = 0;
+							if (!g_cur.settleNoted) {
+								g_cur.settleNoted = true;
+								// 注意措辞：这里不能用「还开着：」这个串 —— 第 48 轮的反向
+								// 检查把「星图：等待中（…还开着：无）」列为必须消失的旧文案。
+								REX::INFO("harness：  传送落地中（回执已到，但加载画面还没关：{}）"
+										  "—— 等它关掉再推进下一步（第 58 轮：紧接着再传送会卡死）",
+									OpenMenusSummary());
+							}
+						} else if (g_cur.settleCleanSinceMs == 0) {
+							g_cur.settleCleanSinceMs = now;
+						}
+						const bool cleanLongEnough = g_cur.settleCleanSinceMs != 0 &&
+							now - g_cur.settleCleanSinceMs >= kTeleportSettleCleanMs;
+						const bool gapLongEnough = now - g_cur.settleAckAtMs >= kTeleportMinGapMs;
+						if (cleanLongEnough && gapLongEnough) {
+							CompleteStep(true, detail, {});
+							return true;
+						}
+						if (now - g_cur.settleAckAtMs >= kTeleportSettleMaxMs) {
+							const auto menus = OpenMenusSummary();
+							MarkStuck(std::format("传送已回执，但加载画面一直没有结束（{} ms；"
+												  "此刻打开的菜单：{}）",
+								now - g_cur.settleAckAtMs, menus));
+							CompleteStep(false, std::format("传送已回执，但加载画面一直没有结束（疑似卡在加载画面；"
+															"此刻打开的菜单：{}）",
+														 menus),
+								LogSince(g_cur.logMark, kEvidenceMaxLines));
+							return true;
+						}
+						return false;  // 落地静默期未满：不推进（也不消耗 deadline）
+					}
+					CompleteStep(true, detail, {});
 					return true;
 				}
 				if (rc < 0) {
@@ -1155,9 +1270,24 @@ namespace SAQ::Test
 					return true;
 				}
 				if (now >= g_cur.deadlineMs) {
+					// ★★ 第 58 轮：超时的时候必须把**现场**写下来 —— 「此刻打开的菜单」是
+					//   区分「游戏卡在加载画面（LoadingMenu/FaderMenu）」与「脚本 VM 僵死」
+					//   的唯一证据（10:31 会话就是靠事后重建这条才定性的）。
+					const auto menus = OpenMenusSummary();
+					const bool loading = AnyLoadingMenuOpen();
 					Abandon("命令回执超时");
-					timeoutFail("命令没有回执", std::format("{}（脚本定时器在菜单开着时冻结；确认此刻菜单是关的）",
-														g_cur.kickDetail));
+					++g_consecutiveTimeouts;
+					if (loading || g_consecutiveTimeouts >= kStuckAbortTimeouts) {
+						MarkStuck(std::format("命令无回执（seq={} {}；超时 {} ms；步骤 {}）+ 此刻打开的菜单：{}"
+											  "{}",
+							LastSeq(), g_cur.kickDetail, step.timeoutMs, step.raw, menus,
+							loading ? "（含加载画面）"
+									: std::format("（连续 {} 次无回执）", g_consecutiveTimeouts)));
+					}
+					timeoutFail("命令没有回执", std::format("{}；此刻打开的菜单：{}"
+													 "（脚本定时器在菜单开着时冻结；列表里出现 LoadingMenu/FaderMenu"
+													 " = 游戏卡在加载画面上）",
+													 g_cur.kickDetail, menus));
 					return true;
 				}
 				return false;
@@ -1235,8 +1365,9 @@ namespace SAQ::Test
 		// ★ 第 56 轮：带上**驱动器版本串** —— 与 SWF 的 `stamp=` 同一个道理：日志里有没有
 		//   这一串，是「跑的是不是修好窗口 bug 的那版驱动器」的唯一判据（旧版会把
 		//   断言窗口起点清 0 ⇒ 假 PASS/假 FAIL）。
-		REX::INFO("harness：已启用（{} 个用例；驱动器 v57：~0x 参数写回 / 清场延迟复查 / "
-				  "日志窗口按步保留 / 传送 20 秒窗口） —— 等脚本通道就绪后自动开跑",
+		REX::INFO("harness：已启用（{} 个用例；驱动器 v58：传送落地静默期 / 加载画面证据 / 卡死自动中止"
+				  "（沿用 v57 的 ~0x 参数写回 / 清场延迟复查 / 日志窗口按步保留 / 传送 20 秒窗口））"
+				  " —— 等脚本通道就绪后自动开跑",
 			g_cases.size());
 	}
 
@@ -1297,6 +1428,14 @@ namespace SAQ::Test
 		};
 
 		if (!g_active) {
+			// ★★ 第 58 轮：游戏端卡死 ⇒ 剩余用例全部 SKIP 并收尾（见 MarkStuck）。
+			//   放在「开下一条用例」之前：卡死时后面的用例只会各自白等一次超时
+			//   （10:31 会话：r45 的传送卡死后，r48/r44 都陪跑）。
+			if (g_stuckAbort) {
+				FillRemainingSkipped();
+				finishAll();
+				return;
+			}
 			// ① 等脚本把通道置成「就绪」（SAQ_TestHarness 由 1 → 2），见 SAQ_TestOps.h 的协议说明
 			if (!g_harnessReady) {
 				const auto now = NowMs();

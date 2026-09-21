@@ -419,6 +419,43 @@ namespace SAQ::Test
 		return true;
 	}
 
+	// ★★ 第 58 轮：诊断助手（见头文件说明）。只查「有把握的注册名」—— IsMenuOpen 是
+	//   引擎自己的函数（按注册名查哈希表），零结构体偏移风险；这与 SAQ.cpp 的
+	//   OpenMenusSummary 同一思路（那里用于星图等待诊断）。
+	std::string OpenMenusSummary()
+	{
+		static const RE::BSFixedString kNames[] = {
+			"BSMissionMenu", "PauseMenu", "GalaxyStarMapMenu", "LoadingMenu", "FaderMenu", "MainMenu"
+		};
+		auto* ui = RE::UI::GetSingleton();
+		if (!ui) {
+			return "UI 单例不可用";
+		}
+		std::string out;
+		for (const auto& name : kNames) {
+			if (ui->IsMenuOpen(name)) {
+				if (!out.empty()) {
+					out += ", ";
+				}
+				out += name.c_str();
+			}
+		}
+		return out.empty() ? std::string{ "无" } : out;
+	}
+
+	bool AnyLoadingMenuOpen()
+	{
+		auto* ui = RE::UI::GetSingleton();
+		if (!ui) {
+			return false;
+		}
+		// LoadingMenu = 加载画面本体；FaderMenu = 淡出淡入的黑幕（与加载同生共死，
+		// 有时加载画面已关但黑幕还在）—— 两者都算「还没落地」。
+		static const RE::BSFixedString kLoading{ "LoadingMenu" };
+		static const RE::BSFixedString kFader{ "FaderMenu" };
+		return ui->IsMenuOpen(kLoading) || ui->IsMenuOpen(kFader);
+	}
+
 	bool SetMenuOpen(bool a_open, std::string& a_detail)
 	{
 		std::string detail;
