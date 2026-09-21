@@ -1042,7 +1042,7 @@ def main() -> int:
                 plan_text = plan_src.read_text(encoding="utf-8", errors="replace")
                 for cid in ("smoke", "r26_menu_idle", "r44_starmap", "r45_candidates",
                             "r47_board_marker", "r48_info_gate", "r65_icons",
-                            "r67_chain", "r62_reload_observe"):
+                            "r67_chain", "r67_chain_pass", "r62_reload_observe"):
                     all_ok &= check(f"用例计划 · [case:{cid}]", plan_text.encode(),
                                     f"[case:{cid}]".encode())
                 # ★★ 第 65 轮（任务专属图标）：r65 用例的图标断言必须走**界面报告**

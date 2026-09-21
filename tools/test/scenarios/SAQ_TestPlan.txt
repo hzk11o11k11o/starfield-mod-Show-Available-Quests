@@ -392,36 +392,40 @@ step = menu.close
 ;    25 条任务 / 26 条启动边）；判据 = 「全部启动边都没触发 ⇒ 隐藏」
 ;    （SAQ_Decision::DecideChainGates，语义见 gen_quest_chain.py / SAQ_QuestTable.h）。
 ;
-;  判据（本用例的 PASS 线）：
-;    ① 前置（CF01 深藏不露）没做时：`链式门槛=…(过../藏../未知..)` 正常打印，
+;  用例拆成两条（`assert.nolog` 的窗口只覆盖「本条用例」—— 两条才都能可靠断言）：
+;    ① `[case:r67_chain]`（A）：前置没做 ⇒ `链式门槛=…(过../藏../未知..)` 正常打印，
 ;       且 `链式没到:` 名单里**有**「菜鸟觐见」（= 真的被藏掉了）；
-;    ② 把 CF01 推到收尾 stage 1000 后（stage done 即触发边；fragment 还会顺手
-;       `CF02.SetStage(10)`）：同一个名单里**没有**「菜鸟觐见」（边已触发 ⇒ 放行）；
-;    ③ 收尾：CF01 / CF02 都 reset 回去（用例自清场）。
+;    ② `[case:r67_chain_pass]`（B）：把 CF01 推到收尾 stage 1000（stage done 即触发边；
+;       fragment 还会顺手 `CF02.SetStage(10)`）⇒ **本条用例的窗口里**名单没有「菜鸟觐见」；
+;       收尾把 CF01 / CF02 都 reset 回去（用例自清场）。
 ;
 ;  ★ 只动 CF01 / CF02 两条任务的状态；不传送、不开星图、不读档。
 ; ----------------------------------------------------------------------------
 [case:r67_chain]
-desc = 第 67 轮：任务链门槛 —— 前置没做时后续任务（菜鸟觐见）不进列表；前置收尾后放行
+desc = 第 67 轮：任务链门槛（A）—— 前置没做时后续任务（菜鸟觐见）在「链式没到」名单里
 step = note === 准备：把深红舰队线回滚到「没开始」（CF01 深藏不露 + CF02 菜鸟觐见）===
 step = ping
 step = quest.reset 0x000192D2
 step = quest.reset 0x00009136
 step = wait 2500
-step = note === A. 前置没做 ⇒ 菜鸟觐见必须出现在「链式没到」名单里（= 被藏）===
+step = note === 前置没做 ⇒ 菜鸟觐见必须出现在「链式没到」名单里（= 被藏）===
 step = menu.open
 step = assert.log 推送成功 scope=prev timeout=12000
 step = assert.log 链式门槛=\\d+\\(过\\d+/藏\\d+/未知\\d+ scope=prev timeout=3000
-step = assert.log 链式没到: .*菜鸟觐见\\[0x000192D2 scope=prev timeout=3000
+step = assert.log 链式没到: .*菜鸟觐见\\[0x000192D2 scope=case timeout=3000
 step = menu.close
-step = note === B. 把 CF01 推到收尾 stage 1000（边 = stage done）⇒ 放行 ===
+
+[case:r67_chain_pass]
+desc = 第 67 轮：任务链门槛（B）—— 前置推进到收尾 stage 后，菜鸟觐见不再被藏
+step = note === 推进 CF01 到收尾 stage 1000（边已触发；fragment 还会顺手 CF02.SetStage(10)）===
+step = ping
 step = quest.start 0x00009136
 step = quest.stage 0x00009136 1000
 step = wait 2500
 step = menu.open
 step = assert.log 推送成功 scope=prev timeout=12000
-step = assert.nolog 链式没到:.*菜鸟觐见 scope=prev timeout=3000
-step = note === C. 收尾：两条任务 reset 回去（自清场）===
+step = assert.nolog 链式没到:.*菜鸟觐见 scope=case timeout=3000
+step = note === 收尾：两条任务 reset 回去（自清场）===
 step = menu.close
 step = quest.reset 0x00009136
 step = quest.reset 0x000192D2
