@@ -685,7 +685,9 @@ def main() -> int:
         #   ★★ 第 81 轮（地球地标任务）：stamp 59 —— **AS3 代码本身没改**，改的是
         #     内嵌回退载荷（+10 条地标任务 + 其说明文本）⇒ 重编译 SWF 让内嵌数据
         #     与 C++ 载荷重新逐条对齐（协议纪律：先改 SWF 必须留下指纹）。
-        "构建指纹 stamp=59": b"stamp=59",
+        #   ★★ 第 82 轮（同伴文案说透）：stamp 60 —— 同伴条目描述首句 + 尾部落点文案
+        #     改写（「自动开始 / 不需要找地方接取 / 引导到的是这位同伴的位置」）。
+        "构建指纹 stamp=60": b"stamp=60",
         # ★★ 第 80 轮（可重复 NPC 入口）：type 101 的界面链路 ——
         #   ① 常量与合并判据（SaqIsEntryType —— 子项/描述/不可导航提示统一用它）；
         #   ② 子项名与描述文案（中英各一段，证明不是只改了判据没接文案）；
@@ -705,10 +707,17 @@ def main() -> int:
         #      也进了 SWF 的内嵌数据（不只是 C++ 载荷）。
         "同伴标记列 bSaqCompanion": b"bSaqCompanion",
         "同伴提示函数 SaqCompanionNote": b"SaqCompanionNote",
-        "同伴提示(中)": "好感度达到一定水平后才能接取".encode(),
-        #   注：英文原文是「after reaching a certain affinity level…」——
-        #   此处只取不含词形变化的那一段（写 "reach a certain" 会永远匹配不上）。
-        "同伴提示(英)": b"a certain affinity level",
+        #   ★★ 第 82 轮（文案说透 —— 玩家反馈「好感度不够时这些引导意义何在」）：
+        #     旧句「达到一定水平后才能接取」会让人以为要跑去某个接取点 —— 实际是
+        #     里程碑自动开始（官方 StartPersonalQuest → PersonalQuest.Start）。
+        #     新句写清：① 自动开始、不需要找地方接取；② 好感度靠带同伴冒险；
+        #     ③ 「设定航线」引导到的是**这位同伴本人**的位置。
+        "同伴提示(中)": "好感度达到一定水平后自动开始".encode(),
+        "同伴提示(英)": b"starts automatically once your affinity",
+        #   ★★ 第 82 轮：尾部落点文案也必须换（首句说清了、尾部还写「接取地点」
+        #     照样误导）—— 中/英各一条（SaqDescriptionText 的第 4 参数分支）。
+        "同伴落点文案(中)": "引导到这位同伴的位置".encode(),
+        "同伴落点文案(英)": b"to the companion's location",
         "内嵌载荷同伴名前缀(中)": "巴雷特：违约".encode(),
         # ★★ 第 74 轮续（「把它们放在一起」）：列表**顺序**探针 ——
         #   SAQ_Report 新增 `order=[…]`（MissionsList.SAQ_OrderProbe：我们 tab 前几行

@@ -779,11 +779,18 @@ package
       // ★★ 第 74 轮（同伴好感度任务）：这类任务**固定显示**（好感度没到也留在列表里），
       //   所以描述里不能再写「这条任务当前可以接取」（自相矛盾：好感度不够时玩家接不到）。
       //   首句换成「需要一定好感度才能接取」；判据 = C++ 载荷第 8 列（bSaqCompanion）。
+      // ★★ 第 82 轮（文案说透 —— 玩家反馈「在好感度不够的情况下，这些引导意义何在」）：
+      //   旧句「达到一定水平后才能接取」会让人以为要跑到某处「接取」——官方机制里
+      //   根本没有这个环节：好感度里程碑一到，宿主脚本 `StartPersonalQuest()` 直接
+      //   `PersonalQuest.Start()`（自动开始 + 弹一条帮助提示）；而好感度只能靠
+      //   **带这位同伴一起冒险**来提升（StoryGate 计时器要求 companion following
+      //   player，见 COM_CompanionQuestScript.psc）。所以引导指向的从来不是「接取
+      //   地点」，而是**这位同伴本人当前所在的位置**（首选候选 = 同伴的常驻引用）。
       private function SaqCompanionNote() : String
       {
          return this.SaqUseChinese()
-            ? "这条同伴任务需要与同伴的好感度达到一定水平后才能接取（在那之前会固定显示在这里）。"
-            : "This companion quest can be accepted only after reaching a certain affinity level with the companion (it stays listed here until then).";
+            ? "这条同伴任务会在你与这位同伴的好感度达到一定水平后自动开始，不需要找地方接取（在那之前它会一直显示在这里）。好感度要靠带这位同伴一起冒险来提升；「设定航线」引导到的是这位同伴当前所在的位置。"
+            : "This companion quest starts automatically once your affinity with the companion is high enough - there is nothing to accept (it stays listed here until then). Affinity grows while the companion travels with you; SET COURSE leads to wherever the companion currently is.";
       }
       
       // ★★ 第 75 轮（四大势力开头任务）：其中「深红舰队」那条**没有导航目标**
@@ -873,11 +880,32 @@ package
             {
                return _loc1_ + this.SaqNoPickupNote() + _loc2_;
             }
+            // ★★ 第 82 轮：同伴条目的「无目标」兜底也换落点说法（见 SaqCompanionNote）。
+            if(param4 == true)
+            {
+               return _loc1_ + (this.SaqUseChinese()
+                  ? "但它暂时还没有导航目标 —— 无法引导到这位同伴的位置（条目照常显示）。"
+                  : " It has no navigation target yet, so it cannot guide you to the companion's location (the entry stays listed).") + _loc2_;
+            }
             return _loc1_ + (this.SaqUseChinese()
                ? "但它暂时还没有导航目标 —— 无法引导到接取地点（任务本身照常显示）。"
                : " It has no navigation target yet, so it cannot guide you to the pickup location.") + _loc2_;
          }
          var _loc3_:String = this.SaqCourseKeyName();
+         // ★★ 第 82 轮：同伴条目的落点不是「接取地点」而是**这位同伴本人** ——
+         //   尾部文案跟着换，否则与首句（SaqCompanionNote）自相矛盾。
+         if(param4 == true)
+         {
+            if(_loc3_.length == 0)
+            {
+               return _loc1_ + (this.SaqUseChinese()
+                  ? "使用底部的「设定航线」即可引导到这位同伴的位置。"
+                  : " Use SET COURSE to be guided to the companion's location.") + _loc2_;
+            }
+            return _loc1_ + (this.SaqUseChinese()
+               ? "按 " + _loc3_ + "（设定航线）即可引导到这位同伴的位置。"
+               : " Press " + _loc3_ + " (SET COURSE) to be guided to the companion's location.") + _loc2_;
+         }
          if(_loc3_.length == 0)
          {
             return _loc1_ + (this.SaqUseChinese()
@@ -1283,7 +1311,10 @@ package
          //   ★★ 第 81 轮（地球地标任务）：stamp 59 —— **AS3 代码本身没改**，改的是
          //     内嵌回退载荷（加了 10 条「地标任务」+ 其说明文本，SaqEmbeddedPayload.inc）
          //     ⇒ 重编译 SWF 让内嵌数据与 C++ 载荷重新逐条对齐（协议纪律）。
-         _loc8_ += " stamp=59";
+         //   ★★ 第 82 轮（同伴文案说透）：stamp 60 —— 同伴条目的描述首句 + 尾部落点
+         //     文案改写（「自动开始 / 不需要找地方接取 / 引导到的是这位同伴的位置」，
+         //     见 SaqCompanionNote 与 SaqDescriptionText 的第 4 参数分支）。
+         _loc8_ += " stamp=60";
          // ★★ 第 51 轮：入口自检（ep=）—— 见 SaqEntryProbe 的说明。
          //   位置在 stamp 之后、其余字段之前：报告有长度上限，这个字段是当前排查
          //   「测试入口调不到」问题的关键证据，必须优先保下来。

@@ -9,7 +9,7 @@
 ;    ④ 启动游戏并**读一个存档**（随便哪个，用例会自己把需要的那几条任务回滚）；
 ;    ⑤ 等日志出现 `harness：全部用例结束`，看 mod 目录里的 SAQ_testresults.json。
 ;       （判定游戏加载的 SWF 版本：看日志 SAQ_Report 输出有没有 `stamp=` 字段；
-;        ★ 每改一次 SWF 就会 +1 —— 当前 = `stamp=57`（第 75 轮），
+;        ★ 每改一次 SWF 就会 +1 —— 当前 = `stamp=60`（第 82 轮），
 ;        与 tools\ui\verify_saq_build.py 的「构建指纹」检查同源。）
 ;
 ;  语法：`[case:名字]` 开一个用例；`desc = 说明`；`step = <操作> [参数]`。
@@ -613,7 +613,8 @@ step = menu.close
 ;  Papyrus 源码逐条核验）——每位同伴 2 条：
 ;    · **入口** = 个人任务 COM_Quest_<同伴>_Q01（违约 / 难侍二主 / 哈特家事 / 难忘逝者）：
 ;      companionPin=1 ⇒ **固定显示**（跳过进度 / INFO / 链式三类门槛）+ 描述里提示
-;      「需要一定好感度才能接取」（载荷第 8 列 + SWF 的 SaqCompanionNote）；
+;      「好感度达标后自动开始、不需要找地方接取；引导指向这位同伴本人」（第 82 轮
+;      文案说透；载荷第 8 列 + SWF 的 SaqCompanionNote）；
 ;    · **后续** = 承诺任务 COM_Quest_<同伴>_Commitment：companionPin=0 ⇒ 照旧走链式
 ;      门槛（启动边 = 好感度里程碑/个人任务完成；前置没到 ⇒ 在「链式没到」名单里）。
 ;
