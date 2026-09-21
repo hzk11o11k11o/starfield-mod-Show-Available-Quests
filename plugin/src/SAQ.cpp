@@ -189,6 +189,25 @@ namespace SAQ
 			std::string samples;              // 被剔掉的前几条（名字 + 状态）
 			std::string vtableSamples;        // 未识别虚表的样本（诊断）
 			std::string entryUnavailable;     // ★ 第 29/30 轮：不可导航入口的名单 + 候选命中诊断
+			// ★★ 第 79 轮：**名单截断留痕**（四个名单共用同一形式）——
+			//   名单都有打印上限（kMaxSamples = 40），超出的条目此前被**静默丢弃**
+			//   （`if (count < kMaxSamples)` 没有 else）⇒ 排查时「被藏」看起来像
+			//   「没被藏」。本轮起因就是它：第 77 轮的用例断言
+			//   `assert.log 链式没到: .*领先一步[0x002C572B` 报「日志里没出现」，
+			//   复查证明产品判据全对（43 条 kFail，含这条），只是表内顺序最后 3 条
+			//   被 40 条上限截掉了 —— 断言不可达是日志缺陷，不是产品回归。
+			//   现在：超出的条目记进这里（**紧凑格式**：名字 + FormID，不带 detail ——
+			//   上限的本意是控制行长度，紧凑形式每条 ~25 字符、最多 ~23 条 ≈ 0.6 KB），
+			//   Format 时以 `（另有 N 条未列出：…）` 追加在各自名单之后，
+			//   断言 `名单:.*<名字>[<FormID>` 对截断区同样可达。
+			std::size_t progressOverflow{};         // 「进度没到」名单未列出的条数
+			std::string progressOverflowSamples;    // 未列出条目的紧凑名单
+			std::size_t infoOverflow{};             // 「INFO没到」名单未列出的条数
+			std::string infoOverflowSamples;
+			std::size_t chainOverflow{};            // 「链式没到」名单未列出的条数
+			std::string chainOverflowSamples;
+			std::size_t hiddenOverflow{};           // 「隐藏」名单未列出的条数
+			std::string hiddenOverflowSamples;
 		};
 
 		// 推送重试状态（只在主线程读写，不需要锁）。
@@ -930,6 +949,10 @@ namespace SAQ
 						// FormID 必须带上：名字可能与玩家的叫法不一致（玩家反馈「某条没显示」
 						// 时，靠 FormID 精确核对，而不是靠名字猜）。
 						a_stats.samples += std::format("{}[0x{:08X} {}] ", info.nameZh, row.formID, Describe(state));
+					} else {
+						// ★★ 第 79 轮：超出打印上限的条目不再静默丢弃（紧凑名单，见结构体说明）。
+						++a_stats.hiddenOverflow;
+						a_stats.hiddenOverflowSamples += std::format("{}[0x{:08X}] ", info.nameZh, row.formID);
 					}
 					continue;
 				}
@@ -981,6 +1004,11 @@ namespace SAQ
 							++progressSampleCount;
 							a_stats.progressSamples += std::format("{}[0x{:08X} {}] ",
 								info.nameZh, row.formID, gate.detail);
+						} else {
+							// ★★ 第 79 轮：超出打印上限的条目不再静默丢弃（紧凑名单，见结构体说明）。
+							++a_stats.progressOverflow;
+							a_stats.progressOverflowSamples += std::format("{}[0x{:08X}] ",
+								info.nameZh, row.formID);
 						}
 						if (progressFilter) {
 							++a_stats.progressHidden;
@@ -1035,6 +1063,11 @@ namespace SAQ
 								++infoSampleCount;
 								a_stats.infoSamples += std::format("{}[0x{:08X} {}] ",
 									info.nameZh, row.formID, infoGate.detail);
+							} else {
+								// ★★ 第 79 轮：超出打印上限的条目不再静默丢弃（紧凑名单，见结构体说明）。
+								++a_stats.infoOverflow;
+								a_stats.infoOverflowSamples += std::format("{}[0x{:08X}] ",
+									info.nameZh, row.formID);
 							}
 							if (infoFilter) {
 								++a_stats.infoHidden;
@@ -1079,6 +1112,13 @@ namespace SAQ
 								++chainSampleCount;
 								a_stats.chainSamples += std::format("{}[0x{:08X} {}] ",
 									info.nameZh, row.formID, chainGate.detail);
+							} else {
+								// ★★ 第 79 轮：超出打印上限的条目不再静默丢弃（紧凑名单，见结构体说明）。
+								//   本条就是「领先一步」被截掉的现场：43 条 kFail 只打得下 40 条，
+								//   表内顺序最后的 3 条（通行是关键 / 全新的故事 / 领先一步）此前无声消失。
+								++a_stats.chainOverflow;
+								a_stats.chainOverflowSamples += std::format("{}[0x{:08X}] ",
+									info.nameZh, row.formID);
 							}
 							if (chainFilter) {
 								++a_stats.chainHidden;
@@ -1298,6 +1338,11 @@ namespace SAQ
 				// 每条后面括号里是**没通过的检查**（哪个任务是什么状态、期望什么）。
 				out += " 进度没到: " + a_stats.progressSamples;
 			}
+			if (a_stats.progressOverflow) {
+				// ★★ 第 79 轮：名单截断留痕（超出的条目以紧凑形式列出，见结构体说明）。
+				out += std::format("（另有 {} 条未列出：{}）",
+					a_stats.progressOverflow, a_stats.progressOverflowSamples);
+			}
 			// ★★ 大项 D（第 48 轮）：INFO 门槛（对话侧条件）的统计与名单。
 			//   ★ 第 48 轮补丁：「放行」= 判「进度没到」但引擎已开始（引擎自启的任务
 			//   玩家仍可能接到 ⇒ 不隐藏，见 CollectAvailableQuests 的注释）。
@@ -1309,6 +1354,11 @@ namespace SAQ
 			}
 			if (!a_stats.infoSamples.empty()) {
 				out += " INFO没到: " + a_stats.infoSamples;
+			}
+			if (a_stats.infoOverflow) {
+				// ★★ 第 79 轮：名单截断留痕（超出的条目以紧凑形式列出，见结构体说明）。
+				out += std::format("（另有 {} 条未列出：{}）",
+					a_stats.infoOverflow, a_stats.infoOverflowSamples);
 			}
 			// ★★ 第 67 轮：链式门槛（编号任务链的启动边）的统计与名单。
 			//   `过` = 至少一条启动边已触发 ⇒ 显示；`藏` = 全部启动边都没触发
@@ -1323,11 +1373,24 @@ namespace SAQ
 			if (!a_stats.chainSamples.empty()) {
 				out += " 链式没到: " + a_stats.chainSamples;
 			}
+			if (a_stats.chainOverflow) {
+				// ★★ 第 79 轮：名单截断留痕（超出的条目以紧凑形式列出，见结构体说明）——
+				//   第 77 轮的 `assert.log 链式没到: .*领先一步[0x002C572B` 依赖的就是
+				//   这一段（它是被 40 条上限截掉的 3 条之一，此前无声消失 ⇒ 断言不可达）。
+				out += std::format("（另有 {} 条未列出：{}）",
+					a_stats.chainOverflow, a_stats.chainOverflowSamples);
+			}
 			if (!a_stats.samples.empty()) {
-				// 完整名单（第 11 轮起不再只记前几条）：玩家反馈「某条任务没显示」时，
-				// 先在 `隐藏:` 这一段里搜 FormID —— 在 = 被运行时状态挡住（看它后面括号里的状态）；
-				// 不在 = 它已经被推送给 UI（详见 AS3 侧的 `qdata=` 名单）。
+				// 名单（第 11 轮起不只记前几条；★★ 第 79 轮起带截断留痕，上限 kMaxSamples）：
+				// 玩家反馈「某条任务没显示」时，先在 `隐藏:` 这一段里搜 FormID ——
+				// 在 = 被运行时状态挡住（看它后面括号里的状态）；不在 = 它已经被推送给 UI
+				// （详见 AS3 侧的 `qdata=` 名单）。
 				out += " 隐藏: " + a_stats.samples;
+			}
+			if (a_stats.hiddenOverflow) {
+				// ★★ 第 79 轮：名单截断留痕（超出的条目以紧凑形式列出，见结构体说明）。
+				out += std::format("（另有 {} 条未列出：{}）",
+					a_stats.hiddenOverflow, a_stats.hiddenOverflowSamples);
 			}
 			if (!a_stats.vtableSamples.empty()) {
 				out += " 未识别例: " + a_stats.vtableSamples;
