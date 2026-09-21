@@ -92,6 +92,7 @@ namespace SAQ::Test
 			kAssertMenu,
 			kNote,
 			kGuideClear,   // 取消引导（DLL 自己的产品路径：Guide::SetGuideTarget(0)）
+			kGuideProbe,   // ★ 第 60 轮：候选可得性探针（只读，见 ProbeGuideCandidates）
 		};
 
 		// ★ 第 54 轮：日志断言的时间窗口起点（见 SAQ_Test.h 的 `scope=` 说明）
@@ -362,6 +363,47 @@ namespace SAQ::Test
 			return false;
 		}
 
+		// ★★ 第 60 轮：候选可得性探针（`guide.probe <任务>`）—— 与产品的「候选复算」用
+		//   **同一套查询**（静态表候选池 + `TESForm::LookupByID`），只读、不改任何状态。
+		//
+		//   为什么需要（第 60 轮 r45 现场）：走远后「候选复算」一行日志都没打 —— 光看日志
+		//   分不清这两种情况：
+		//     ① 当前候选仍可得 ⇒ 复算按设计「无动作」（保持是对的，蓝点留在目标上）；
+		//     ② 当前候选取不到、但观察期/复算没跑（产品缺陷）。
+		//   这一行把每个候选的可得性**当场**写进日志与步骤结果 JSON（事后可查）。
+		//   实测（11:26 会话）：走远 15 秒后 [1]「G型」=可得 ⇒ ①，用例的旧期望（走远 ⇒
+		//   取不到 ⇒ 先保持）不成立 —— 详见 SAQ_TestPlan.txt 用例 4 的注释。
+		bool ProbeGuideCandidates(std::uint32_t a_formID, std::string& a_detail)
+		{
+			const StaticQuestInfo* quest = nullptr;
+			for (std::size_t i = 0; i < kQuestTableSize; ++i) {
+				if (Masters::MakeFormID(kQuestTable[i].master, kQuestTable[i].localFormID) == a_formID) {
+					quest = &kQuestTable[i];
+					break;
+				}
+			}
+			if (quest == nullptr) {
+				a_detail = std::format("静态表里没有 0x{:08X}（不是静态任务表里的任务？）", a_formID);
+				return false;
+			}
+			std::string parts;
+			for (std::uint8_t i = 0; i < quest->candCount; ++i) {
+				const auto slot = static_cast<std::size_t>(quest->candBegin) + i;
+				if (slot >= kGuideCandidateCount) {
+					break;  // 表损坏 / 切片越界：不越界读（verify 另有完整性检查）
+				}
+				const auto& c = kGuideCandidates[slot];
+				const auto id = Masters::MakeFormID(c.refrMaster, c.refrLocal);
+				const bool alive = id != 0 &&
+					RE::TESForm::LookupByID(static_cast<RE::TESFormID>(id)) != nullptr;
+				parts += std::format("{}[{}]「{}」0x{:08X}={}", parts.empty() ? "" : "｜",
+					i + 1, c.nameZh, id, alive ? "可得" : "取不到");
+			}
+			const std::string body = parts.empty() ? std::string{ "（没有候选）" } : "｜" + parts;
+			a_detail = std::format("候选可得性：{}（0x{:08X}）{}", quest->nameZh, a_formID, body);
+			return true;
+		}
+
 		// 解析步骤的最终 FormID（`~` 记录号 / 任务板 uID / 原样运行期值）。
 		bool ResolveStepFormID(const Step& a_step, std::uint32_t& a_out, std::string& a_detail)
 		{
@@ -588,6 +630,13 @@ namespace SAQ::Test
 				a_step.menuOpen = (toks[0] == "open");
 			} else if (op == "guide.clear") {
 				a_step.kind = Kind::kGuideClear;
+			} else if (op == "guide.probe") {
+				// ★ 第 60 轮：`guide.probe ~0x…` —— 只读探针：把这条任务的候选池
+				//   「此刻哪些取得到」写进步骤结果（不改任何状态，见 ProbeGuideCandidates）。
+				a_step.kind = Kind::kGuideProbe;
+				if (!needFormID(a_step.formId)) {
+					return false;
+				}
 			} else if (op == "note") {
 				a_step.kind = Kind::kNote;
 				a_step.text = Trim(rest);
@@ -1011,6 +1060,26 @@ namespace SAQ::Test
 				return true;
 			}
 
+			case Kind::kGuideProbe: {
+				std::uint32_t formID = step.formId;
+				if (step.localFormID) {
+					std::string resolved;
+					if (!ResolveStepFormID(step, formID, resolved)) {
+						CompleteStep(false, "FormID 解析失败：" + resolved, {});
+						return true;
+					}
+					REX::INFO("harness：  参数解析 {}", resolved);
+				}
+				std::string detail;
+				if (!ProbeGuideCandidates(formID, detail)) {
+					CompleteStep(false, detail, LogSince(g_cur.logMark, kEvidenceMaxLines));
+					return true;
+				}
+				// 结果进步骤结果（SAQ_testresults.json）—— 「走远后候选是否仍可得」的硬证据。
+				CompleteStep(true, detail, {});
+				return true;
+			}
+
 			case Kind::kWait:
 				if (now - g_cur.startedAtMs >= step.timeoutMs) {
 					CompleteStep(true, std::format("等了 {} ms", step.timeoutMs), {});
@@ -1392,10 +1461,10 @@ namespace SAQ::Test
 		// ★ 第 56 轮：带上**驱动器版本串** —— 与 SWF 的 `stamp=` 同一个道理：日志里有没有
 		//   这一串，是「跑的是不是修好窗口 bug 的那版驱动器」的唯一判据（旧版会把
 		//   断言窗口起点清 0 ⇒ 假 PASS/假 FAIL）。
-		REX::INFO("harness：已启用（{} 个用例；驱动器 v59：落地静默期每 Tick 推进（与回执消费解耦）"
-				  " / 落地完成证据（回执后 ms + 加载画面已关 ms） / 20 秒窗口只管等回执"
+		REX::INFO("harness：已启用（{} 个用例；驱动器 v60：候选可得性探针（guide.probe）"
+				  " / r45 尾段改「不许早降级 + 引导仍指向精确候选」"
 				  "（沿用：~0x 参数写回 / 清场延迟复查 / 日志窗口按步保留 / 传送 20 秒窗口 /"
-				  " 加载画面证据 / 卡死自动中止））"
+				  " 落地静默期每 Tick 推进 / 加载画面证据 / 卡死自动中止））"
 				  " —— 等脚本通道就绪后自动开跑",
 			g_cases.size());
 	}

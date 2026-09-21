@@ -120,6 +120,13 @@
            20 秒 deadline 误报「命令没有回执」（实测传送完全正常：回执 4.4/4.9 秒到、
            超时瞬间菜单列表 = 无、Papyrus 两次 `MoveTo` 结果=0）。
            本脚本检查：驱动器版本串 v59 + 落地静默期解耦文案 + 反向检查（v58 及更早不在）。
+  第 60 轮（11:26 会话只剩 r45 一条 FAIL，真因 = **用例期望不可达**）：用例 4 旧断言要求
+           「走远 ⇒ 当前候选取不到 ⇒ `候选复算：…先保持`」，但引导目标一旦被脚本
+           ForceRefTo 到别名上，走远后 `LookupByID` **一直查得到**（11:26 实测：走远
+           15 秒里复算按 1.5 秒节拍一直在跑、零日志 = 每次都 `best == 当前`；Papyrus
+           `MoveTo` 到赛多尼亚成功、后续用例全 PASS）⇒ 产品行为正确（保持精确目标）。
+           本脚本检查：新 op `guide.probe`（候选可得性只读探针）+ 驱动器版本串 v60 +
+           用例计划里「探针步骤在、旧『先保持』断言不在」+ 反向检查（v59 及更早不在）。
 
 用法：python tools/ui/verify_saq_build.py [--release|--dev]
 """
@@ -386,8 +393,12 @@ HARNESS_STRINGS = (
     #   ① 静默期检查改为**每 Tick**推进（回执只登记时刻 + 文案）；
     #   ② deadline 只管「等回执」阶段（回执到了立即失效）；
     #   ③ 静默期完成时把证据写进步骤结果（回执后 ms + 加载画面已关 ms）。
+    # ★★ 第 60 轮（11:26 会话 r45 的「先保持」断言不可达 —— 见文件头）：新 op `guide.probe`
+    #   （候选可得性只读探针：与产品候选复算同一套查询，结果进步骤 JSON，事后可对账）。
     ("harness 驱动器版本串",
-     "驱动器 v59：落地静默期每 Tick 推进"),
+     "驱动器 v60：候选可得性探针（guide.probe）"),
+    ("harness 候选可得性探针文案", "候选可得性："),
+    ("harness 探针 op 名", "guide.probe"),
     ("harness 落地静默期解耦文案", "落地静默期完成（回执后"),
     ("harness 传送落地静默期文案", "传送落地中（回执已到，但加载画面还没关"),
     ("harness 传送落地超限判定", "疑似卡在加载画面"),
@@ -911,10 +922,11 @@ def main() -> int:
             print(("OK  " if gone else "MISS") +
                   " DLL · 旧「确认此刻菜单是关的」静态提示已替换(反向检查)")
             all_ok &= gone
-            # 反向检查（第 58/59 轮）：v58 及更早的驱动器版本串不应再出现 —— 日志里那串
-            #   「驱动器 v59：…」是「跑的是不是修好时序那版」的唯一判据（同 SWF stamp=）。
-            gone = "驱动器 v57".encode() not in blob and "驱动器 v58".encode() not in blob
-            print(("OK  " if gone else "MISS") + " DLL · 旧驱动器版本串 v57/v58 已替换(反向检查)")
+            # 反向检查（第 58~60 轮）：v59 及更早的驱动器版本串不应再出现 —— 日志里那串
+            #   「驱动器 v60：…」是「跑的是不是这一版驱动器」的唯一判据（同 SWF stamp=）。
+            gone = ("驱动器 v57".encode() not in blob and "驱动器 v58".encode() not in blob and
+                    "驱动器 v59".encode() not in blob)
+            print(("OK  " if gone else "MISS") + " DLL · 旧驱动器版本串 v57/v58/v59 已替换(反向检查)")
             all_ok &= gone
             # ★★ 第 54 轮：用例计划本身也该被查 —— 历史判据（第 26/44~48 轮）落成用例后，
             #   最怕的是「源码改了没部署」或「用例被误删」。这里只查**开发模式**：
@@ -973,6 +985,20 @@ def main() -> int:
                         and "无凭无据\\[0x00082D5A scope=prev" not in plan_text)
                 print(("OK  " if gone else "MISS") +
                       " 用例计划 · 旧的 scope=prev 写法（同批行断言）已替换(反向检查)")
+                all_ok &= gone
+                # ★★ 第 60 轮：r45 尾段改判（真因见文件头）—— 防「改回不可达的旧期望」再犯：
+                #   ① 走远后仍用只读探针 `guide.probe` 记候选可得性（进结果 JSON，可对账）；
+                #   ② 尾段判「不许早降级 + 引导仍指向精确候选 [1]」—— 不再要求
+                #      「候选复算：…先保持」（走远并不会让目标取不到；那半段需要读档/加载
+                #      窗口才能触发，等「自动读档」落地后补用例）。
+                all_ok &= check("用例计划 · r45 候选可得性探针（guide.probe）",
+                                plan_text.encode(), "guide.probe ~0x0008EBDC".encode())
+                all_ok &= check("用例计划 · r45 走远后判「引导仍指向 [1]」",
+                                plan_text.encode(),
+                                "assert.log 引导状态：营救机器人.*候选 \\[1\\]「G型」".encode())
+                gone = "assert.log 候选复算：.*先保持" not in plan_text
+                print(("OK  " if gone else "MISS") +
+                      " 用例计划 · 旧「先保持」断言（需读档窗口，不可达）已替换(反向检查)")
                 all_ok &= gone
             else:
                 print(f"MISS 缺少用例计划 {plan_src}")
