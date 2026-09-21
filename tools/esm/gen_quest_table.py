@@ -767,7 +767,8 @@ def main() -> int:
     # ★ 第 35 轮：进度门槛（「游戏进度还不能让玩家接到 ⇒ 不显示」）
     #   数据链：xEdit 条件 dump → analyze_ctda.py（提取外部引用门槛）→ 这里平铺进表。
     gates_by_fid = load_gates(Path(a.gates))
-    cond_flat: list[tuple[int, int, int, int, int]] = []
+    # ★★ 第 87 轮：第 6 元 = or_bit（type bit0；OR 组语义见 docs/08 4.3）
+    cond_flat: list[tuple[int, int, int, int, int, int]] = []
     n_gate_tasks = 0
     for r in rows:
         gs = gates_by_fid.get(r["formid"], [])
@@ -779,23 +780,30 @@ def main() -> int:
             n_gate_tasks += 1
         for g in gs:
             cond_flat.append((int(g["quest_local"]) & 0xFFFFFF, int(g["quest_master"]),
-                              int(g["func"]), int(g["want"]), int(g.get("stage", 0)) & 0xFFFF))
-    print(f"进度门槛：{n_gate_tasks} 条任务 / {len(cond_flat)} 条条件")
+                              int(g["func"]), int(g["want"]), int(g.get("stage", 0)) & 0xFFFF,
+                              int(g.get("or_bit", 0)) & 1))
+    print(f"进度门槛：{n_gate_tasks} 条任务 / {len(cond_flat)} 条条件"
+          f"（其中 OR 组条件 {sum(c[5] for c in cond_flat)} 条）")
     for r in rows:
         if r["cond_count"]:
             desc = []
             for g in r["cond_gates"]:
                 name = ("Running", "Completed", "StageDone")[int(g["func"])]
                 if int(g["func"]) == 2:
-                    desc.append(f"{name}(0x{int(g['quest_local']):06X},{g['stage']})=={g['want']}")
+                    d = f"{name}(0x{int(g['quest_local']):06X},{g['stage']})=={g['want']}"
                 else:
-                    desc.append(f"{name}(0x{int(g['quest_local']):06X})=={g['want']}")
+                    d = f"{name}(0x{int(g['quest_local']):06X})=={g['want']}"
+                if int(g.get("or_bit", 0)):
+                    d += "[OR]"
+                desc.append(d)
             print(f"  {r['edid']:<34} {' AND '.join(desc)}")
 
     # ★★ 大项 D（第 48 轮）：INFO 门槛（对话侧条件）—— 每条任务一组「参与判定的对话」，
     #   每条对话又是一组条件（切片）。运行时：全部对话都「有已知为假的条件」⇒ 隐藏。
     info_by_fid = load_info_gates(Path(a.info_gates))
-    info_cond_flat: list[tuple[int, int, int, int, int]] = []
+    # ★ 第 87 轮：INFO 侧条件复用 StaticCondGate 结构 ⇒ 第 6 元恒 0
+    #   （INFO 门槛的提取保持保守：只收「无 flags 的 ==」条件，见 scan_info_gates.py）。
+    info_cond_flat: list[tuple[int, int, int, int, int, int]] = []
     info_group_flat: list[tuple[int, int]] = []
     n_info_tasks = 0
     for r in rows:
@@ -809,7 +817,8 @@ def main() -> int:
             info_group_flat.append((len(info_cond_flat), len(conds)))
             for c in conds:
                 info_cond_flat.append((int(c["quest_local"]) & 0xFFFFFF, int(c["quest_master"]),
-                                       int(c["func"]), int(c["want"]), int(c.get("stage", 0)) & 0xFFFF))
+                                       int(c["func"]), int(c["want"]), int(c.get("stage", 0)) & 0xFFFF,
+                                       0))
     print(f"INFO 门槛：{n_info_tasks} 条任务 / {len(info_group_flat)} 条对话 / "
           f"{len(info_cond_flat)} 条条件")
 
@@ -1025,13 +1034,18 @@ def main() -> int:
     lines.append("\t\tstd::uint8_t  check;        // CondCheck")
     lines.append("\t\tstd::uint8_t  want;         // 期望值：函数结果 == want ⇒ 本条通过")
     lines.append("\t\tstd::uint16_t stage;        // 仅 kCondStageDone 用")
+    lines.append("\t\t// ★★ 第 87 轮：CTDA type 的 bit0（OR，引擎语义见 docs/08 4.3）——")
+    lines.append("\t\t//   1 = 本条**开始一个 OR 组**（组 = 从本条起直到第一条不带 OR 位的条件（含）")
+    lines.append("\t\t//   或列表末尾；组内相互 OR、组作为整体 AND）。运行时组合见")
+    lines.append("\t\t//   Decision::DecideProgressGates（有单测）。")
+    lines.append("\t\tstd::uint8_t  orBit;")
     lines.append("\t};")
     lines.append("\tinline constexpr StaticCondGate kQuestConds[] = {")
     if cond_flat:
-        for (ql, qm, chk, want, stage) in cond_flat:
-            lines.append(f"\t\t{{ 0x{ql:08X}u, {qm}u, {chk}u, {want}u, {stage}u }},")
+        for (ql, qm, chk, want, stage, orb) in cond_flat:
+            lines.append(f"\t\t{{ 0x{ql:08X}u, {qm}u, {chk}u, {want}u, {stage}u, {orb}u }},")
     else:
-        lines.append("\t\t{ 0u, 0u, 0u, 0u, 0u },  // 占位（表为空时 MSVC 不允许零长数组）")
+        lines.append("\t\t{ 0u, 0u, 0u, 0u, 0u, 0u },  // 占位（表为空时 MSVC 不允许零长数组）")
     lines.append("\t};")
     lines.append(f"\tinline constexpr std::size_t kQuestCondCount = {len(cond_flat)};")
     lines.append("")
@@ -1058,10 +1072,10 @@ def main() -> int:
     lines.append(f"\tinline constexpr std::size_t kInfoGroupCount = {len(info_group_flat)};")
     lines.append("\tinline constexpr StaticCondGate kInfoConds[] = {")
     if info_cond_flat:
-        for (ql, qm, chk, want, stage) in info_cond_flat:
-            lines.append(f"\t\t{{ 0x{ql:08X}u, {qm}u, {chk}u, {want}u, {stage}u }},")
+        for (ql, qm, chk, want, stage, orb) in info_cond_flat:
+            lines.append(f"\t\t{{ 0x{ql:08X}u, {qm}u, {chk}u, {want}u, {stage}u, {orb}u }},")
     else:
-        lines.append("\t\t{ 0u, 0u, 0u, 0u, 0u },  // 占位（表为空时 MSVC 不允许零长数组）")
+        lines.append("\t\t{ 0u, 0u, 0u, 0u, 0u, 0u },  // 占位（表为空时 MSVC 不允许零长数组）")
     lines.append("\t};")
     lines.append(f"\tinline constexpr std::size_t kInfoCondCount = {len(info_cond_flat)};")
     lines.append("")

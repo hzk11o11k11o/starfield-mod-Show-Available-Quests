@@ -173,14 +173,18 @@ namespace SAQ
 		}
 
 		// ★ 第 64 轮（大项 K）：逐条求值（只读查询）→ **聚合**交给离线层纯函数
-		//   （Decision::DecideProgressGates —— 一条非 pass 即返回的语义与抽取前一致，
-		//   有单测）。与抽取前的唯一差别：求值阶段不再短路（多查几条只读条件，无副作用）。
+		//   （Decision::DecideProgressGates，有单测）。
+		//   ★★ 第 87 轮：一并喂 OR 位（CTDA type bit0，引擎 OR 组语义见 docs/08 4.3）。
 		std::vector<Decision::CondCheck> checks;
+		std::vector<std::uint8_t> orBits;
 		checks.reserve(a_condCount);
+		orBits.reserve(a_condCount);
 		for (std::size_t i = 0; i < a_condCount; ++i) {
-			checks.push_back(EvalOneCond(kQuestConds[a_condBegin + i]));
+			const auto& g = kQuestConds[a_condBegin + i];
+			checks.push_back(EvalOneCond(g));
+			orBits.push_back(g.orBit);
 		}
-		return Decision::DecideProgressGates(checks, 0, static_cast<std::uint8_t>(checks.size()));
+		return Decision::DecideProgressGates(checks, orBits, 0, static_cast<std::uint8_t>(checks.size()));
 	}
 
 	CondEvalResult EvaluateInfoGates(std::uint32_t a_groupBegin, std::uint8_t a_groupCount)

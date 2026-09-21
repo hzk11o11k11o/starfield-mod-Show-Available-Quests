@@ -905,6 +905,7 @@ def main() -> int:
             "进度没到名单": "进度没到: ".encode(),
             "进度门槛开关(ini)": "ProgressCond".encode(),
             "进度门槛切片越界保护": "门槛切片越界".encode(),
+            "★ 第 87 轮 OR 位切片保护": "门槛 OR 位切片越界".encode(),
             "IsStageDone 不可用提示": "IsStageDone 不可用".encode(),
             # ★★ 第 37 轮：SET COURSE 的星图 —— 关任务菜单 + 结果探测 + 状态 5
             "星图请求(旧协议 kHide)": "星图：已请求关闭任务菜单".encode(),
@@ -1187,6 +1188,8 @@ def main() -> int:
                             # ★★ 第 81 轮：地球地标任务（10 条进列表 + 引导落常驻兜底 +
                             #   伦敦只给说明）
                             "r81_landmark",
+                            # ★★ 第 87 轮：进度门槛 OR 组（A：被藏 / B：补做 Z04 放行）
+                            "r87_or_group", "r87_or_group_pass",
                             "r62_reload_observe"):
                     all_ok &= check(f"用例计划 · [case:{cid}]", plan_text.encode(),
                                     f"[case:{cid}]".encode())
@@ -1300,6 +1303,24 @@ def main() -> int:
                 print(("OK  " if ok81 else "MISS") +
                       " 用例计划 · r81 两段都「等推送成功再切 tab」（第 57 轮红线）")
                 all_ok &= ok81
+                # ★★ 第 87 轮（进度门槛 OR 组）：r87 两条用例的判据 ——
+                #   ① A 段：UC04 完成 + Z04/Z05 都没做 ⇒ 「亲爱的姐妹」在「进度没到」名单
+                #      （★ 旧实现只看 UC04 ⇒ 会放行 —— 这条断言正是新旧语义的差异点）；
+                #   ② B 段：补做 Z04（complete 0x002149FA）⇒ 名单里没有它（本条用例窗口内）；
+                #   ③ 反向：A 段不得写成 `assert.nolog`（那就测不出「被藏」）。
+                all_ok &= check("用例计划 · r87 A 段（OR 组不满足 -> 被藏）",
+                                plan_text.encode(),
+                                "assert.log 进度没到: .*亲爱的姐妹\\[0x002117CA scope=case".encode())
+                all_ok &= check("用例计划 · r87 B 段（补做 Z04 -> 放行）",
+                                plan_text.encode(),
+                                "assert.nolog 进度没到: .*亲爱的姐妹\\[0x002117CA scope=case".encode())
+                i87 = plan_text.find("[case:r87_or_group]")
+                i87b = plan_text.find("[case:r87_or_group_pass]")
+                ok87 = (i87 >= 0 and i87b > i87
+                        and "quest.complete 0x002149FA" in plan_text[i87b:])
+                print(("OK  " if ok87 else "MISS") +
+                      " 用例计划 · r87 两条都在 + B 段补做 Z04（complete 0x002149FA）")
+                all_ok &= ok87
                 plan_deployed = MO2_MOD / "SFSE/Plugins/SAQ_TestPlan.txt"
                 if plan_deployed.exists():
                     same = plan_deployed.read_bytes() == plan_src.read_bytes()
@@ -1648,15 +1669,19 @@ def main() -> int:
         print(f"MISS 缺少 PEX {pex}")
         all_ok = False
 
-    # ★ 第 35 轮：进度门槛的**数据侧**校验（生成物 plugin/src/SAQ_QuestTable.h）——
-    #   7 条 gated 任务 / 9 条条件（tools/esm/analyze_ctda.py → ctda_gates.json →
-    #   gen_quest_table.py）。被检查任务的记录号必须是真正被引用的那几条。
+    # ★ 第 35 轮（★★ 第 87 轮更新）：进度门槛的**数据侧**校验（生成物
+    #   plugin/src/SAQ_QuestTable.h）—— 7 条 gated 任务 / **11 条条件**
+    #   （含 FFConstantZ06 的 2 条 OR 组条件；第 86/87 轮引擎语义见 docs/08 4.3）。
+    #   数据链：tools/esm/analyze_ctda.py → ctda_gates.json → gen_quest_table.py。
     table_h = ROOT / "plugin/src/SAQ_QuestTable.h"
     if table_h.exists():
         blob = table_h.read_text(encoding="utf-8")
         for name, needle in {
             "门槛结构 StaticCondGate": "struct StaticCondGate",
             "门槛枚举 kCondStageDone": "kCondStageDone = 2",
+            "★ 第 87 轮 OR 位字段": "orBit;",
+            "★ 第 87 轮 OR 组行(Z04, orBit=1)": "{ 0x002149FAu, 0u, 1u, 1u, 0u, 1u }",
+            "★ 第 87 轮 OR 组行(Z05, orBit=1)": "{ 0x0021261Eu, 0u, 1u, 1u, 0u, 1u }",
             "被检查任务 UC04(0x2AAE8D)": "0x002AAE8D",
             "被检查任务 UC01(0x2C5401)": "0x002C5401",
             "被检查任务 Botany02(0x27071B)": "0x0027071B",
@@ -1665,6 +1690,22 @@ def main() -> int:
             ok = needle in blob
             print(("OK  " if ok else "MISS") + f" 静态表 · {name}")
             all_ok &= ok
+        # ★ 第 87 轮：kQuestConds 段必须是 **6 列**格式（行尾 orBit），
+        #   且 OR 组条件恰好 2 条（FFConstantZ06 的 Z04/Z05）。
+        import re as _re
+        q_start = blob.find("kQuestConds[] = {")
+        q_end = blob.find("};", q_start) if q_start >= 0 else -1
+        q_blob = blob[q_start:q_end] if (q_start >= 0 and q_end > q_start) else ""
+        q_rows = _re.findall(
+            r"\{ 0x([0-9A-F]{8})u, (\d+)u, (\d+)u, (\d+)u, (\d+)u, (\d+)u \},", q_blob)
+        ok = len(q_rows) == 11
+        print(("OK  " if ok else "MISS") +
+              f" 静态表 · 进度门槛行 6 列格式且恰 11 行（实测 {len(q_rows)}）")
+        all_ok &= ok
+        n_or = sum(1 for r in q_rows if r[5] == "1")
+        ok = n_or == 2
+        print(("OK  " if ok else "MISS") + f" 静态表 · OR 组条件恰 2 条（实测 {n_or}）")
+        all_ok &= ok
         key = "kQuestCondCount = "
         idx = blob.find(key)
         n = 0
@@ -1676,8 +1717,8 @@ def main() -> int:
                 else:
                     break
             n = int(digits) if digits else 0
-        ok = n > 0
-        print(("OK  " if ok else "MISS") + f" 静态表 · 门槛计数非空（kQuestCondCount = {n}）")
+        ok = n == 11
+        print(("OK  " if ok else "MISS") + f" 静态表 · 门槛计数 == 11（kQuestCondCount = {n}）")
         all_ok &= ok
 
         # ★★ 第 45 轮：引导目标**候选池**（多候选链）—— 数据侧完整性（不只是特征串）：
@@ -1850,17 +1891,17 @@ def main() -> int:
                 cc = int(g_rows[gb][1])
                 if cc == 1:
                     ok_bot = re.search(
-                        r"\{\s*0x0027071Bu,\s*0u,\s*1u,\s*1u,\s*0u\s*\},", blob) is not None
+                        r"\{\s*0x0027071Bu,\s*0u,\s*1u,\s*1u,\s*0u,\s*0u\s*\},", blob) is not None
         print(("OK  " if ok_bot else "MISS") +
               " 静态表 · 大器晚成 INFO 门槛（孤立无援 0x0027071B 完成）")
         all_ok &= ok_bot
         # ★★ 第 78 轮（DLC 的 INFO 门槛）：两个跨 master 样本 ——
         #   ① 失踪的华庭号（SFTER_MQ01）← 地球舰队侵袭（SFTER_MQIntro，master 2）@75 完成；
         #   ② 栉比堡垒（SFBGS001_MQ06）← 破碎空间 LC06（master 3）@940 完成。
-        #   （这两条就在 kInfoConds 里，形态 = { 记录号, master, check, want, stage }。）
+        #   （这两条就在 kInfoConds 里，形态 = { 记录号, master, check, want, stage, orBit }。）
         for label, needle in (
-                ("失踪的华庭号 ← 地球舰队侵袭@75（master 2）", "{ 0x0000599Fu, 2u, 2u, 1u, 75u },"),
-                ("栉比堡垒 ← 破碎空间 LC06@940（master 3）", "{ 0x0001D3C6u, 3u, 2u, 1u, 940u },"),
+                ("失踪的华庭号 ← 地球舰队侵袭@75（master 2）", "{ 0x0000599Fu, 2u, 2u, 1u, 75u, 0u },"),
+                ("栉比堡垒 ← 破碎空间 LC06@940（master 3）", "{ 0x0001D3C6u, 3u, 2u, 1u, 940u, 0u },"),
         ):
             hit = needle in blob
             print(("OK  " if hit else "MISS") + f" 静态表 · DLC INFO 门槛样本（{label}）")

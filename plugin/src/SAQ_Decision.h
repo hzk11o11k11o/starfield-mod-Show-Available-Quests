@@ -112,13 +112,19 @@ namespace SAQ::Decision
 		std::string detail;  // kFail / kUnknown 时 = 对应条件的说明（与抽取前一致）
 	};
 
-	// 进度门槛（CTDA 记录级条件，AND 语义）：
+	// 进度门槛（CTDA 记录级条件；★★ 第 87 轮起支持 **OR 组**）：
 	//   * a_count == 0 ⇒ kNoGates；
-	//   * 切片越界（a_begin / a_count vs a_conds.size()）⇒ kUnknown（"门槛切片越界"）；
-	//   * 逐条求值结果里**第一条非 kPass** 的结论原样返回（kFail = 进度没到；
-	//     kUnknown = 求值不了 ⇒ 放行）；全 kPass ⇒ kPass。
+	//   * 切片越界（a_begin / a_count vs a_conds.size() 或 a_orBits.size()）⇒ kUnknown
+	//     （"门槛切片越界" / "门槛 OR 位切片越界"）；
+	//   * a_orBits[i] = 该条 CTDA 的 type bit0（OR 位）—— 语义 = 「本条**开始一个
+	//     OR 组**」（第 86 轮反汇编实证，见 docs/08 4.3）：组 = 从本条起直到第一条
+	//     不带 OR 位的条件（含）或列表末尾；**组内相互 OR、组作为整体 AND**；
+	//   * 任一条 kUnknown ⇒ kUnknown（求值不了 ⇒ 放行 —— 不误藏）；
+	//   * 最终结果：组合为真 ⇒ kPass；否则 kFail（detail = 第一条判假条件）。
+	//   ★ 无 OR 位时与旧实现（逐条 AND、第一条非 pass 原样返回）等价；
+	//     唯一的宽松化：kFail 之后还有 kUnknown ⇒ 放行（旧实现是顺序决定）。
 	GateDecision DecideProgressGates(std::span<const CondCheck> a_conds,
-		std::uint32_t a_begin, std::uint8_t a_count);
+		std::span<const std::uint8_t> a_orBits, std::uint32_t a_begin, std::uint8_t a_count);
 
 	// INFO 门槛（对话分组：一条对话 = 一组条件（AND），组间是「任一条对话可用即可」）。
 	//

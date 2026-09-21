@@ -944,6 +944,68 @@ step = menu.close
 step = guide.clear
 
 ; ----------------------------------------------------------------------------
+;  用例 8b/8c：第 87 轮 —— 进度门槛的 **OR 组**（引擎语义，第 86 轮反汇编实证）
+;
+;  目的 = 钉住「OR 组参与进度门槛判定」这一新语义：
+;    FFConstantZ06（亲爱的姐妹）的门槛 = `UC04 完成 AND (Z04 完成 OR Z05 完成)`
+;    （数据侧按引擎语义成组纳入 —— 见 docs/08 4.3 与 analyze_ctda.py::build_gates）。
+;
+;  判据（PASS 线）：
+;    ① `[case:r87_or_group]`（A）：**UC04 完成 + Z04/Z05 都没做** ⇒ OR 组不满足 ⇒
+;       「亲爱的姐妹」必须出现在「进度没到」名单里
+;       （★ 旧实现只看 UC04 ⇒ 会放行 —— 本段正是新旧差异点）；
+;    ② `[case:r87_or_group_pass]`（B）：再做 Z04（Z05 仍不做）⇒ `(Z04 OR Z05)` 满足 ⇒
+;       **本条用例的窗口里**名单没有「亲爱的姐妹」（拆两条 = `assert.nolog` 的窗口
+;       只覆盖本条用例 —— 与 r67/r69 同样的理由）。
+;
+;  ★ 本用例会改 UC04 / FFConstantZ04 / FFConstantZ05 / FFConstantZ06（自身）的状态，
+;    每条各自收尾 reset；只开任务菜单，不传送、不开星图、不读档。
+; ----------------------------------------------------------------------------
+[case:r87_or_group]
+desc = 第 87 轮：进度门槛 OR 组（A）—— UC04 完成但 Z04/Z05 都没做时「亲爱的姐妹」必须被藏
+step = note === 准备：链上全部回滚，再完成 UC04（构造「UC04 完成 + Z04/Z05 都没做」）===
+step = ping
+step = quest.reset 0x002117CA
+step = quest.reset 0x002149FA
+step = quest.reset 0x0021261E
+step = quest.reset 0x002AAE8D
+step = wait 2000
+step = quest.complete 0x002AAE8D
+step = wait 2500
+step = note === OR 组不满足 ⇒ 亲爱的姐妹必须出现在「进度没到」名单里（新旧差异点）===
+step = menu.open
+step = assert.log 推送成功 scope=prev timeout=12000
+step = assert.log 进度没到: .*亲爱的姐妹\[0x002117CA scope=case timeout=3000
+step = menu.close
+step = note === 收尾：UC04 / Z04 / Z05 全部 reset（用例自清场）===
+step = quest.reset 0x002AAE8D
+step = quest.reset 0x002149FA
+step = quest.reset 0x0021261E
+step = wait 1500
+
+[case:r87_or_group_pass]
+desc = 第 87 轮：进度门槛 OR 组（B）—— 补做 Z04 后「亲爱的姐妹」不再被藏（OR 语义）
+step = note === 准备：UC04 完成 + Z04 完成（Z05 仍不做）===
+step = ping
+step = quest.reset 0x002117CA
+step = quest.reset 0x0021261E
+step = quest.reset 0x002149FA
+step = quest.reset 0x002AAE8D
+step = wait 2000
+step = quest.complete 0x002AAE8D
+step = quest.complete 0x002149FA
+step = wait 2500
+step = note === (Z04 OR Z05) 满足 ⇒ 本条用例窗口里名单没有「亲爱的姐妹」===
+step = menu.open
+step = assert.log 推送成功 scope=prev timeout=12000
+step = assert.nolog 进度没到: .*亲爱的姐妹\[0x002117CA scope=case timeout=3000
+step = menu.close
+step = note === 收尾：UC04 / Z04 reset（用例自清场）===
+step = quest.reset 0x002AAE8D
+step = quest.reset 0x002149FA
+step = wait 1500
+
+; ----------------------------------------------------------------------------
 ;  用例 8：第 62 轮（大项 I）—— 自动读档（**指定存档**）
 ;
 ;  目的 = 把「读档 / 加载窗口」引入 harness —— 候选降级观察期（第 49 轮补丁②）那半段

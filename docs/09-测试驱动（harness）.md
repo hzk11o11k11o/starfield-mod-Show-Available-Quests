@@ -1208,3 +1208,17 @@ r80 那条；另外 4 条「未命中」是上轮没跑到的步骤（用例早�
   `链式门槛=49(过4/藏43/未知0)` + 截断留痕（另有 3 条）/ `同伴固定=4` / `势力入口固定=4`。
 * 剩余：**眼睛判据**（第 81/82 轮文案，玩家看）+ **重打上传包 0.1.6**（当前 0.1.5 不含
   第 82/84 轮修复）—— 见 `docs/99` 十一·第 85 轮块。
+
+## 十四·补十九、第 87 轮：进度门槛 OR 组的产品化（用例 22 → **24 条**）
+
+* **产品**：`Decision::DecideProgressGates` 换新签名（多一个 `orBits` span）并按**引擎算法**
+  （acc / orAcc / inOr —— 第 86 轮反汇编实证，见 `docs/08` 4.4）组合三态；任一条 kUnknown
+  ⇒ 放行。静态表 `StaticCondGate` 加 `orBit` 列（kQuestConds **11 条**，OR 组 2 条
+  = FFConstantZ06 的 Z04/Z05）。
+* **新用例**（`[case:r87_or_group]` A / `[case:r87_or_group_pass]` B）：
+  * A = UC04 完成 + Z04/Z05 都没做 ⇒「亲爱的姐妹」在「进度没到」名单里
+    （★ 旧实现只看 UC04 ⇒ 会放行 —— 本用例正是新语义的判据）；
+  * B = 补做 Z04（`quest.complete 0x002149FA`）⇒ **本条用例窗口里**名单没有它
+    （拆两条 = `assert.nolog` 窗口只覆盖本条用例，与 r67/r69 同样的理由）；
+  * 两条各自收尾 reset（会改 UC04 / FFConstantZ04 / FFConstantZ05 / FFConstantZ06 的状态）。
+* **判据**：`check_results.py` 退出码 0（**24/24**）+ r87 两条 PASS + 日志 `驱动器 v70` 串。

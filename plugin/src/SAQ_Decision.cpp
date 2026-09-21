@@ -66,31 +66,81 @@ namespace SAQ::Decision
 
 	// ---------------------------------------------------------------- 3. 条件门槛
 
+	// ★★ 第 87 轮：**OR 组**（引擎语义 —— 第 86 轮反汇编实证，见 docs/08 4.3）：
+	//   CTDA type 的 bit0（OR）标记「本条**开始一个 OR 组**」——
+	//   组 = 从带 OR 位的那条起，直到**第一条不带 OR 位的条件**（含）或列表末尾；
+	//   组内条件相互 OR、组作为整体 AND；无 OR 位的独立条件各自 AND。
+	//   引擎算法（TESCondition::IsTrue @0xE46700）等价形态：
+	//     acc = true; orAcc = false; inOr = false
+	//     for c in conds:
+	//       if !inOr: orBit ? (orAcc = c, inOr = true) : (acc = acc && c)
+	//       else:     orAcc = orAcc || c; (!orBit) ? (inOr = false, acc = acc && orAcc) : skip
+	//     if inOr: acc = acc && orAcc
+	//   三态处理：任一条 kUnknown ⇒ 立即 kUnknown（放行 —— 不知道就不能下隐藏结论，
+	//   ★ 比旧实现的「顺序决定」更保守，不误藏）；最终 acc == false ⇒ kFail
+	//   （detail = 第一条判假条件的说明）。
 	GateDecision DecideProgressGates(std::span<const CondCheck> a_conds,
-		std::uint32_t a_begin, std::uint8_t a_count)
+		std::span<const std::uint8_t> a_orBits, std::uint32_t a_begin, std::uint8_t a_count)
 	{
 		GateDecision out;
 		if (a_count == 0) {
 			return out;  // kNoGates：这条任务没有门槛
 		}
-		// 越界检查（与 SAQ_QuestCond.cpp 一致；`||` 短路防止无符号下溢）
+		// 越界检查（`||` 短路防止无符号下溢）
 		const auto total = a_conds.size();
 		if (a_begin > total || a_count > total - a_begin) {
 			out.verdict = CondVerdict::kUnknown;
 			out.detail = "门槛切片越界";
 			return out;
 		}
+		// OR 位与条件必须同长（结构异常 ⇒ 放行）
+		if (a_begin > a_orBits.size() || a_count > a_orBits.size() - a_begin) {
+			out.verdict = CondVerdict::kUnknown;
+			out.detail = "门槛 OR 位切片越界";
+			return out;
+		}
+
+		bool acc = true;     // AND 累计（组外）
+		bool orAcc = false;  // 当前 OR 组的累计
+		bool inOr = false;   // 是否在 OR 组里
+		std::string firstFail;
 
 		for (std::size_t i = 0; i < a_count; ++i) {
 			const auto& c = a_conds[a_begin + i];
-			if (c.verdict != CondVerdict::kPass) {
-				// kFail = 进度没到；kUnknown = 求值不了 ⇒ 放行（原样带回结论与说明）
-				out.verdict = c.verdict;
+			if (c.verdict == CondVerdict::kUnknown) {
+				out.verdict = CondVerdict::kUnknown;  // 求值不了 ⇒ 放行
 				out.detail = c.detail;
 				return out;
 			}
+			const bool truth = (c.verdict == CondVerdict::kPass);
+			if (!truth && firstFail.empty()) {
+				firstFail = c.detail;
+			}
+			const bool orBit = (a_orBits[a_begin + i] != 0);
+			if (!inOr) {
+				if (orBit) {
+					orAcc = truth;
+					inOr = true;
+				} else {
+					acc = acc && truth;
+				}
+			} else {
+				orAcc = orAcc || truth;
+				if (!orBit) {
+					inOr = false;
+					acc = acc && orAcc;
+				}
+			}
 		}
-		out.verdict = CondVerdict::kPass;
+		if (inOr) {
+			acc = acc && orAcc;  // 组延伸到列表末尾
+		}
+		if (acc) {
+			out.verdict = CondVerdict::kPass;
+		} else {
+			out.verdict = CondVerdict::kFail;
+			out.detail = firstFail.empty() ? std::string("门槛为假") : std::move(firstFail);
+		}
 		return out;
 	}
 

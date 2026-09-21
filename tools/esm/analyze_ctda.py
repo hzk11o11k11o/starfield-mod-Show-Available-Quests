@@ -29,7 +29,11 @@
 
 ★ 第 35 轮定案：真正拿来做「进度没到不显示」的判据叫 **gate（进度门槛）**，
   比「可有条件」更窄、更安全（--gates 输出 ref/ctda_gates.json）：
-    * op == 0x00（等于；0x01/0xA0/0xA4 的语义未反汇编确认 ⇒ 放行）
+    * ★★ 第 87 轮（第 86 轮反汇编实证，见 docs/08 4.3）：type 按位域解析 ——
+      **运算符 = type >> 5 必须为 0（等于）**；flags = type & 0x1F **只允许 OR 位
+      （0x01）**，其余（别名 / GLOB / Pack Data / 交换主客体）一律放行；
+      OR 位条件按**引擎的 OR 组语义**成组处理（build_gates：组内 OR、组间 AND；
+      组里有一条不能当门槛 ⇒ 整组放弃）
     * Run On == Subject
     * 函数是 GetQuestRunning / GetQuestCompleted / GetStageDone 之一
     * 比较值 ∈ {0.0, 1.0}
@@ -82,9 +86,18 @@ GATE_FUNCS = {
 FORMID_RE = re.compile(r"\[(?:QUST|NPC_|KYWD|GLOB|FACT|CNDF|LCRT|FLST)?:?([0-9A-F]{8})\]")
 
 
-def build_gate(c: dict, self_formid: int) -> dict | None:
-    """一条 CTDA 能否作为「进度门槛」（见文件头注释）。不能则返回 None。"""
-    if c.get("op") != 0x00:                 # 0x01/0xA0/0xA4 语义未定 ⇒ 放行
+def cond_to_gate(c: dict, self_formid: int) -> dict | None:
+    """一条 CTDA 能否作为「进度门槛」。不能则返回 None。
+
+    ★★ 第 87 轮：type 按位域解析（第 86 轮反汇编实证，见 docs/08 4.3）——
+      运算符 = type >> 5（必须 == 0，即「等于」）；flags = type & 0x1F：
+      **只允许 OR 位（0x01）**，其余（别名 / GLOB / Pack Data / 交换主客体）一律放行。
+    """
+    t = c.get("op", 0)
+    op, flags = t >> 5, t & 0x1F
+    if op != 0:                             # 只支持「等于」（其它运算符暂不求值）
+        return None
+    if flags & ~0x01:                       # 只允许 OR 位
         return None
     if c.get("runOn") != 0:                 # Run On 必须是 Subject
         return None
@@ -106,14 +119,50 @@ def build_gate(c: dict, self_formid: int) -> dict | None:
         "quest_master": 0,                  # 目前全部是 Starfield.esm（kQuestMasters[0]）
         "quest_local": p1 & 0xFFFFFF,
         "stage": (c.get("p2", 0) & 0xFFFF) if name == "GetStageDone" else 0,
+        "or_bit": 1 if (flags & 0x01) else 0,   # ★ 第 87 轮：OR 位（组语义见 build_gates）
     }
+
+
+def build_gates(conds: list, self_formid: int) -> list:
+    """把一条任务的**全部条件**转成门槛列表（按引擎的 OR 组语义）。
+
+    ★★ 第 87 轮（引擎算法见 docs/08 4.3）：OR 位标记「**开始一个 OR 组**」——
+      组 = 从带 OR 位的那条起，直到**第一条不带 OR 位的条件**（含）或列表末尾；
+      组内条件相互 OR、组作为整体 AND；无 OR 位的独立条件各自 AND。
+
+    保守规则：**OR 组里只要有一条不能作为门槛（非进度类 / 自引用 / 含其它 flags），
+      整组放弃**（不倒半组 —— 那样会把 OR 语义算错，宁可少过滤）。
+    """
+    gates: list = []
+    i, n = 0, len(conds)
+    while i < n:
+        if not (conds[i].get("op", 0) & 0x01):      # 无 OR 位：独立条件
+            g = cond_to_gate(conds[i], self_formid)
+            if g:
+                gates.append(g)
+            i += 1
+            continue
+        # 有 OR 位：本条开始一个 OR 组 —— 找到「第一个无 OR 位的条件」（含）或列表末尾
+        j = i
+        while j < n and (conds[j].get("op", 0) & 0x01):
+            j += 1
+        if j < n:
+            j += 1                                  # 含关闭组的那个条件
+        group = [cond_to_gate(x, self_formid) for x in conds[i:j]]
+        if all(group):
+            gates.extend(group)
+        # else：整组放弃（放行）
+        i = j
+    return gates
 
 
 def parse_ctda(raw_hex: str) -> dict:
     b = bytes.fromhex(raw_hex)
     if len(b) < 32:
         return {"raw": raw_hex, "len": len(b)}
-    op = b[0]
+    # ★ 第 87 轮：type 是 u32（位域：运算符 = type >> 5、flags = type & 0x1F；
+    #   第 86 轮反汇编实证）—— 旧实现只读低字节 b[0]（实测数据恰好都 ≤ 0xFF）。
+    op = struct.unpack_from("<I", b, 0)[0]
     cmp_val = struct.unpack_from("<f", b, 4)[0]
     func = struct.unpack_from("<H", b, 8)[0]
     p1 = struct.unpack_from("<I", b, 12)[0]
@@ -190,7 +239,7 @@ def main() -> int:
             conds.append(pr)
         if conds:
             supported = all(cc["name"] in SUPPORTED for cc in conds)
-            gates = [g for g in (build_gate(cc, fid) for cc in conds) if g]
+            gates = build_gates(conds, fid)     # ★ 第 87 轮：OR 组语义成组纳入
             out.append({
                 "edid": p.get("edid"),
                 "formid": fid,
@@ -245,6 +294,8 @@ def main() -> int:
             if g["name"] == "GetStageDone":
                 q += f", stage {g['stage']}"
             q += f") == {g['want']}"
+            if g.get("or_bit"):
+                q += " [OR组开始]"
             gs.append(q)
         print(f"  {t['edid']:<34} {' AND '.join(gs)}")
 

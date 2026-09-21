@@ -136,29 +136,78 @@ MT_TEST(安全阀_识别率阈值与除法)
 MT_TEST(进度门槛_聚合与越界)
 {
 	const std::vector<CondCheck> t = { P(), F("A"), U("B"), P(), P() };
+	const std::vector<std::uint8_t> no = { 0, 0, 0, 0, 0 };   // ★ 第 87 轮：无 OR 位
 
-	MT_CHECK_EQ(DecideProgressGates(t, 0, 0).verdict, CondV::kNoGates);   // count=0 优先于越界检查
-	MT_CHECK_EQ(DecideProgressGates(t, 5, 0).verdict, CondV::kNoGates);
-	MT_CHECK_EQ(DecideProgressGates(t, 5, 1).verdict, CondV::kUnknown);   // begin == size ⇒ 越界
-	MT_CHECK_EQ(DecideProgressGates(t, 6, 1).verdict, CondV::kUnknown);   // begin > size ⇒ 越界
-	MT_CHECK_EQ(DecideProgressGates(t, 4, 2).verdict, CondV::kUnknown);   // count 超出剩余
-	const auto over = DecideProgressGates(t, 9, 1);
+	MT_CHECK_EQ(DecideProgressGates(t, no, 0, 0).verdict, CondV::kNoGates);  // count=0 优先于越界检查
+	MT_CHECK_EQ(DecideProgressGates(t, no, 5, 0).verdict, CondV::kNoGates);
+	MT_CHECK_EQ(DecideProgressGates(t, no, 5, 1).verdict, CondV::kUnknown);  // begin == size ⇒ 越界
+	MT_CHECK_EQ(DecideProgressGates(t, no, 6, 1).verdict, CondV::kUnknown);  // begin > size ⇒ 越界
+	MT_CHECK_EQ(DecideProgressGates(t, no, 4, 2).verdict, CondV::kUnknown);  // count 超出剩余
+	const auto over = DecideProgressGates(t, no, 9, 1);
 	MT_CHECK_EQ(over.detail, std::string("门槛切片越界"));
 
-	MT_CHECK_EQ(DecideProgressGates(t, 0, 1).verdict, CondV::kPass);      // 单条 pass
-	MT_CHECK_EQ(DecideProgressGates(t, 3, 2).verdict, CondV::kPass);      // 全 pass
+	// ★ 第 87 轮：OR 位切片必须与条件同长（结构异常 ⇒ 放行）
+	const std::vector<std::uint8_t> shortOrs = { 0, 0 };
+	const auto orOver = DecideProgressGates(t, shortOrs, 0, 3);
+	MT_CHECK_EQ(orOver.verdict, CondV::kUnknown);
+	MT_CHECK_EQ(orOver.detail, std::string("门槛 OR 位切片越界"));
 
-	const auto f1 = DecideProgressGates(t, 0, 3);                          // [P,F,U] ⇒ 第一条非 pass
+	MT_CHECK_EQ(DecideProgressGates(t, no, 0, 1).verdict, CondV::kPass);     // 单条 pass
+	MT_CHECK_EQ(DecideProgressGates(t, no, 3, 2).verdict, CondV::kPass);     // 全 pass
+
+	const auto f1 = DecideProgressGates(t, no, 1, 1);                        // [F]
 	MT_CHECK_EQ(f1.verdict, CondV::kFail);
 	MT_CHECK_EQ(f1.detail, std::string("A"));
 
-	const auto u1 = DecideProgressGates(t, 2, 1);                          // [U] ⇒ unknown（放行）
+	const auto u1 = DecideProgressGates(t, no, 2, 1);                        // [U] ⇒ unknown（放行）
 	MT_CHECK_EQ(u1.verdict, CondV::kUnknown);
 	MT_CHECK_EQ(u1.detail, std::string("B"));
 
-	MT_CHECK_EQ(DecideProgressGates(t, 0, 4).verdict, CondV::kFail);       // fail 优先于后面的 unknown
-	MT_CHECK_EQ(DecideProgressGates(t, 1, 2).verdict, CondV::kFail);       // [F,U] ⇒ fail
-	MT_CHECK_EQ(DecideProgressGates(t, 2, 2).verdict, CondV::kUnknown);    // [U,P] ⇒ unknown
+	// ★ 第 87 轮：kUnknown 优先于 kFail（「不知道」不能下隐藏结论 —— 比旧实现更保守）
+	MT_CHECK_EQ(DecideProgressGates(t, no, 1, 2).verdict, CondV::kUnknown);  // [F,U]
+	MT_CHECK_EQ(DecideProgressGates(t, no, 0, 3).verdict, CondV::kUnknown);  // [P,F,U]
+	MT_CHECK_EQ(DecideProgressGates(t, no, 2, 2).verdict, CondV::kUnknown);  // [U,P]
+}
+
+MT_TEST(进度门槛_OR组_引擎语义)
+{
+	// orBit：0 = 独立（AND）；1 = 本条**开始一个 OR 组**（语义见 SAQ_Decision.h / docs/08 4.3）
+	const std::vector<std::uint8_t> or_010 = { 0, 1, 0 };
+
+	// [A, B(OR), C] ⇒ A AND (B OR C)
+	const std::vector<CondCheck> abc = { P(), F("B"), P() };
+	MT_CHECK_EQ(DecideProgressGates(abc, or_010, 0, 3).verdict, CondV::kPass);
+	const std::vector<CondCheck> abc2 = { P(), F("B"), F("C") };
+	const auto abcFail = DecideProgressGates(abc2, or_010, 0, 3);
+	MT_CHECK_EQ(abcFail.verdict, CondV::kFail);
+	MT_CHECK_EQ(abcFail.detail, std::string("B"));       // detail = 第一条判假条件
+
+	// [A(OR), B(OR)] ⇒ A OR B（组延伸到列表末尾）
+	const std::vector<std::uint8_t> or_11 = { 1, 1 };
+	const std::vector<CondCheck> ab = { F("A"), P() };
+	MT_CHECK_EQ(DecideProgressGates(ab, or_11, 0, 2).verdict, CondV::kPass);
+	const std::vector<CondCheck> ab2 = { F("A"), F("B") };
+	MT_CHECK_EQ(DecideProgressGates(ab2, or_11, 0, 2).verdict, CondV::kFail);
+
+	// FFConstantZ06 的形状（表内真实数据）：[UC04, Z04(OR), Z05(OR)] ⇒ UC04 AND (Z04 OR Z05)
+	const std::vector<std::uint8_t> or_011 = { 0, 1, 1 };
+	const std::vector<CondCheck> ff = { P(), F("Z04"), P() };
+	MT_CHECK_EQ(DecideProgressGates(ff, or_011, 0, 3).verdict, CondV::kPass);  // Z04 没做、Z05 做了 ⇒ 显示
+	const std::vector<CondCheck> ff2 = { P(), F("Z04"), F("Z05") };
+	MT_CHECK_EQ(DecideProgressGates(ff2, or_011, 0, 3).verdict, CondV::kFail); // 两个都没做 ⇒ 隐藏
+	const std::vector<CondCheck> ff3 = { F("UC04"), P(), P() };
+	MT_CHECK_EQ(DecideProgressGates(ff3, or_011, 0, 3).verdict, CondV::kFail); // UC04 没做 ⇒ 隐藏
+
+	// 独立段与 OR 组混合：[A, B(OR), C, D] ⇒ A AND (B OR C) AND D
+	const std::vector<std::uint8_t> or_0100 = { 0, 1, 0, 0 };
+	const std::vector<CondCheck> mixFail = { P(), P(), F("C"), F("D") };
+	MT_CHECK_EQ(DecideProgressGates(mixFail, or_0100, 0, 4).verdict, CondV::kFail);
+	const std::vector<CondCheck> mixPass = { P(), F("B"), P(), P() };
+	MT_CHECK_EQ(DecideProgressGates(mixPass, or_0100, 0, 4).verdict, CondV::kPass);
+
+	// OR 组里出现 unknown ⇒ 放行（保守 —— 不误藏）
+	const std::vector<CondCheck> uk = { P(), U("B"), F("C") };
+	MT_CHECK_EQ(DecideProgressGates(uk, or_010, 0, 3).verdict, CondV::kUnknown);
 }
 
 // ---------------------------------------------------------------- 4. INFO 门槛
