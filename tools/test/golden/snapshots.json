@@ -36,6 +36,11 @@
       "sha256": "8615640e85e2023d5a33f3bad31fd174b69dd8e43931fb35b6a4af881d8484c3",
       "summary": "任务 261 / 候选 931 / 进度门槛 9 / INFO对话 290 / INFO条件 341 / 链式边 55"
     },
+    "ui/missionmenu/saqdata/SaqEmbeddedPayload.inc": {
+      "desc": "内嵌回退载荷（gen_quest_table.py）",
+      "sha256": "4f64e9ed2e66a7a023ffa4d6f7a316533757c941d1173a0a422a6bb991f190a3",
+      "summary": "条目 202 / 第一条 2223312"
+    },
     "plugin/src/SAQ_EntryTable.h": {
       "desc": "入口条目表（gen_entry_table.py，DLL 编译进去）",
       "sha256": "3962590fc7d88ab2b69072d29a293ad138f411f21c2fc2afe5febb6ec9d4410a",

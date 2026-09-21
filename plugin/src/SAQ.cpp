@@ -176,6 +176,7 @@ namespace SAQ
 			//   「后续」（承诺任务）不在其中：照旧走链式门槛（见 kChainGates 里的同伴边）。
 			std::size_t companionPinned{};    // 固定显示的同伴任务数
 			std::size_t companionGateMiss{};  // 其中被门槛判「进度没到」但被放行的条数
+			std::size_t companionOrdered{};   // ★ 前置到列表开头的同伴条目数（按同伴分组）
 			std::string companionSamples;     // 名单（任务名已带同伴前缀）
 			bool        filterApplied{};      // 这次到底有没有按运行时状态过滤
 			std::string samples;              // 被剔掉的前几条（名字 + 状态）
@@ -1109,6 +1110,8 @@ namespace SAQ
 				// ★★ 第 74 轮（同伴好感度任务）：界面据此在描述里提示「需要一定好感度
 				//   才能接取」（载荷第 8 列）—— 固定显示的「入口」同伴任务才有这个标记。
 				entry.companionPinned = pinned;
+				// ★★ 第 74 轮：同伴下标（只用于下面的列表排序 —— 同伴任务前置 + 分组）。
+				entry.companion = info.companion;
 				// ★ 第 65 轮（任务专属图标）：type 推真实任务类型（此前推 6「可接任务」
 				//   统一值）—— 界面按它 + faction 选图标，与原版任务菜单一致。
 				entry.type = info.type;
@@ -1133,6 +1136,36 @@ namespace SAQ
 			a_stats.filterApplied = Decision::RuntimeFilterApplied(
 				Decision::RecognizedPct(a_stats.recognized, a_stats.live));
 			a_stats.hidden = a_stats.filterApplied ? hiddenByRuntime : 0;
+
+			// ★★ 第 74 轮（同伴好感度任务）：**把它们放在一起**（玩家要求：「同伴任务是
+			//   不是都放在一起（我观察到任务板都是按顺序放在一起的），如果不是，把它们
+			//   放在一起」）—— 同伴任务**前置**到列表开头，按同伴分组、同一位同伴的
+			//   「入口」（个人任务）在「后续」（承诺任务）之前；其余任务保持原顺序
+			//   （static 稳定排序 ⇒ 非同伴条目相对顺序不变）；任务板入口照旧追加在末尾。
+			//   为什么前置：这类任务是「固定显示」的重点信息（好感度提示），玩家打开
+			//   tab 第一眼就该看到；任务板条目本来就是「无限任务的入口」，放末尾与之对称。
+			//   排序在界面侧同样成立：载荷顺序 → BuildMergedList → InitializeEntries
+			//   （`_loc2_` 正常段保持输入顺序）→ 我们的 tab 只看 bSaqAvailable 条目。
+			std::stable_sort(a_out.begin(), a_out.end(),
+				[](const QuestEntry& a, const QuestEntry& b) {
+					const bool ca = a.companion >= 0;
+					const bool cb = b.companion >= 0;
+					if (ca != cb) {
+						return ca;   // 同伴任务在前
+					}
+					if (!ca) {
+						return false;   // 都不是同伴任务：保持原顺序（stable_sort）
+					}
+					if (a.companion != b.companion) {
+						return a.companion < b.companion;   // 按同伴分组
+					}
+					return a.companionPinned > b.companionPinned;   // 入口在后续之前
+				});
+			for (const auto& e : a_out) {
+				if (e.companion >= 0) {
+					++a_stats.companionOrdered;   // 列表开头的同伴条目数（日志/用例证据）
+				}
+			}
 
 			// ★ 第 27 轮：追加「无限任务入口」（任务板）条目（见 AppendEntryRows）。
 			//   默认模式（0）与「只显示入口」模式（5）显示；其它测试模式 1~4 不加
@@ -1257,6 +1290,13 @@ namespace SAQ
 			if (a_stats.companionPinned) {
 				out += std::format(" 同伴固定={}(其中{}条被门槛判「进度没到」但放行)",
 					a_stats.companionPinned, a_stats.companionGateMiss);
+			}
+			// ★★ 第 74 轮：「把它们放在一起」—— 同伴条目被**前置**到列表开头（按同伴
+			//   分组、入口在后续前）。这里的数字 = 列表开头连续的同条目数；界面侧的
+			//   `order=` 探针给出**顺序本身**（SAQ_Report 报前几条的 uID）。
+			if (a_stats.companionOrdered) {
+				out += std::format(" 同伴分组前置={}(按同伴分组，入口在后续前)",
+					a_stats.companionOrdered);
 			}
 			if (!a_stats.companionSamples.empty()) {
 				out += " 同伴固定名单: " + a_stats.companionSamples;

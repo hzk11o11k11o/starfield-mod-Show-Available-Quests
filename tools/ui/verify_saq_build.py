@@ -676,8 +676,9 @@ def main() -> int:
         #   SaqBuildEntry 用真实 iType/iFaction 喂原版 SetFactionIcon）。
         "阵营边界函数 SaqSafeFaction": b"SaqSafeFaction",
         # ★★ 第 65 轮：构建指纹 ——**以后每改一次 SWF 都要 +1 并同步这里**。
-        #   ★★ 第 74 轮（同伴好感度任务）：stamp 54 → 55（载荷加第 8 列 + 描述提示）。
-        "构建指纹 stamp=55": b"stamp=55",
+        #   ★★ 第 74 轮（同伴好感度任务）：stamp 54 → 55（载荷加第 8 列 + 描述提示）
+        #     → 56（同轮续：`order=` 顺序探针 —— 同伴任务分组）。
+        "构建指纹 stamp=56": b"stamp=56",
         # ★★ 第 74 轮（同伴好感度任务）：「入口」同伴任务固定显示 + 描述提示 + 名字前缀。
         #   ① 载荷第 8 列（bSaqCompanion）与解析分支；
         #   ② 描述提示函数（SaqCompanionNote，中英文案）；
@@ -690,6 +691,12 @@ def main() -> int:
         #   此处只取不含词形变化的那一段（写 "reach a certain" 会永远匹配不上）。
         "同伴提示(英)": b"a certain affinity level",
         "内嵌载荷同伴名前缀(中)": "巴雷特：违约".encode(),
+        # ★★ 第 74 轮续（「把它们放在一起」）：列表**顺序**探针 ——
+        #   SAQ_Report 新增 `order=[…]`（MissionsList.SAQ_OrderProbe：我们 tab 前几行
+        #   的 uID）。它是「同伴条目前置 + 按同伴分组」在**运行期**的唯一硬证据
+        #   （载荷顺序 → InitializeEntries → entryList 这条链路只靠代码保证）。
+        "列表顺序探针函数": b"SAQ_OrderProbe",
+        "报告字段 order=[": b" order=[",
         # ★★ 第 65 轮：图标帧自检 —— SAQ_Report 的 icon= 字段 + MissionsList.SAQ_IconProbe。
         #   数据层对了 ≠ 图标帧真的切过去了（索引错位 / 帧名拼错 / sprite 结构变化都会
         #   停在第 1 帧）；实机日志里的 `icon=[0x…:Constellation,…]` 是图标真的画出来的证据。
@@ -1021,6 +1028,9 @@ def main() -> int:
             "同伴固定名单（同伴固定名单:）": "同伴固定名单: ",
             "同伴固定放行标记（跳过门槛）": "跳过门槛",
             "同伴名查表（kCompanionNamesZh）": "同伴=",
+            # ★★ 第 74 轮续（「把它们放在一起」）：同伴条目前置的统计 ——
+            #   `同伴分组前置=N(按同伴分组，入口在后续前)`。
+            "同伴分组前置统计": "同伴分组前置=",
         }.items():
             all_ok &= check(f"DLL · {name}", blob, needle.encode())
         # ★★ 第 49 轮（引擎内 harness）：用例驱动器 + 原语层。
@@ -1247,6 +1257,14 @@ def main() -> int:
                 all_ok &= check("用例计划 · r74 后续任务仍走链式门槛断言",
                                 plan_text.encode(),
                                 "assert.log 链式没到: .*巴雷特：承诺\\[0x001C7185".encode())
+                #   ★★ 第 74 轮续（「把它们放在一起」）：④ 分组前置 —— 日志统计 +
+                #   界面顺序探针（`order=` 的第一条必须是 4 条入口同伴任务之一）。
+                all_ok &= check("用例计划 · r74 同伴分组前置统计断言",
+                                plan_text.encode(),
+                                "assert.log 同伴分组前置=\\d+\\(按同伴分组".encode())
+                all_ok &= check("用例计划 · r74 界面顺序探针断言（order= 首条为入口同伴任务）",
+                                plan_text.encode(),
+                                "assert.ui order=\\[0x(21ecd0|369ab|263262|2c7c11)".encode())
                 # ★★ 第 62 轮（大项 I）：自动读档用例 —— ① 只允许用**用户指定的那个存档**
                 #   （子串 Save7_3AB5A2FA）；② 读档步骤在；③ 存档列表诊断在。
                 all_ok &= check("用例计划 · r62 自动读档（指定存档）",
@@ -1746,6 +1764,31 @@ def main() -> int:
             print(("OK  " if ok_row else "MISS") +
                   f" 静态表 · 同伴样本 {label}（{want_name} pin={want_pin}）")
             all_ok &= ok_row
+
+        # ★★ 第 74 轮续（「把它们放在一起」）：**内嵌回退载荷的条目顺序** —— 与 C++ 侧
+        #   逐条对齐（同伴任务前置 + 按同伴分组、入口在后续前；其余保持表顺序）。
+        #   为什么查它：C++ 推送失败的头 0.3~0.8 秒用的是这份内嵌数据 —— 顺序不一致会
+        #   让「列表开头忽然跳变」（与第 65 轮「列不对齐」同一类协议纪律）。
+        inc_path = ROOT / "ui/missionmenu/saqdata/SaqEmbeddedPayload.inc"
+        if inc_path.exists():
+            inc = inc_path.read_text(encoding="utf-8", errors="replace")
+            # 期望的表头 8 条（顺序 = 同伴下标，每位同伴「入口在后续前」）：
+            #   安德列娅 难侍二主/承诺 → 巴雷特 违约/承诺 → 萨姆·科尔 哈特家事/承诺
+            #   → 莎拉·摩根 难忘逝者/承诺
+            want_head = [int(f, 16) for f in
+                         ("0021ECD0", "000B8633", "000369AB", "001C7185",
+                          "00263262", "000DF7AD", "002C7C11", "0027B667")]
+            head = [int(x) for x in re.findall(r"Q\\t(\d+)\\t", inc)[:8]]
+            ok_head = head == want_head
+            print(("OK  " if ok_head else "MISS") +
+                  " 内嵌载荷 · 同伴条目前置（前 8 条 = 同伴任务：按同伴下标分组、入口在后续前）"
+                  + ("" if ok_head else f" ← 实际 {[hex(x) for x in head]}"))
+            all_ok &= ok_head
+            # 反向检查：第一条不能再是基础游戏的最小记录号（0x351A = 平衡账目）——
+            #   那是「未分组」的旧顺序（同伴任务散在 261 条里）。
+            gone = not head or head[0] != 0x351A
+            print(("OK  " if gone else "MISS") + " 内嵌载荷 · 旧「未分组」顺序已替换(反向检查)")
+            all_ok &= gone
 
         # ★★ 第 65 轮（任务专属图标）：**图标映射表** —— 「数据 -> 图标帧」永不落空。
         #

@@ -1090,9 +1090,14 @@ package
          //   ★ 以后每改一次 SWF，就把这个数字 +1（verify 检查 `stamp=` 是否存在）。
          //   ★ 第 65 轮（任务专属图标）：stamp 54 —— 载荷加第 7 列（阵营），
          //     列表图标改为与原版一致（真实 iType + iFaction）。
-         //   ★★ 第 74 轮（同伴好感度任务）：stamp 55 —— 载荷加第 8 列（同伴固定显示），
-         //     描述里提示「需要一定好感度才能接取」（见 SaqCompanionNote）。
-         _loc8_ += " stamp=55";
+         //   ★★ 第 74 轮（同伴好感度任务）：载荷加第 8 列（同伴固定显示），描述里提示
+         //     「需要一定好感度才能接取」（见 SaqCompanionNote）。
+         //   ★★ 第 74 轮续（同伴任务分组）：stamp 56 —— 新增 `order=` 顺序探针
+         //     （同伴任务前置 + 按同伴分组的运行期证据，见 MissionsList.SAQ_OrderProbe）。
+         //     ★ 为什么同轮再 +1：SWF 在**游戏启动阶段**加载，「部署了但游戏没重启」
+         //     时必须能区分「加载的是哪一版」—— 部署前若已跑过 stamp=55 的那份，
+         //     只有升到 56 才能定性。
+         _loc8_ += " stamp=56";
          // ★★ 第 51 轮：入口自检（ep=）—— 见 SaqEntryProbe 的说明。
          //   位置在 stamp 之后、其余字段之前：报告有长度上限，这个字段是当前排查
          //   「测试入口调不到」问题的关键证据，必须优先保下来。
@@ -1110,6 +1115,12 @@ package
          //   于是「悬停的那条 / 界面用的那条 / C++ 解析出的那条」三者在日志里能一次对齐。
          _loc8_ += " press=[" + this.SaqLastPressNote + "] sel=[" + this.SaqLastSelNote + "]"
             + " btn=[" + this.SaqLastBtnNote + "] ev=[" + this.SaqEventLog.join(" ") + "]";
+         // ★★ 第 74 轮（同伴任务分组）：显示列表前 6 条的 uID —— 「同伴任务前置 +
+         //   按同伴分组」的**运行期顺序证据**（见 MissionsList.SAQ_OrderProbe）。
+         if(this.MissionsList_mc != null)
+         {
+            _loc8_ += " order=[" + this.MissionsList_mc.SAQ_OrderProbe() + "]";
+         }
          // 玩家任务日志名单（第 11 轮，诊断用）：QuestData 的「FormID:名字」，最多 12 条。
          // 用途：玩家说「某条可接任务没找到」时，先看它是不是**已经在玩家日志里**
          // （那样它被 C++/AS3 两层过滤中的某一层正当挡掉）—— 在这个名单里一查便知。

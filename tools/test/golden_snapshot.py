@@ -47,6 +47,8 @@ ITEMS: list[tuple[str, str]] = [
     # ★★ 第 74 轮：同伴好感度任务（入口固定显示 + 后续启动边；gen_companion_quests.py）
     ("ref/companion_quests.json", "同伴好感度任务（gen_companion_quests.py）"),
     ("plugin/src/SAQ_QuestTable.h", "静态任务表（gen_quest_table.py，DLL 编译进去）"),
+    # ★★ 第 74 轮续：内嵌回退载荷（顺序与 C++ 载荷逐条对齐 —— 同伴任务前置参见 verify）
+    ("ui/missionmenu/saqdata/SaqEmbeddedPayload.inc", "内嵌回退载荷（gen_quest_table.py）"),
     ("plugin/src/SAQ_EntryTable.h", "入口条目表（gen_entry_table.py，DLL 编译进去）"),
     ("esm/SAQ_ShowAvailableQuests.esm", "代理任务 ESM（patch_saq_esm.py 等，幂等补丁）"),
 ]
@@ -101,6 +103,11 @@ def summarize(rel: str, path: pathlib.Path) -> str:
                 n_pin = sum(1 for q in qs if q.get("pin"))
                 return f"同伴 {len(obj)} / 任务 {len(qs)}（入口 {n_pin}）"
             return f"键 {len(obj)}" if isinstance(obj, dict) else f"条目 {len(obj)}"
+        if rel.endswith("SaqEmbeddedPayload.inc"):
+            # ★★ 第 74 轮续：内嵌载荷 —— 条数 + 第一条 FormID（顺序不变量的第一眼证据）
+            text = path.read_text(encoding="utf-8", errors="replace")
+            fids = re.findall(r"Q\\t(\d+)\\t", text)
+            return f"条目 {len(fids)} / 第一条 {fids[0] if fids else '?'}"
         if path.suffix.lower() == ".h":
             text = path.read_text(encoding="utf-8-sig")
             names = {

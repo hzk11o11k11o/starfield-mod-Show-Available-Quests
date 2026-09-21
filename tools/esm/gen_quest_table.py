@@ -166,6 +166,21 @@ def sanitize_name(s: str) -> str:
     return s.replace("\t", " ").replace("\r", " ").replace("\n", " ").strip()
 
 
+def payload_order(rows: list[dict]) -> list[dict]:
+    """★★ 第 74 轮（同伴好感度任务）：内嵌回退载荷的条目顺序 —— 与 C++ 侧**逐条对齐**。
+
+    C++（SAQ.cpp 的 CollectAvailableQuests）收集完成后把同伴任务**前置**（按同伴分组、
+    同一位同伴的「入口」在「后续」之前），其余任务保持表顺序（稳定排序）；
+    内嵌载荷必须同序 —— 否则「C++ 推送失败 → 内嵌回退」的窗口里列表顺序会跳变
+    （第 65 轮踩过列不对齐的坑，顺序同理）。
+    """
+    companions = [r for r in rows if int(r.get("companion", -1)) >= 0]
+    others = [r for r in rows if int(r.get("companion", -1)) < 0]
+    companions.sort(key=lambda r: (int(r["companion"]),
+                                   0 if int(r.get("companion_pin", 0)) else 1))
+    return companions + others
+
+
 def build_payload(rows: list[dict], title_zh: str = "可接任务", title_en: str = "Available") -> str:
     """与 C++ 侧 BuildPayloadUtf8 **完全同格式**的载荷（AS3 内嵌回退用）。
 
@@ -181,7 +196,8 @@ def build_payload(rows: list[dict], title_zh: str = "可接任务", title_en: st
       提示「需要一定好感度才能接取」；旧载荷缺列 ⇒ false（不提这回事）。
     """
     lines = ["SAQ1", f"T\t{title_zh}\t{title_en}"]
-    for r in rows:
+    # ★★ 第 74 轮：顺序与 C++ 对齐（同伴任务前置 + 按同伴分组，见 payload_order）
+    for r in payload_order(rows):
         fid = r["formid"] if isinstance(r["formid"], int) else int(r["formid"], 16)
         has_target = "1" if int(r.get("cand_count", 0)) else "0"
         approach = "1" if r.get("needs_approach") else "0"

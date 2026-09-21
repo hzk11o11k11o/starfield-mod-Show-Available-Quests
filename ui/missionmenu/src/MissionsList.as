@@ -466,6 +466,42 @@ package
          return _loc1_.join(",");
       }
       
+      // ★★ 第 74 轮（同伴好感度任务）：列表**顺序**自检 —— 报出**显示列表**前 6 条的
+      //   uID（hex，`,` 连接）。SAQ_Report 的 `order=` 字段用它，例如：
+      //     order=[0x21ecd0,0x369ab,0x263262,0x2c7c11,0x351a,…]
+      //
+      // 为什么需要：C++ 把同伴任务**前置**（按同伴分组、入口在后续前）后，载荷顺序
+      //   → BuildMergedList → InitializeEntries（`_loc2_` 正常段保持输入顺序）→
+      //   我们的 tab 只看 bSaqAvailable 条目 —— 这条链路只靠读代码保证；`order=`
+      //   给出**运行期真实顺序**（开关菜单/切 tab 后即可从日志核对）。
+      // 只报 uID（不报名字）：报告有长度上限，且 uID 足以与静态表的记录号对账。
+      // 只看 `bSaqAvailable`（可接任务）条目 —— 与 SAQ_IconProbe 同一过滤：
+      //   entryList 里还混着引擎推来的任务（其它 tab 才可见），把它们报进来会让
+      //   「切 tab 慢一拍」变成假 FAIL；过滤后报的正是**我们 tab 里看得见的那些行**
+      //   的先后顺序（= 用户看到的效果）。
+      public function SAQ_OrderProbe() : String
+      {
+         var _loc1_:Array = new Array();
+         try
+         {
+            var _loc2_:int = 0;
+            while(_loc2_ < entryCount && _loc1_.length < 6)
+            {
+               var _loc3_:Object = entryList[_loc2_];
+               if(_loc3_ != null && _loc3_.bSaqAvailable === true && _loc3_.uID != null)
+               {
+                  _loc1_.push("0x" + Number(_loc3_.uID).toString(16));
+               }
+               _loc2_++;
+            }
+         }
+         catch(e:Error)
+         {
+            return _loc1_.join(",") + "(ex)";  // 诊断函数绝不能让菜单崩
+         }
+         return _loc1_.join(",");
+      }
+      
       override public function onEntryRollover(param1:Event) : *
       {
          if(this.bMouseRolloverEnabled)

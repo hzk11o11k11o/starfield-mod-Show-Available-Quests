@@ -607,7 +607,10 @@ step = menu.close
 ;  判据（本用例的 PASS 线）：
 ;    ① `同伴固定=N(其中M条被门槛判「进度没到」但放行)` 统计行出现；
 ;    ② `同伴固定名单:` 里有「巴雷特：违约」（0x000369AB）—— 名字已带同伴前缀；
-;    ③ 「巴雷特：承诺」（0x001C7185）在**链式没到**名单里（后续任务不固定显示）。
+;    ③ 「巴雷特：承诺」（0x001C7185）在**链式没到**名单里（后续任务不固定显示）；
+;    ④ 「放在一起」（第 74 轮续）—— `同伴分组前置=N(按同伴分组…)` 统计行 + 界面
+;       `order=` 探针（MissionsList.SAQ_OrderProbe）的第一条是 4 条入口同伴任务之一
+;       （同伴条目前置到列表开头、按同伴分组）。
 ;
 ;  ★ 只动巴雷特的两条任务状态（个人 + 承诺）；不传送、不开星图。
 ; ----------------------------------------------------------------------------
@@ -625,6 +628,14 @@ step = assert.log 同伴固定=\d+\(其中\d+条被门槛判「进度没到」�
 step = assert.log 同伴固定名单: .*巴雷特：违约\[0x000369AB scope=case timeout=3000
 step = note === 后续任务（巴雷特：承诺）仍应在「链式没到」名单里 ===
 step = assert.log 链式没到: .*巴雷特：承诺\[0x001C7185 scope=case timeout=3000
+step = note === 「放在一起」：同伴条目前置（日志统计 + 界面 order= 顺序探针）===
+step = assert.log 同伴分组前置=\d+\(按同伴分组 scope=case timeout=3000
+step = ui.tab
+step = wait 1500
+; ★ 探针报的是**我们 tab 里前几行的 uID**（MissionsList.SAQ_OrderProbe）：
+;   第一条必须是 4 条「入口」同伴任务之一（Andreja 0x21ECD0 / Barrett 0x369AB /
+;   SamCoe 0x263262 / SarahMorgan 0x2C7C11）—— 即同伴任务真的排在最前。
+step = assert.ui order=\[0x(21ecd0|369ab|263262|2c7c11) timeout=8000
 step = menu.close
 step = guide.clear
 

@@ -60,6 +60,10 @@ namespace SAQ
 		//   界面据此在描述里提示「需要与同伴的好感度达到一定水平后才能接取」
 		//   （载荷第 8 列）—— 任务名前缀（同伴名）已经在静态表的名字里。
 		bool          companionPinned{};
+		// ★★ 第 74 轮：同伴下标（-1 = 不是同伴任务；≥0 = kCompanionNames* 下标）。
+		//   **只用于列表排序**（同伴任务前置 + 按同伴分组 —— 玩家要求「把它们放在一起」），
+		//   不进载荷（界面不需要它：名字已带前缀、pin 标记单列）。
+		std::int8_t   companion{-1};
 		std::string   nameZh;     // 中文显示名（UTF-8）
 		std::string   nameEn;     // 英文显示名（UTF-8）
 	};
