@@ -245,7 +245,10 @@ step = guide.probe ~0x0008EBDC
 step = note === 收尾检查：引导仍指向精确候选 [1]「G型」（没有降级）===
 step = menu.open
 step = assert.log 推送成功 scope=prev timeout=12000
-step = assert.log 引导状态：营救机器人.*候选 \[1\]「G型」 scope=prev timeout=3000
+;   ↑ 这一行必须 scope=case：「引导状态：」是产品侧在同一 Tick 内**先于**本步骤起点打印的
+;     （OnMissionMenuOpened 在 Tick 前半段跑、harness 步骤状态机在 Tick 末尾推进）——
+;     用 scope=prev 会把窗口起点放在它之后 ⇒ 假超时（第 60 轮定稿时修正）。
+step = assert.log 引导状态：营救机器人.*候选 \[1\]「G型」 scope=case timeout=3000
 step = menu.close
 step = guide.clear
 
