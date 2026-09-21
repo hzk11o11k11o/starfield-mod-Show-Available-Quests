@@ -33,6 +33,25 @@
 判据与第 67 轮完全一致（`SAQ_Decision::DecideChainGates`）：
 **全部边都还没触发 ⇒ 隐藏；任一条已触发/求值不了 ⇒ 放行**。
 
+## ★★ 第 77 轮：龙神（Ryujin）全线 —— 「RIR 留专项」收口
+
+起因（玩家实测）：存档**只接了龙神的入口任务**（重返职场 RI01），列表里却能看到
+后续的「人生处处有意外」（RIR04）。复查 = 第 69/71 轮把 RIR* 系列留在「[D] 留专项」
+（`RI_Support → RIR*` 疑似 Radiant）⇒ 这条线**一条边都没有**，三类门槛全放行。
+
+定性（官方数据 + Wiki 双证）：
+  * **主线环节**（RIR01 领先一步 / RIR02 全新故事 / RIR03 通行是关键 / RIR04 人生处处有意外 /
+    RIR05 保持领先）：`Run Once` 标记 + 只由**前一个任务的收尾 fragment** 启动
+    （`RI01@1300 → RIR01`、`RIR01@300 → RIR02`、`RIR02@300 → RIR03`、`RIR03@300 → RI02`、
+    `RI02@600 → RIR04`、`RIR04@300 → RIR05`、`RIR05@10000 → RI03`）；NAM3 里的
+    「Go on a radiant mission」指**目标点**随机（ChosenLocation 别名），不是可重复接取；
+  * **可重复 radiant**（RIR06 处理特工 / RIR07 口舌之力）：Wiki 明写「主线结束后可重复接取」，
+    数据侧只有 `RI_Support` 的职位管理器起点（对话 fragment 驱动）⇒ 用 RI_Support 的
+    managerial 边把它们压到「游戏已经给过这个差事」之后（那一刻任务已在玩家日志里）。
+
+★ 新增 op `SendStoryEvent`（龙神线的移交用 `RIR0x_QuestStartKeyword.SendStoryEvent()`
+  而不是直接调用 —— 工具按同样的「宿主 stage 的 fragment 里能找到这一调用」核验）。
+
 ## ★★ 第 71 轮：跨系列交接 / 命名链路 / 城市线 / 引入任务 / 同伴里程碑
 
 起因（玩家实测）：存档里**深红舰队线根本没开始**，但列表里能看到「深藏不露」（CF01）、
@@ -151,6 +170,36 @@ EDGES: list[tuple[str, str, int, str, int, str]] = [
      "承诺：巴雷特：好感里程碑 @900（注释 Begin Quest ⇒ SetStage(50)；注意 EDID 首字母小写）"),
     ("COM_Quest_SamCoe_Q01", "COM_Companion_SamCoe", 650, "SetStage", 100,
      "哈特家事：好感里程碑 @650（fragment：清 798 目标 + 个人任务 SetStage(100)）"),
+    # ---- ★★ 第 77 轮：龙神（Ryujin）全线 —— 玩家实测「只接了入口任务（重返职场），
+    #      后续的『人生处处有意外』等却显示」。起因 = 第 69/71 轮把 RIR* 系列留在
+    #      「[D] 留专项」（疑似 Radiant），于是这条线一直**一条边都没有**。
+    #      本轮定性（官方数据 + Wiki 双证，见同轮 docs）：
+    #        * RIR01/RIR02/RIR04/RIR05 = **主线剧情环节**（Run Once + 只由前一个任务
+    #          的收尾 fragment 启动；社区任务表第 2/3/6/7 环）——NAM3 里的
+    #          「radiant mission」指任务**目标点**随机（ChosenLocation 别名），
+    #          不是「可重复接取」；
+    #        * RIR06「处理特工」/ RIR07「口舌之力」= Masako 的**可重复 radiant**
+    #          （Wiki：主线结束后可重复接取；数据侧只有 RI_Support 的职位管理器起点）
+    #          ⇒ 用「管理器边」把它们压到「游戏已经给过这个差事」之后 —— 那一刻任务
+    #          已进玩家日志 ⇒ 本来就不该出现在「可接」列表；接取点由「龙神集团」
+    #          入口条目（第 27 轮的任务板条目）覆盖。
+    #      ★ 每条边都对着官方 Papyrus 源码核验（note 里带文件与调用原文）。
+    ("RIR01", "RI01", 1300, "Start", 0,
+     "领先一步（龙神第 2 环）：重返职场@1300 的 fragment 原文 RIR01.Start()（面试晋升后自动接取）"),
+    ("RIR03", "RIR02", 300, "SendStoryEvent", 0,
+     "通行是关键（第 4 环）：全新故事@300 收尾发 RIR03_QuestStartKeyword 事件 ⇒ 故事管理器启动它"),
+    ("RI02", "RIR03", 300, "Start", 0,
+     "挑拨离间（第 5 环）：通行是关键@300 的 fragment 原文 RI02.Start()（拿到门禁卡后）"),
+    ("RIR04", "RI02", 600, "Start", 0,
+     "人生处处有意外（第 6 环）：挑拨离间@600 的 fragment 原文 RIR04.Start()（玩家报告的那条）"),
+    ("RIR05", "RIR04", 300, "SendStoryEvent", 0,
+     "保持领先（第 7 环）：人生处处有意外@300 收尾发 RIR05_QuestStartKeyword 事件 ⇒ 启动它"),
+    ("RI03", "RIR05", 10000, "SetStage", 100,
+     "最高机密（第 8 环）：保持领先@10000 首次完成（RadiantCount==0）时 RI03.SetStage(100)"),
+    ("RIR06", "RI_Support", 610, "SetStage", 1,
+     "处理特工（Masako 可重复 radiant）：RI_Support@610 的 fragment 原文 RIR06.SetStage(1)"),
+    ("RIR07", "RI_Support", 700, "SetStage", 1,
+     "口舌之力（Masako 可重复 radiant）：RI_Support@700 的 fragment 原文 RIR07.SetStage(1)"),
 ]
 
 # ============================================================================
@@ -181,10 +230,14 @@ EDGES: list[tuple[str, str, int, str, int, str]] = [
 #
 #  [D] 引擎 / 故事管理器 / 随机任务管理器驱动（离线无法证明「接不到」）：
 #      BE_KT01~06 → SE_KT01~06（登舰遭遇；且是 Activities 无引导目标）、
-#      MS01SpaceEncounter01~03 → MS01、RI_Support → RIR01~07 与 RI03（龙神职位管理器；
-#      RIR 疑似 Radiant —— **若确证，正确处理是「从表里剔除」而不是加边**，留专项）、
-#      LandyScript.RestartRAD05、City_AkilaLife05（场景触发）、
+#      MS01SpaceEncounter01~03 → MS01、LandyScript.RestartRAD05、
+#      City_AkilaLife05（场景触发）、
 #      RI01_JobAdRadio@100（靠近电台 20 米即可触发 —— 玩家可达，不加边）。
+#      ★★ 第 77 轮：原来的「RI_Support → RIR01~07 与 RI03（疑似 Radiant，留专项）」
+#         **已收口** —— 见上方 EDGES 的「第 77 轮：龙神全线」一节：
+#         RIR01~RIR05 逐条核到前一个任务的收尾 fragment（是主线环节 ⇒ 收边）；
+#         RIR06/RIR07 确证是 Masako 的可重复 radiant（只有职位管理器起点 ⇒ 用
+#         RI_Support 的 managerial 边压到「已经给过这个差事」之后）。
 #
 #  [E] 同伴关系里程碑的存疑项（语义未确证，暂不覆盖）：
 #      COM_Companion_Barrett@69 → COM_Quest_Barrett_Q01（SetStage(7401) + 尾声计时器）、
@@ -269,9 +322,18 @@ def main() -> int:
         #    在 LC088_Space 的 stage 24 / 25 / 200 三处都有）⇒ 要**逐条匹配行**、按
         #    「该行所属的 stage fragment」找 stage 相符的那一条，不能取第一条就断案
         #    （否则正常数据会被误判成「stage 不符」）。
-        arg_pat = "" if (op == "Start" and arg == 0) else rf"{arg}\s*"
-        call_pat = re.compile(
-            rf"\b{re.escape(tgt_edid)}\s*\.\s*{op}\s*\(\s*{arg_pat}\)")
+        if op == "SendStoryEvent":
+            # ★★ 第 77 轮（龙神线）：这条「移交」不是直接调用目标任务，而是发一个
+            #   `<目标 EDID>_QuestStartKeyword.SendStoryEvent()`（故事管理器据此启动目标）。
+            #   语义与 Start / SetStage 相同：宿主这个 stage 做完 ⇒ 这条启动边已触发。
+            #   ★ 只认不带 AndWait 的形态（SendStoryEventAndWait 是「管理器内部的写侧」，
+            #     出现在 RI_Support 那侧；这里核验的是**前一个任务的收尾 fragment**）。
+            call_pat = re.compile(
+                rf"\b{re.escape(tgt_edid)}_QuestStartKeyword\s*\.\s*SendStoryEvent\s*\(\s*\)")
+        else:
+            arg_pat = "" if (op == "Start" and arg == 0) else rf"{arg}\s*"
+            call_pat = re.compile(
+                rf"\b{re.escape(tgt_edid)}\s*\.\s*{op}\s*\(\s*{arg_pat}\)")
 
         def frag_stage_of(line_no: int) -> tuple[str | None, int | None, int | None]:
             """从 line_no 往上找最近的 Fragment_Stage_<n>_Item_* 函数定义。

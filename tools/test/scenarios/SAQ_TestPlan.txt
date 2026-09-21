@@ -717,6 +717,76 @@ step = menu.close
 step = guide.clear
 
 ; ----------------------------------------------------------------------------
+;  用例：第 77 轮 —— 龙神（Ryujin）线的后续任务（「RIR 留专项」收口）
+;
+;  起因（玩家实测，2026-09-21）：存档**只接了龙神的入口任务**（重返职场 RI01），
+;  列表里却能看到后续的「人生处处有意外」（RIR04）。真因 = 第 69/71 轮把 RIR* 系列
+;  留在「[D] 留专项」（`RI_Support → RIR*` 疑似 Radiant）⇒ 这条线**链式门槛一条边
+;  都没有**，进度 / INFO / 链式三类门槛全放行 ⇒ 整条线一起冒出来（不止 RIR04）。
+;
+;  定性（官方数据 + Wiki 双证；见 gen_quest_chain_extra.py 的「第 77 轮」一节）：
+;    · 主线环节（RIR01 领先一步 / RIR02 全新故事 / RIR03 通行是关键 / RIR04 人生处处有意外 /
+;      RIR05 保持领先 / RI02 挑拨离间 / RI03 最高机密）：Run Once + 只由**前一个任务的
+;      收尾 fragment** 启动 ⇒ 收进扩展边（新增 op `SendStoryEvent`：
+;      `RIR0x_QuestStartKeyword.SendStoryEvent()` 形态）；
+;    · Masako 的可重复 radiant（RIR06 处理特工 / RIR07 口舌之力）：用 RI_Support 的
+;      managerial 边压到「游戏已经给过这个差事」之后（那一刻任务已进玩家日志）。
+;
+;  判据（本用例的 PASS 线）：
+;    ① A：六条后续（含 0x002A8319 人生处处有意外）全在「链式没到」名单里
+;       —— 玩家只接了入口任务时，后续一律不显示；
+;    ② B：把「挑拨离间」（0x002AAC9C）推到 stage 600（fragment 原文 RIR04.Start()）
+;       ⇒ 「人生处处有意外」不再被藏（「或」语义：任一条边已触发 ⇒ 放行）。
+;
+;  ★ 前提：本存档的「重返职场」（0x002C9C97）**还没到 stage 1300** ——
+;    到了的话「领先一步」的边已触发、那条断言会 FAIL（存档状态变化，不是产品回归；
+;    与 r71_chain_cf 的存档前提同一类）。
+;  ★ A 段只回滚这六条自己的状态（不动玩家正在做的入口任务）；
+;    B 段会短暂启动 RIR04 / RI02（fragment 的副作用：RIR04@10 给 Imogene 一件
+;    quest 道具），收尾时 reset 清场。
+; ----------------------------------------------------------------------------
+[case:r77_chain_ryujin]
+desc = 第 77 轮：龙神线后续任务在「链式没到」名单里（只接了入口任务时不显示）
+step = note === 准备：回滚龙神线后续六条（领先一步/通行是关键/挑拨离间/人生处处有意外/保持领先/最高机密）===
+step = ping
+step = quest.reset 0x002C572B
+step = quest.reset 0x002BABF3
+step = quest.reset 0x002AAC9C
+step = quest.reset 0x002A8319
+step = quest.reset 0x002A3945
+step = quest.reset 0x0029EB12
+step = wait 2500
+step = note === 前置没做 ⇒ 六条都必须被藏（链式没到名单；玩家报告的是 0x002A8319）===
+step = menu.open
+step = assert.log 推送成功 scope=prev timeout=12000
+step = assert.log 链式没到: .*人生处处有意外\[0x002A8319 scope=case timeout=3000
+step = assert.log 链式没到: .*领先一步\[0x002C572B scope=case timeout=3000
+step = assert.log 链式没到: .*通行是关键\[0x002BABF3 scope=case timeout=3000
+step = assert.log 链式没到: .*挑拨离间\[0x002AAC9C scope=case timeout=3000
+step = assert.log 链式没到: .*保持领先\[0x002A3945 scope=case timeout=3000
+step = assert.log 链式没到: .*最高机密\[0x0029EB12 scope=case timeout=3000
+step = menu.close
+
+[case:r77_chain_ryujin_pass]
+desc = 第 77 轮：推进「挑拨离间」@600 ⇒ 人生处处有意外不再被藏（「或」语义）
+step = note === 推进「挑拨离间」到 600（fragment 原文 RIR04.Start()）===
+step = ping
+step = quest.start 0x002AAC9C
+step = quest.stage 0x002AAC9C 600
+step = wait 2500
+step = menu.open
+step = assert.log 推送成功 scope=prev timeout=12000
+step = assert.nolog 链式没到:.*人生处处有意外 scope=case timeout=3000
+step = note === 其余仍被藏（保持领先的边 = 人生处处有意外@300 仍未触发）===
+step = assert.log 链式没到: .*保持领先\[0x002A3945 scope=case timeout=3000
+step = note === 收尾：清场（RIR04 / RI02 回滚）===
+step = menu.close
+step = quest.reset 0x002A8319
+step = quest.reset 0x002AAC9C
+step = wait 2500
+step = menu.close
+
+; ----------------------------------------------------------------------------
 ;  用例 8：第 62 轮（大项 I）—— 自动读档（**指定存档**）
 ;
 ;  目的 = 把「读档 / 加载窗口」引入 harness —— 候选降级观察期（第 49 轮补丁②）那半段

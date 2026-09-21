@@ -38,8 +38,8 @@
     },
     "plugin/src/SAQ_QuestTable.h": {
       "desc": "静态任务表（gen_quest_table.py，DLL 编译进去）",
-      "sha256": "137b5a9d657bfdd701e7076663bd7652698abb42bf8bcfa8fde680dd6693b432",
-      "summary": "任务 261 / 候选 924 / 进度门槛 9 / INFO对话 290 / INFO条件 341 / 链式边 55 / 同伴 4 / 势力入口 4"
+      "sha256": "313527106c4ba6e28f3c0416a955aaa0f823a38a2f41379f196fecbd6f5f7767",
+      "summary": "任务 261 / 候选 924 / 进度门槛 9 / INFO对话 290 / INFO条件 341 / 链式边 63 / 同伴 4 / 势力入口 4"
     },
     "ui/missionmenu/saqdata/SaqEmbeddedPayload.inc": {
       "desc": "内嵌回退载荷（gen_quest_table.py）",
