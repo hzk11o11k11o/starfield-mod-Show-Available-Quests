@@ -443,7 +443,12 @@ HARNESS_STRINGS = (
     #   （Papyrus `测试命令：seq=17 op=1 结果=0`）但晚了约 3.4 秒；超时瞬间 DLL
     #   诊断「此刻打开的菜单：无」（不是加载画面）；紧接着的下一条用例 ping 只用 47 ms。
     ("harness 驱动器版本串",
-     "驱动器 v66：命令回执窗口 8000 ms"),
+     "驱动器 v68：断言正则在解析期编译校验"),
+    # ★★ 第 68 轮（15:24 会话 r67_chain 的唯一 FAIL = **用例自己的正则写错**，产品全对）：
+    #   断言正则此前只会在运行期由 `LogFind` 静默编译失败 ⇒ 报文退化成
+    #   「日志里没出现 /…/」（「产品没打这行」与「正则写错」两种情况混在一起）。
+    #   现在驱动器在**解析期**就编译校验 + 运行期立刻失败（见 SAQ_Test.cpp 的 Step::regexOk）。
+    ("harness 断言正则非法文案", "正则非法（ECMAScript 编译失败）"),
     ("harness 慢回执留痕文案", "命令回执偏慢："),
     ("harness 主菜单自动读档文案", "主菜单自动读档已排队"),
     ("harness 主菜单自动读档放弃文案", "主菜单自动读档放弃"),
@@ -1030,8 +1035,11 @@ def main() -> int:
             gone = ("驱动器 v57".encode() not in blob and "驱动器 v58".encode() not in blob and
                     "驱动器 v59".encode() not in blob and "驱动器 v60".encode() not in blob and
                     "驱动器 v61".encode() not in blob and "驱动器 v62".encode() not in blob and
-                    "驱动器 v63".encode() not in blob)
-            print(("OK  " if gone else "MISS") + " DLL · 旧驱动器版本串 v57~v63 已替换(反向检查)")
+                    "驱动器 v63".encode() not in blob and
+                    # ★★ 第 68 轮：v66（命令回执窗口那版）也不许再出现 —— 新版串里
+                    #   带的是「沿用：v66 …」而不是「驱动器 v66 …」（同一条判据的延伸）。
+                    "驱动器 v66".encode() not in blob)
+            print(("OK  " if gone else "MISS") + " DLL · 旧驱动器版本串 v57~v63/v66 已替换(反向检查)")
             all_ok &= gone
             # ★★ 第 54 轮：用例计划本身也该被查 —— 历史判据（第 26/44~48 轮）落成用例后，
             #   最怕的是「源码改了没部署」或「用例被误删」。这里只查**开发模式**：
@@ -1055,6 +1063,43 @@ def main() -> int:
                                 plan_text.encode(), "assert.log 链式没到: .*菜鸟觐见".encode())
                 all_ok &= check("用例计划 · r67 前置推进后放行（assert.nolog）",
                                 plan_text.encode(), "assert.nolog 链式没到:.*菜鸟觐见".encode())
+                # ★★ 第 68 轮（15:24 会话 r67_chain 的唯一 FAIL = **用例自己的正则写错**，
+                #   产品侧全对：`链式门槛=22(过0/藏22/未知0)` 那行在 15:23:26.672 就打了、
+                #   名单里有「菜鸟觐见」）。两个写法红线：
+                #   ① 正则里只写**单**反斜杠（`\\d` 在 ECMAScript 下 = 字面反斜杠 + d ⇒ 永不匹配）；
+                #   ② 统计行（`链式门槛=…`）在推送前若干毫秒打印 ⇒ 断言要 `scope=case`
+                #      （`scope=prev` 的窗口起点 = 上一步开始，实测差 3 ms 漏掉）。
+                all_ok &= check("用例计划 · r67 链式门槛统计断言（scope=case + 单反斜杠）",
+                                plan_text.encode(),
+                                "assert.log 链式门槛=\\d+\\(过\\d+/藏\\d+/未知\\d+ scope=case".encode())
+                bad_esc = "assert.log 链式门槛=\\\\d+" in plan_text
+                print(("MISS" if bad_esc else "OK  ") +
+                      " 用例计划 · 旧的双反斜杠写法已修（反向检查）")
+                all_ok &= not bad_esc
+                # ★★ 第 68 轮：**通用守卫** —— 用例里每条断言的日志正则都必须能编译、
+                #   且不许出现连续两个反斜杠（`\\d` / `\\[` 这类过度转义 = 永远匹配不上；
+                #   静默失败最坏的一面是**反向断言假 PASS**）。这一条把整类错挡在构建期。
+                bad_asserts = []
+                for ln in plan_text.splitlines():
+                    s = ln.strip()
+                    for op in ("assert.log ", "assert.nolog "):
+                        if not s.startswith("step = " + op):
+                            continue
+                        pat = s[len("step = " + op):]
+                        pat = re.split(r"\s+(?:scope|timeout)=", pat)[0].strip()
+                        if "\\\\" in pat:
+                            bad_asserts.append("过度转义（双反斜杠）：" + pat)
+                            continue
+                        try:
+                            re.compile(pat)
+                        except re.error as exc:
+                            bad_asserts.append(f"正则非法（{exc}）：" + pat)
+                ok_asserts = not bad_asserts
+                print(("OK  " if ok_asserts else "MISS") +
+                      " 用例计划 · 断言正则全部可编译且无过度转义")
+                for item in bad_asserts:
+                    print("         - " + item)
+                all_ok &= ok_asserts
                 plan_deployed = MO2_MOD / "SFSE/Plugins/SAQ_TestPlan.txt"
                 if plan_deployed.exists():
                     same = plan_deployed.read_bytes() == plan_src.read_bytes()

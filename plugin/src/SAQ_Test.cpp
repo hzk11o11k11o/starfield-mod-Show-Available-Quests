@@ -163,6 +163,11 @@ namespace SAQ::Test
 			bool          resolveAsEntry{};
 			std::uint8_t  localMaster{ 0xFF };  // `~N:0x…` 里显式指定的 master 下标（0xFF = 未指定）
 			std::uint64_t timeoutMs{ kDefaultStepTimeoutMs };
+			// ★★ 第 68 轮：断言正则非法（ECMAScript 编译失败）—— **解析期**就编译校验，
+			//   运行期立刻失败并写清原因。不校验的话 LogFind 只能静默返回 false，症状是
+			//   「日志里没出现 /…/」这种误导性超时（15:24 会话 r67_chain 的 `\\d` 双反斜杠
+			//   踩过：ECMAScript 下 `\\d` = 字面反斜杠 + d，永远匹配不上）。
+			bool          regexOk{ true };
 		};
 
 		struct Case
@@ -684,6 +689,17 @@ namespace SAQ::Test
 				if (a_step.text.empty()) {
 					a_error = "需要正则表达式";
 					return false;
+				}
+				// ★★ 第 68 轮：断言正则**解析期**编译一遍 —— 非法模式（例如把 `\d` 写成
+				//   `\\d`：ECMAScript 下等于「字面反斜杠 + d」）在这里就报出来；不校验的话
+				//   运行期 LogFind 只能静默 false ⇒ 症状是「日志里没出现 /…/」的误导性超时
+				//   （15:24 会话 r67_chain 实测：正则写了双反斜杠，白查一轮）。
+				try {
+					const std::regex probe{ a_step.text, std::regex::ECMAScript | std::regex::icase };
+					(void)probe;
+				} catch (const std::regex_error&) {
+					a_step.regexOk = false;
+					REX::WARN("harness：断言正则非法（这一步必定失败）：{}", a_step.raw);
 				}
 			} else if (op == "assert.menu") {
 				a_step.kind = Kind::kAssertMenu;
@@ -1387,6 +1403,14 @@ namespace SAQ::Test
 			}
 
 			case Kind::kAssertLog: {
+				// ★★ 第 68 轮：正则非法 ⇒ 立刻失败（解析期已 WARN）—— 别让它退化成
+				//   「日志里没出现」的超时报文（那是「产品没打这行」和「正则写错」两种情况
+				//   混在一起，15:24 会话为此白查一轮）。
+				if (!step.regexOk) {
+					CompleteStep(false, "正则非法（ECMAScript 编译失败）：" + step.text,
+						LogSince(g_cur.logMark, kEvidenceMaxLines));
+					return true;
+				}
 				std::string line;
 				const auto from = EffectiveLogFrom(step);
 				if (LogFind(from, step.text, line)) {
@@ -1408,6 +1432,13 @@ namespace SAQ::Test
 			//   典型判据：第 44 轮「星图不该有第 2/3 次尝试」、第 49 轮补丁②「读档后不该立刻降级」、
 			//   第 26 轮「菜单久停期间不该出现引导未生效」。
 			case Kind::kAssertNoLog: {
+				// ★★ 第 68 轮：同 kAssertLog —— 正则非法要立刻说清楚（反向断言尤其危险：
+				//   静默 false 会被当成「整段窗口没有出现」= **假 PASS**）。
+				if (!step.regexOk) {
+					CompleteStep(false, "正则非法（ECMAScript 编译失败）：" + step.text,
+						LogSince(g_cur.logMark, kEvidenceMaxLines));
+					return true;
+				}
 				std::string line;
 				const auto from = EffectiveLogFrom(step);
 				if (LogFind(from, step.text, line)) {
@@ -1668,10 +1699,12 @@ namespace SAQ::Test
 		// ★ 第 56 轮：带上**驱动器版本串** —— 与 SWF 的 `stamp=` 同一个道理：日志里有没有
 		//   这一串，是「跑的是不是修好窗口 bug 的那版驱动器」的唯一判据（旧版会把
 		//   断言窗口起点清 0 ⇒ 假 PASS/假 FAIL）。
-		REX::INFO("harness：已启用（{} 个用例；驱动器 v66：命令回执窗口 8000 ms + ping 用满窗口"
-				  "（14:35 会话 r44 实测：脚本执行了但晚了 3.4 秒）+ 回执 ≥ {} ms 留一行 note"
-				  "（沿用：v63 主菜单稳定 {} ms 后自动读档 / save.list / save.load / guide.probe /"
-				  " 传送 20 秒窗口 / 落地静默期每 Tick 推进 / 加载画面证据 / 卡死自动中止））"
+		REX::INFO("harness：已启用（{} 个用例；驱动器 v68：断言正则在解析期编译校验 —— 非法正则"
+				  "立刻报「正则非法」，不再退化成「日志里没出现」的误导性超时"
+				  "（15:24 会话 r67_chain 的 \\d 双反斜杠踩过）；回执 ≥ {} ms 留一行 note"
+				  "（沿用：v66 命令回执窗口 8000 ms + ping 用满窗口 / v63 主菜单稳定 {} ms 后自动读档 /"
+				  " save.list / save.load / guide.probe / 传送 20 秒窗口 / 落地静默期每 Tick 推进 /"
+				  " 加载画面证据 / 卡死自动中止））"
 				  " —— 等脚本通道就绪后自动开跑",
 			g_cases.size(), kSlowAckNoteMs, kAutoLoadMinMenuAgeMs);
 	}

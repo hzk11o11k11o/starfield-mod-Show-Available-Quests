@@ -388,8 +388,11 @@ step = menu.close
 ;    CF02「菜鸟觐见」、CF06「风驰电掣」—— 它们是编号任务链的后续环节，只能由前一个
 ;    任务的收尾阶段自动启动（CF01 的 stage 1000 fragment 里 `CF02.SetStage(10)`），
 ;    玩家**接不到**。现有两类门槛（记录级 CTDA / INFO 对话）都拦不住它们。
-;  数据 = 官方 Papyrus 源码里的启动边（tools/esm/gen_quest_chain.py → kChainGates：
-;    25 条任务 / 26 条启动边）；判据 = 「全部启动边都没触发 ⇒ 隐藏」
+;  数据 = 官方 Papyrus 源码里的启动边（tools/esm/gen_quest_chain.py → kChainGates）：
+;    工具扫出 **31 个目标任务 / 33 条启动边**（含 3 条主线 MQ）⇒ 进静态表 **25 条任务 /
+;    26 条边**；运行时统计的是「走到链式判定」的任务数（15:24 实测 **22** —— 少掉的
+;    3 条「破坏 / 霓虹城中的暗影 / 希望之基」已被更早的 INFO 门槛先藏掉了）。
+;    判据 = 「全部启动边都没触发 ⇒ 隐藏」
 ;    （SAQ_Decision::DecideChainGates，语义见 gen_quest_chain.py / SAQ_QuestTable.h）。
 ;
 ;  用例拆成两条（`assert.nolog` 的窗口只覆盖「本条用例」—— 两条才都能可靠断言）：
@@ -411,8 +414,15 @@ step = wait 2500
 step = note === 前置没做 ⇒ 菜鸟觐见必须出现在「链式没到」名单里（= 被藏）===
 step = menu.open
 step = assert.log 推送成功 scope=prev timeout=12000
-step = assert.log 链式门槛=\\d+\\(过\\d+/藏\\d+/未知\\d+ scope=prev timeout=3000
-step = assert.log 链式没到: .*菜鸟觐见\\[0x000192D2 scope=case timeout=3000
+; ★★ 第 68 轮（15:24 会话实测踩过 —— 这一条曾假 FAIL）两条红线：
+;   ① 正则里的 `\d` / `\[` 只能写**单**反斜杠：`\\d` 在 ECMAScript 下是「字面反斜杠 + d」
+;      ⇒ 永远匹配不上（旧版就是这么写的，报文说「日志里没出现」误导了一轮）；现在
+;      驱动器在**解析期**编译校验，非法正则立刻报「正则非法」。
+;   ② 统计行（`链式门槛=…`）由 DLL 在**推送前若干毫秒**打印（实测 15:23:26.672 那行
+;      比 `推送成功` 早 3 ms）⇒ `scope=prev`（窗口起点 = 上一步开始）恰好差几毫秒漏掉它
+;      ⇒ 统计行与名单（同一行）都用 `scope=case`。
+step = assert.log 链式门槛=\d+\(过\d+/藏\d+/未知\d+ scope=case timeout=3000
+step = assert.log 链式没到: .*菜鸟觐见\[0x000192D2 scope=case timeout=3000
 step = menu.close
 
 [case:r67_chain_pass]
