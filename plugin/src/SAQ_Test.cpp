@@ -175,6 +175,11 @@ namespace SAQ::Test
 			std::string       id;
 			std::string       desc;
 			std::vector<Step> steps;
+			// ★★ 第 69 轮：本用例有步骤/键解析失败（见 ParsePlan）—— 非空 ⇒ 这条用例
+			//   直接判 FAIL（不静默丢步）。起因：15:43 会话 r65_icons 里的
+			//   `step = ui.state` 是未知步骤，老行为只留一条 WARN、把这一步丢掉，
+			//   用例照样 PASS（「少测了一步」在报告里看不出来 —— 与第 68 轮的红线同源）。
+			std::string       parseError;
 		};
 
 		struct StepResult
@@ -827,10 +832,18 @@ namespace SAQ::Test
 						cur->steps.push_back(std::move(st));
 					} else {
 						REX::WARN("harness：用例 {} 第 {} 行的步骤解析失败（{}）：{}", cur->id, lineNo, err, value);
+						// ★★ 第 69 轮：解析失败 = 这条用例直接判 FAIL（见 Case::parseError）。
+						if (cur->parseError.empty()) {
+							cur->parseError = std::format("第 {} 行步骤解析失败（{}）：{}",
+								lineNo, err, value);
+						}
 						++bad;
 					}
 				} else {
 					REX::WARN("harness：用例文件第 {} 行的未知键 {}（只认 desc / step）", lineNo, key);
+					if (cur->parseError.empty()) {
+						cur->parseError = std::format("第 {} 行未知键 {}（只认 desc / step）", lineNo, key);
+					}
 					++bad;
 				}
 			}
@@ -1086,6 +1099,16 @@ namespace SAQ::Test
 			g_active = true;
 			REX::INFO("harness：===== 开始用例 {}（{}）=====", g_cases[a_index].id,
 				g_cases[a_index].desc.empty() ? g_cases[a_index].id : g_cases[a_index].desc);
+			// ★★ 第 69 轮：用例文件解析失败 ⇒ 立刻判 FAIL（证据进结果 JSON 的 parse 步骤）。
+			//   老行为只留 WARN + 丢步 ⇒ 用例照样能 PASS（少测一步看不出来）。
+			if (!g_cases[a_index].parseError.empty()) {
+				StepResult sr;
+				sr.op = "parse";
+				sr.pass = false;
+				sr.detail = "用例文件解析失败（修复用例文件后重跑）：" + g_cases[a_index].parseError;
+				g_results.back().steps.push_back(std::move(sr));
+				FinishCase(false, "");
+			}
 		}
 
 		// 步骤成功/失败收尾（写结果 + 推进）
@@ -1699,9 +1722,12 @@ namespace SAQ::Test
 		// ★ 第 56 轮：带上**驱动器版本串** —— 与 SWF 的 `stamp=` 同一个道理：日志里有没有
 		//   这一串，是「跑的是不是修好窗口 bug 的那版驱动器」的唯一判据（旧版会把
 		//   断言窗口起点清 0 ⇒ 假 PASS/假 FAIL）。
-		REX::INFO("harness：已启用（{} 个用例；驱动器 v68：断言正则在解析期编译校验 —— 非法正则"
-				  "立刻报「正则非法」，不再退化成「日志里没出现」的误导性超时"
-				  "（15:24 会话 r67_chain 的 \\d 双反斜杠踩过）；回执 ≥ {} ms 留一行 note"
+		//   ★★ 第 69 轮：**用例文件解析失败 ⇒ 该用例直接判 FAIL**（老行为只留 WARN +
+		//   丢步 —— 15:43 会话 r65_icons 的 `step = ui.state` 就是这样「少测一步还 PASS」）。
+		REX::INFO("harness：已启用（{} 个用例；驱动器 v69：用例文件解析失败 ⇒ 该用例判 FAIL"
+				  "（不再静默丢步 —— 15:43 会话 r65_icons 的 `ui.state` 踩过）；沿用 v68"
+				  " 断言正则解析期编译校验（非法正则立刻报「正则非法」，不再退化成「日志里没出现」"
+				  "的误导性超时）；回执 ≥ {} ms 留一行 note"
 				  "（沿用：v66 命令回执窗口 8000 ms + ping 用满窗口 / v63 主菜单稳定 {} ms 后自动读档 /"
 				  " save.list / save.load / guide.probe / 传送 20 秒窗口 / 落地静默期每 Tick 推进 /"
 				  " 加载画面证据 / 卡死自动中止））"

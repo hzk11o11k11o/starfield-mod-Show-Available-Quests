@@ -310,6 +310,24 @@ def load_chain(path: Path) -> dict[int, list[dict]]:
     return {int(t["formid"]): t.get("edges", []) for t in raw}
 
 
+def merge_chain(base: dict[int, list[dict]], extra: dict[int, list[dict]]) -> dict[int, list[dict]]:
+    """★★ 第 69 轮：把「扩展链式边」并进编号链路边 —— 按 (宿主记录号, 宿主 stage) 去重。
+
+    两个数据源语义相同（收尾 stage 启动下一个任务），运行时共用 kChainGates 一套判据；
+    扩展边的生成与核验见 tools/esm/gen_quest_chain_extra.py。
+    """
+    out: dict[int, list[dict]] = {k: list(v) for k, v in base.items()}
+    for local, edges in extra.items():
+        have = {(int(e["host_local"]), int(e["host_stage"])) for e in out.get(local, [])}
+        for e in edges:
+            key = (int(e["host_local"]), int(e["host_stage"]))
+            if key in have:
+                continue
+            have.add(key)
+            out.setdefault(local, []).append(e)
+    return out
+
+
 def master_strings_key(master: str) -> str:
     """master 名 -> 字符串表前缀：ShatteredSpace.esm -> shatteredspace（与游戏内文件名一致）。"""
     return Path(master).stem.lower()
@@ -329,6 +347,9 @@ def main() -> int:
                     help="★ 第 65 轮：任务阵营（gen_faction_types.py 产物；缺失 ⇒ 全无阵营）")
     ap.add_argument("--chain", default="ref/quest_chain.json",
                     help="★ 第 67 轮：任务链门槛（gen_quest_chain.py 产物；缺失 ⇒ 不做链式过滤）")
+    ap.add_argument("--chain-extra", default="ref/quest_chain_extra.json",
+                    help="★★ 第 69 轮：链式门槛的扩展边（gen_quest_chain_extra.py 产物；"
+                         "人工核实 + 构建期源码核验；缺失 ⇒ 只做编号链）")
     ap.add_argument("--out-header", default="plugin/src/SAQ_QuestTable.h")
     ap.add_argument("--out-json", default="ref/quest_table_debug.json")
     ap.add_argument("--out-as3", default="ui/missionmenu/saqdata/SaqEmbeddedPayload.inc")
@@ -528,7 +549,9 @@ def main() -> int:
     # ★ 第 67 轮：任务链门槛 —— 「上一个任务的收尾 stage 启动下一个任务」的启动边
     #   （gen_quest_chain.py 从官方 Papyrus 源码里挖出来的）。运行时判据：
     #   **全部链边都还没触发 ⇒ 隐藏**（详见 SAQ_QuestTable.h 的 kChainGates）。
-    chain_by_fid = load_chain(Path(a.chain))
+    #   ★★ 第 69 轮：并入「扩展边」（gen_quest_chain_extra.py：非编号链路里同样形态的
+    #   「收尾/流程启动下一个」—— Eleos 线、霓虹城帮派线等，见该工具头注释）。
+    chain_by_fid = merge_chain(load_chain(Path(a.chain)), load_chain(Path(a.chain_extra)))
     q_master_by_local: dict[int, str] = {}
     for q in quests:
         q_master_by_local.setdefault(int(q["local"]), q["master"])
@@ -725,6 +748,9 @@ def main() -> int:
     lines.append("\t//   数据来源：官方 Papyrus 源码（CK 的 Data\\Scripts\\Source\\Base）里的跨任务")
     lines.append("\t//   启动调用；提取规则见 tools/esm/gen_quest_chain.py 头注释（只认「编号链路」：")
     lines.append("\t//   前缀相同、编号 +1、调用方是纯编号任务、调用发生在 stage fragment 里）。")
+    lines.append("\t//   ★★ 第 69 轮：并入**扩展边**（gen_quest_chain_extra.py；同一形态的非编号链路 ——")
+    lines.append("\t//   Eleos 静修地线 / 霓虹城帮派线 / 城市支线预启动；每条都人工核实 + 构建期对着")
+    lines.append("\t//   官方 Papyrus 源码核验；判据与语义完全一致，运行时共用本数组）。")
     lines.append("\t//   每条边 = (前置任务, 触发 stage)：后者做完 ⇒ 这条启动边才可能发生。")
     lines.append("\t//   运行时判据（SAQ_QuestCond.cpp::EvaluateChainGates → Decision::DecideChainGates）：")
     lines.append("\t//     * 切片越界 ⇒ 放行（kUnknown）；")

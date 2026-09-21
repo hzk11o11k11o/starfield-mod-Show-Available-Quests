@@ -28,8 +28,8 @@
     },
     "plugin/src/SAQ_QuestTable.h": {
       "desc": "静态任务表（gen_quest_table.py，DLL 编译进去）",
-      "sha256": "536e53829ebe9bb2185543fc8acbe9c7c6c8373d48a78ae4838e58c41c4f4c90",
-      "summary": "任务 261 / 候选 931 / 进度门槛 9 / INFO对话 290 / INFO条件 341 / 链式边 26"
+      "sha256": "5a5ab788644c09cfa96776940f52cf4bd1269a8ad4ff1a589f06ee55267d5bec",
+      "summary": "任务 261 / 候选 931 / 进度门槛 9 / INFO对话 290 / INFO条件 341 / 链式边 34"
     },
     "plugin/src/SAQ_EntryTable.h": {
       "desc": "入口条目表（gen_entry_table.py，DLL 编译进去）",

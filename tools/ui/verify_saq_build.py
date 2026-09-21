@@ -442,8 +442,12 @@ HARNESS_STRINGS = (
     #   封顶）+ 回执 ≥2000 ms 留一行 note。实测依据：脚本执行了 seq=17 的 Ping
     #   （Papyrus `测试命令：seq=17 op=1 结果=0`）但晚了约 3.4 秒；超时瞬间 DLL
     #   诊断「此刻打开的菜单：无」（不是加载画面）；紧接着的下一条用例 ping 只用 47 ms。
+    # ★★ 第 69 轮（15:43 会话复查：r65_icons 的 `step = ui.state` 是未知步骤，
+    #   老驱动器只留 WARN + 丢步 ⇒ 用例照样 PASS —— 「少测一步」看不出来）：
+    #   解析失败 ⇒ 该用例直接判 FAIL（证据进结果 JSON 的 parse 步骤）。
     ("harness 驱动器版本串",
-     "驱动器 v68：断言正则在解析期编译校验"),
+     "驱动器 v69：用例文件解析失败 ⇒ 该用例判 FAIL"),
+    ("harness 用例解析失败文案", "用例文件解析失败（修复用例文件后重跑）"),
     # ★★ 第 68 轮（15:24 会话 r67_chain 的唯一 FAIL = **用例自己的正则写错**，产品全对）：
     #   断言正则此前只会在运行期由 `LogFind` 静默编译失败 ⇒ 报文退化成
     #   「日志里没出现 /…/」（「产品没打这行」与「正则写错」两种情况混在一起）。
@@ -1038,8 +1042,11 @@ def main() -> int:
                     "驱动器 v63".encode() not in blob and
                     # ★★ 第 68 轮：v66（命令回执窗口那版）也不许再出现 —— 新版串里
                     #   带的是「沿用：v66 …」而不是「驱动器 v66 …」（同一条判据的延伸）。
-                    "驱动器 v66".encode() not in blob)
-            print(("OK  " if gone else "MISS") + " DLL · 旧驱动器版本串 v57~v63/v66 已替换(反向检查)")
+                    "驱动器 v66".encode() not in blob and
+                    # ★★ 第 69 轮：v68 同理（新版串里带的是「沿用 v68 …」）。
+                    "驱动器 v68".encode() not in blob)
+            print(("OK  " if gone else "MISS") +
+                  " DLL · 旧驱动器版本串 v57~v63/v66/v68 已替换(反向检查)")
             all_ok &= gone
             # ★★ 第 54 轮：用例计划本身也该被查 —— 历史判据（第 26/44~48 轮）落成用例后，
             #   最怕的是「源码改了没部署」或「用例被误删」。这里只查**开发模式**：
@@ -1050,7 +1057,10 @@ def main() -> int:
                 plan_text = plan_src.read_text(encoding="utf-8", errors="replace")
                 for cid in ("smoke", "r26_menu_idle", "r44_starmap", "r45_candidates",
                             "r47_board_marker", "r48_info_gate", "r65_icons",
-                            "r67_chain", "r67_chain_pass", "r62_reload_observe"):
+                            "r67_chain", "r67_chain_pass",
+                            # ★★ 第 69 轮：链式门槛扩展边（霓虹城帮派线 A/B 两条）
+                            "r69_chain_extra", "r69_chain_extra_pass",
+                            "r62_reload_observe"):
                     all_ok &= check(f"用例计划 · [case:{cid}]", plan_text.encode(),
                                     f"[case:{cid}]".encode())
                 # ★★ 第 65 轮（任务专属图标）：r65 用例的图标断言必须走**界面报告**
@@ -1076,6 +1086,21 @@ def main() -> int:
                 print(("MISS" if bad_esc else "OK  ") +
                       " 用例计划 · 旧的双反斜杠写法已修（反向检查）")
                 all_ok &= not bad_esc
+                # ★★ 第 69 轮（链式门槛扩展边）：r69 两条用例的断言 ——
+                #   A：前置没做 ⇒「展示力量」在「链式没到」名单里（scope=case：统计行在推送前打印）；
+                #   B：推进「面试」@500 后 ⇒ 本条用例窗口里名单没有「展示力量」。
+                all_ok &= check("用例计划 · r69 扩展链式边断言（展示力量被藏）",
+                                plan_text.encode(),
+                                "assert.log 链式没到: .*展示力量\\[0x00226527 scope=case".encode())
+                all_ok &= check("用例计划 · r69 扩展链式边放行断言（assert.nolog）",
+                                plan_text.encode(),
+                                "assert.nolog 链式没到:.*展示力量 scope=case".encode())
+                # 反向检查：15:43 会话里那条未知步骤 `ui.state`（老驱动器只 WARN + 丢步 ⇒ 用例
+                #   照样 PASS）已删；新驱动器对解析失败直接判 FAIL（见 SAQ_Test.cpp v69）。
+                gone_state = "step = ui.state" not in plan_text
+                print(("OK  " if gone_state else "MISS") +
+                      " 用例计划 · 未知步骤 ui.state 已删（反向检查）")
+                all_ok &= gone_state
                 # ★★ 第 68 轮：**通用守卫** —— 用例里每条断言的日志正则都必须能编译、
                 #   且不许出现连续两个反斜杠（`\\d` / `\\[` 这类过度转义 = 永远匹配不上；
                 #   静默失败最坏的一面是**反向断言假 PASS**）。这一条把整类错挡在构建期。
@@ -1469,16 +1494,50 @@ def main() -> int:
         all_ok &= ok_bot
 
         # ★★ 第 67 轮：任务链门槛（编号任务链的启动边）—— 数据侧完整性：
-        #   ① 结构/数组存在；② 启动边 26 条 / 有边任务 25 条 / 切片不越界；
-        #   ③ 实测样本：CF02「菜鸟觐见」（0x000192D2）的唯一边 =
-        #      CF01「深藏不露」（0x00009136）@ stage 1000（玩家反馈的那条链）。
+        #   ① 结构/数组存在；② 边数/有边任务数与**两个数据源**（编号链 + 第 69 轮的扩展边）
+        #   对齐（去重后）/ 切片不越界；③ 实测样本：CF02「菜鸟觐见」（0x000192D2）的唯一边 =
+        #   CF01「深藏不露」（0x00009136）@ stage 1000（玩家反馈的那条链）。
+        #   ★★ 第 69 轮：期望值不再写死 —— 从 ref/quest_chain.json + ref/quest_chain_extra.json
+        #   现算（合并去重），数据一变这里就跟着变（写死会掩盖漏跑生成器的情形）。
         for name, needle in {
             "链式门槛结构 StaticChainGate": "struct StaticChainGate",
             "链式门槛数组 kChainGates": "kChainGates[] = {",
+            "扩展链式边数据 (ref/quest_chain_extra.json)": "quest_chain_extra",
         }.items():
-            ok = needle in blob
+            if name.startswith("扩展链式边"):
+                p = ROOT / "ref" / "quest_chain_extra.json"
+                ok = p.exists()
+            else:
+                ok = needle in blob
             print(("OK  " if ok else "MISS") + f" 静态表 · {name}")
             all_ok &= ok
+
+        def _expected_chain_edges() -> tuple[int, int, set[tuple[int, int, int]]]:
+            """(边数, 有边任务数, {(目标记录号, 宿主记录号, 宿主stage)})。
+
+            ★ 两个数据源里的边**不是全部进表**（如 MQ106/MQ302b/MQ402 这类主线任务不在
+            「可接任务」表里；宿主 master 不在表内的边也会被生成器跳过）⇒ 期望值要先按
+            「目标在表内 + 宿主是基础游戏」过滤，才能和 kChainGates 对得上。
+            """
+            tbl = json.loads((ROOT / "ref" / "quest_table_debug.json").read_text(encoding="utf-8"))
+            table_set = {int(t["formid"]) for t in tbl}
+            merged: dict[int, set[tuple[int, int]]] = {}
+            for fn in ("quest_chain.json", "quest_chain_extra.json"):
+                p = ROOT / "ref" / fn
+                if not p.exists():
+                    continue
+                for t in json.loads(p.read_text(encoding="utf-8")):
+                    if int(t["formid"]) not in table_set:
+                        continue
+                    for e in t.get("edges", []):
+                        if (e.get("host_master") or "Starfield.esm") != "Starfield.esm":
+                            continue
+                        merged.setdefault(int(t["formid"]), set()).add(
+                            (int(e["host_local"]), int(e["host_stage"])))
+            n_edges = sum(len(v) for v in merged.values())
+            return n_edges, len(merged), {(t, h, s) for t, v in merged.items() for (h, s) in v}
+
+        exp_edges, exp_tasks, exp_set = _expected_chain_edges()
         chain_total = _num_after(blob, "kChainGateCount = ")
         c0 = blob.find("kChainGates[] = {")
         c1 = blob.find("kChainGateCount")
@@ -1486,19 +1545,28 @@ def main() -> int:
         c_rows = re.findall(r"\{\s*0x([0-9A-F]+)u,\s*(\d+)u,\s*(\d+)u\s*\},", c_region)
         n_chain_tasks = 0
         n_oob_c = 0
+        got_set: set[tuple[int, int, int]] = set()
         for m in re.finditer(
-                r"\{\s*0x[0-9A-F]+u,\s*\d+u,\s*\d+u,\s*0x[0-9A-F]+u,"
+                r"\{\s*0x([0-9A-F]+)u,\s*\d+u,\s*\d+u,\s*0x[0-9A-F]+u,"
                 r"\s*\d+u,\s*\d+u,\s*\d+u,\s*\d+u,\s*\d+u,\s*\d+u,\s*(\d+)u,\s*(\d+)u,",
                 region):
-            begin, count = int(m.group(1)), int(m.group(2))
+            target = int(m.group(1), 16)
+            begin, count = int(m.group(2)), int(m.group(3))
             if count:
                 n_chain_tasks += 1
                 if chain_total >= 0 and begin + count > chain_total:
                     n_oob_c += 1
-        ok = (chain_total == 26 and len(c_rows) == 26 and n_chain_tasks == 25 and n_oob_c == 0)
+                for i in range(count):
+                    if begin + i < len(c_rows):
+                        host, _master, stage = c_rows[begin + i]
+                        got_set.add((target, int(host, 16), int(stage)))
+        ok = (chain_total == exp_edges and len(c_rows) == exp_edges
+              and n_chain_tasks == exp_tasks and n_oob_c == 0
+              and got_set == exp_set)
         print(("OK  " if ok else "MISS") +
-              f" 静态表 · 链式门槛完整（启动边 {len(c_rows)} 条 / 有边任务 {n_chain_tasks} / "
-              f"切片越界 {n_oob_c}）")
+              f" 静态表 · 链式门槛完整（启动边 {len(c_rows)}/{exp_edges} 条 / "
+              f"有边任务 {n_chain_tasks}/{exp_tasks} / 切片越界 {n_oob_c} / "
+              f"边集合{'一致' if got_set == exp_set else '不一致'}）")
         all_ok &= ok
         m_cf02 = re.search(
             r"\{\s*0x000192D2u,\s*\d+u,\s*\d+u,\s*0x[0-9A-F]+u,"
@@ -1512,6 +1580,26 @@ def main() -> int:
         print(("OK  " if ok_cf02 else "MISS") +
               " 静态表 · 菜鸟觐见链式门槛（CF01 深藏不露 @ stage 1000）")
         all_ok &= ok_cf02
+
+        # ★★ 第 69 轮（扩展链式边 · 同类问题收口）：样本 —— 两条实测过的形态
+        #   ① Eleos 静修地线：「幽灵狩猎」（0x0016D4D1）← 「完全停止」（0x0017134F）@1000；
+        #   ② 霓虹城帮派线：「展示力量」（0x00226527）← 「面试」（0x00229EE7）@500。
+        for label, tgt, host, stage in (
+                ("幽灵狩猎 ← 完全停止@1000", "0016D4D1", "0017134F", "1000"),
+                ("展示力量 ← 面试@500", "00226527", "00229EE7", "500"),
+        ):
+            ok_e = False
+            m = re.search(r"\{\s*0x" + tgt + r"u,\s*\d+u,\s*\d+u,\s*0x[0-9A-F]+u,"
+                          r"\s*\d+u,\s*\d+u,\s*\d+u,\s*\d+u,\s*\d+u,\s*\d+u,"
+                          r"\s*(\d+)u,\s*(\d+)u,", blob)
+            if m:
+                cb, cc = int(m.group(1)), int(m.group(2))
+                for i in range(cc):
+                    if cb + i < len(c_rows) and c_rows[cb + i][0].upper() == host \
+                            and c_rows[cb + i][2] == stage:
+                        ok_e = True
+            print(("OK  " if ok_e else "MISS") + f" 静态表 · 扩展链式边样本（{label}）")
+            all_ok &= ok_e
 
         # ★★ 第 65 轮（任务专属图标）：阵营列（表行尾的 faction）—— 数据侧完整性：
         #   ① 行数 = kQuestTableSize；② 值域 -1..9（-1 = 无阵营；界面另有边界收敛，

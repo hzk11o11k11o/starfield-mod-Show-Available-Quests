@@ -378,7 +378,6 @@ step = assert.ui icon=\[0x[0-9a-f]+:[0-4]/-?[0-9]+=[A-Za-z]+ timeout=8000
 step = note === 记录性核对：选中深藏不露（Crimson Fleet=5）→ 期望 0x9136:2/5=BlackFleet ===
 step = ui.select 0x00009136
 step = wait 1200
-step = ui.state
 step = menu.close
 
 ; ----------------------------------------------------------------------------
@@ -439,6 +438,67 @@ step = note === 收尾：两条任务 reset 回去（自清场）===
 step = menu.close
 step = quest.reset 0x00009136
 step = quest.reset 0x000192D2
+step = wait 2500
+step = menu.close
+
+; ----------------------------------------------------------------------------
+;  用例：第 69 轮 —— 链式门槛的**扩展边**（非编号链路里的同类「后续任务」）
+;
+;  起因（复查第 67/68 轮产物时发现）：编号链路（CF01→CF02 那种）只是同类形态之一，
+;  同形态的「收尾/流程启动下一个」还有（数据 = tools/esm/gen_quest_chain_extra.py，
+;  人工核实 + 构建期对着官方 Papyrus 源码核验每条边）：
+;    * Eleos 静修地线：完全停止@1000 → 幽灵狩猎 → 驱魔 → 调停者
+;      （每条 fragment 都是「CompleteAllObjectives + Stop + 启动下一个」）；
+;    * 霓虹城帮派线：面试@500（注释 "Start up the follow up quest"）→ 展示力量@700
+;      （注释 "Start up the next quest in the line"）→ 决战；
+;    * 城市支线预启动：黑暗中的光芒@50 → 主要来源；新亚特兰蒂斯城介绍@1 →
+;      橄榄枝 / 临别礼物。
+;  这些任务同样**玩家接不到**（只能被前一个任务的收尾带出来）⇒ 不该出现在列表里。
+;  它们与编号链共用同一套判据（kChainGates / 链式门槛统计与名单），所以判据就是
+;  既有那两行日志 —— 本用例只是把「扩展边真的进了表、真的在判」钉住。
+;
+;  本用例只测**霓虹城帮派线**（状态最干净、不牵扯其它用例；Eleos 线同理未额外加用例
+;  是因为它需要 4 条任务的状态、收益与这条重复）。拆两条跑（`assert.nolog` 的窗口
+;  只覆盖「本条用例」—— 与 r67 同样的理由）：
+;    ① `[case:r69_chain_extra]`（A）：三条都回滚 ⇒「展示力量」「决战」都在
+;       「链式没到」名单里（= 被藏）；
+;    ② `[case:r69_chain_extra_pass]`（B）：推进「面试」到 500（fragment 会
+;       `City_Neon_Gang02.SetStage(100)`）⇒ **本条用例的窗口里**名单没有「展示力量」。
+;
+;  ★ 只动这三条任务的状态（面试 0x00229EE7 / 展示力量 0x00226527 / 决战 0x002250C4）；
+;    不传送、不开星图、不读档；两条用例各自收尾 reset。
+; ----------------------------------------------------------------------------
+[case:r69_chain_extra]
+desc = 第 69 轮：链式门槛扩展边（A）—— 前置没做时霓虹城帮派后续任务都在「链式没到」名单里
+step = note === 准备：把霓虹城帮派线回滚（面试 01 / 展示力量 02 / 决战 03）===
+step = ping
+step = quest.reset 0x00229EE7
+step = quest.reset 0x00226527
+step = quest.reset 0x002250C4
+step = wait 2500
+step = note === 前置没做 ⇒「展示力量」「决战」都必须出现在「链式没到」名单里（= 被藏）===
+step = menu.open
+step = assert.log 推送成功 scope=prev timeout=12000
+;   统计行由 DLL 在推送前若干毫秒打印 ⇒ scope=case（第 68 轮红线四）。
+step = assert.log 链式没到: .*展示力量\[0x00226527 scope=case timeout=3000
+step = assert.log 链式没到: .*决战\[0x002250C4 scope=case timeout=3000
+step = menu.close
+
+[case:r69_chain_extra_pass]
+desc = 第 69 轮：链式门槛扩展边（B）—— 推进「面试」到 500 后「展示力量」不再被藏
+step = note === 推进「面试」到 500（fragment：Start up the follow up quest ⇒ 展示力量@100）===
+step = ping
+step = quest.start 0x00229EE7
+step = quest.stage 0x00229EE7 500
+step = wait 2500
+step = menu.open
+step = assert.log 推送成功 scope=prev timeout=12000
+step = assert.nolog 链式没到:.*展示力量 scope=case timeout=3000
+step = note === 收尾：三条任务 reset 回去（自清场）===
+step = menu.close
+step = quest.reset 0x00229EE7
+step = quest.reset 0x00226527
+step = quest.reset 0x002250C4
 step = wait 2500
 step = menu.close
 

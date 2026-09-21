@@ -100,6 +100,13 @@ if (-not $SkipTable) {
     Step '1/6' '生成任务链门槛（gen_quest_chain.py → ref\quest_chain.json）'
     & python (Join-Path $root 'tools\esm\gen_quest_chain.py') | Write-Host
     if ($LASTEXITCODE -ne 0) { throw "gen_quest_chain.py 失败（exit $LASTEXITCODE）" }
+    # ★★ 第 69 轮：链式门槛的**扩展边**（非编号链路里同形态的「收尾启动下一个」：
+    #   Eleos 线 / 霓虹城帮派线 / 城市支线预启动）—— 表是人工核实的，但每条边都在
+    #   这里对着官方 Papyrus 源码**重新核验**（找不到调用/宿主/stage 不符 ⇒ 直接失败，
+    #   不会静默写一份错数据）⇒ ref\quest_chain_extra.json 由 gen_quest_table.py 合并。
+    Step '1/6' '生成扩展链式边（gen_quest_chain_extra.py → ref\quest_chain_extra.json）'
+    & python (Join-Path $root 'tools\esm\gen_quest_chain_extra.py') | Write-Host
+    if ($LASTEXITCODE -ne 0) { throw "gen_quest_chain_extra.py 失败（exit $LASTEXITCODE）" }
     Step '1/6' '生成静态任务表（gen_quest_table.py）'
     & python (Join-Path $root 'tools\esm\gen_quest_table.py') | Write-Host
     if ($LASTEXITCODE -ne 0) { throw "gen_quest_table.py 失败（exit $LASTEXITCODE）" }
