@@ -1340,6 +1340,9 @@ def main() -> int:
                 #      MQIntro星际遭遇战 / 失踪的爱人 在 INFO 数据里没有门槛）。
                 #   ② B：推 MQ03@4000（`If !MQIN.GetStageDone(10)` → MQIN.SetStage(10)，
                 #      无 Stop/无成就）⇒ 名单里没有「另一边」。
+                #   ★★★ 第 102 轮改判（21:26 会话实测两条 B 段 FAIL = 写侧被引擎
+                #      静默忽略）：B 段改为「先 MQ_Shell@100 预热」，断言链多两层
+                #      （见下方第 102 轮新增检查 + 反向检查③）。
                 all_ok &= check("用例计划 · r101 DLC 链式二期断言（A：新目标任一被藏）",
                                 plan_text.encode(),
                                 "assert.log 链式没到: .*(另一边|深入VOID|失控|MQIntro星际遭遇战|失踪的爱人)\\[0x".encode())
@@ -1358,6 +1361,37 @@ def main() -> int:
                 all_ok &= check("用例计划 · r101 对照边用例（MQ05@1600）",
                                 plan_text.encode(),
                                 "quest.stage ~0x00035E1C 1600".encode())
+                # ★★★ 第 102 轮（实测 FAIL 的定调 + 改判）：两条 B 段的**构造前提**
+                #   = 先经 MQ_Shell@100 预热把宿主置为运行中（写侧对「没进入运行的
+                #   ShatteredSpace 主线任务」被引擎静默忽略 —— probe 实证），再推目标
+                #   stage；断言链 = stageDone(100)=1 → stageDone(4000/1600)=1 → 放行。
+                #   这些检查就是「防下次又被改回不可达的写法」。
+                all_ok &= check("用例计划 · r101 预热步骤（MQ_Shell@100，B 段）",
+                                plan_text.encode(),
+                                "quest.stage ~0x00035E1B 100".encode())
+                all_ok &= check("用例计划 · r101 预热成立的断言（stageDone(100)=1，B 段）",
+                                plan_text.encode(),
+                                "assert.log quest\\.probe 0x[0-9A-F]{2}030C2B：.*stageDone\\(100\\)=1".encode())
+                all_ok &= check("用例计划 · r101 目标边落到引擎的断言（stageDone(4000)=1）",
+                                plan_text.encode(),
+                                "assert.log quest\\.probe 0x[0-9A-F]{2}030C2B：.*stageDone\\(4000\\)=1".encode())
+                all_ok &= check("用例计划 · r101 预热成立的断言（stageDone(100)=1，对照段）",
+                                plan_text.encode(),
+                                "assert.log quest\\.probe 0x[0-9A-F]{2}035E1C：.*stageDone\\(100\\)=1".encode())
+                all_ok &= check("用例计划 · r101 目标边落到引擎的断言（stageDone(1600)=1）",
+                                plan_text.encode(),
+                                "assert.log quest\\.probe 0x[0-9A-F]{2}035E1C：.*stageDone\\(1600\\)=1".encode())
+                all_ok &= check("用例计划 · r98 预热段的探针（宿主是否被 fragment 启动）",
+                                plan_text.encode(),
+                                "quest.probe ~0x00030C2B 100".encode())
+                # 反向检查③（第 102 轮）：不许再出现**没有预热**的直接推宿主写法 ——
+                #   实测（21:26 会话）：`Reset+Start+SetStage` 对 MQ03/MQ05 零效果，
+                #   探针 `未开始 + stageDone(…)=0`；留着它只会制造假 FAIL。
+                bad_r101_direct = ("quest.start ~0x00030C2B" in plan_text
+                                   or "quest.start ~0x00035E1C" in plan_text)
+                print(("MISS " if bad_r101_direct else "OK  ") +
+                      " 用例计划 · r101 不再直接 Start 主线宿主（反向检查，第 102 轮）")
+                all_ok &= not bad_r101_direct
                 # 反向检查①：二期用例里同样不许写死运行期 FormID（必须 `~0x…` 记录号）。
                 bad_r101_fid = ("quest.reset 0x0110AAD5" in plan_text
                                 or "quest.stage 0x01030C2B" in plan_text)
