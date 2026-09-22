@@ -9,8 +9,9 @@
   在原版任务菜单里新增一个「可接任务」标签页：把当前还能接的支线 / 势力 /
   活动 / 事件任务（非主线）集中列出来。选中条目后，可以用游戏原生的引导
   系统（任务目标蓝点 + 扫描仪路径线）导航到接取地点。
-  · 已经完成的、以及已在任务日志里的任务会自动隐藏
-  · 汇总「无限任务」的接取入口（12 处任务板），点一下就能导航过去
+  · 已经完成的、以及已在任务日志里的任务会自动隐藏（可重复任务例外：做完一次后
+    仍会显示，描述里写明怎么再接）
+  · 汇总「无限任务」的接取入口（12 处任务板 + 8 位提供可重复任务的 NPC），点一下就能导航过去
   · 没有导航目标的任务会明确提示：条目名前面标注「（不可导航）」，按钮置灰，不会误导
   · 中文 / 英文游戏都支持；自动适配官方 DLC（未安装的 DLC 不会显示其任务）
 
@@ -51,15 +52,16 @@
 六、已知限制
   · 少量任务（271 条中的 54 条）暂时没有可用的导航目标：条目名会标注
     「（不可导航）」，界面如实提示，不会假装能引导。
-  · 无限生成任务本身不显示，但其接取入口（12 处任务板）会作为独立条目列出；
+  · 无限生成任务本身不显示，但其接取入口（12 处任务板 + 8 位可重复任务 NPC）会作为独立条目列出；
     无论你在哪都能一键导航过去——远处先给大致方位，走到那块板所在的区域后
     蓝点会自动落到板上（读档/重启后也会自动校正）。
   · 少数任务的导航目标所在区域要**先靠近才会加载**：远处点引导会先落到附近
     位置（HUD 会提示「目标尚未加载」），走近后自动生效，不必重新点。
   · 「游戏进度还没到时应当不显示」覆盖两类条件：任务记录里「引用别的任务」的
-    前置条件（7 条任务），以及任务对话（INFO）里的同类条件（60 条任务 /
-    290 条对话 / 341 条条件，例如「大器晚成」要「孤立无援」完成）；
-    位置/遭遇类条件暂未覆盖。
+    前置条件（7 条任务 / 11 条条件，含条件组里的「或」逻辑），以及任务对话
+    （INFO）里的同类条件（80 条任务 / 418 条对话 / 492 条条件，含官方 DLC，
+    例如「大器晚成」要「孤立无援」完成）；另有任务链门槛（后续任务在前置完成前
+    不显示）；位置/遭遇类条件暂未覆盖。
   · 本 mod 会覆盖 Interface\missionmenu.swf 与 missionmenu_lrg.swf：
     与其它修改任务菜单 UI 的 mod 同时使用时，需要做补丁（patch）。
 
@@ -81,8 +83,10 @@
   guidance (quest marker + scanner route line) to navigate to the quest
   giver.
   · Already-completed quests and quests already in your log are hidden
-  · Pickup points of radiant quests are included: 12 mission boards, one
-    click to navigate
+    (repeatable quests are the exception: they stay listed after you finish
+    them, and their description tells you how to take them again)
+  · Pickup points of radiant quests are included: 12 mission boards plus
+    8 repeatable-job NPCs, one click to navigate
   · Quests without a navigation target are clearly flagged (button greyed
     out) instead of silently failing
   · Works with Chinese and English games; official DLC aware (quests from
@@ -133,21 +137,24 @@
   mission boards only…), off by default.
 
 6. Known limitations
-  · 52 of 261 quests currently have no usable navigation target; the UI
+  · 54 of 271 quests currently have no usable navigation target; the UI
     says so honestly instead of pretending.
   · Radiant (infinite) quests themselves are not listed, but their pickup
-    points (12 mission boards) are listed as entries; every entry can be
-    navigated to from anywhere - far away you get the approximate direction,
-    and once you reach the board's area the marker snaps onto the board
-    itself (it also self-corrects after a save reload or restart).
+    points (12 mission boards + 8 repeatable-job NPCs) are listed as
+    entries; every entry can be navigated to from anywhere - far away you
+    get the approximate direction, and once you reach the board's area the
+    marker snaps onto the board itself (it also self-corrects after a save
+    reload or restart).
   · A few quest targets only load once you get near: from afar the guide
     first lands on a nearby spot (the HUD says "target not loaded yet"), and
     it activates automatically once you arrive - no need to press again.
   · "Not shown when your progress is not far enough" covers two layers of
     conditions: record-level preconditions that reference another quest
-    (7 quests) and the same kind of conditions inside a quest's dialogues
-    (INFOs, 60 quests / 290 dialogues / 341 conditions, e.g. "A House
-    Divided" needs "The Empty Nest" finished); location/encounter based
+    (7 quests / 11 conditions, including "or" groups) and the same kind of
+    conditions inside a quest's dialogues (INFOs, 80 quests / 418 dialogues
+    / 492 conditions, official DLC included, e.g. "A House Divided" needs
+    "The Empty Nest" finished), plus a quest-chain gate (a follow-up quest
+    stays hidden until its prerequisite is done); location/encounter based
     conditions are not covered yet.
   · This mod overrides Interface\missionmenu.swf and
     missionmenu_lrg.swf: patches are needed if you use another mod that

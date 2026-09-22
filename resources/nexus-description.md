@@ -1,4 +1,4 @@
-# Nexus 上传素材（v0.1.7）
+# Nexus 上传素材（v0.1.8）
 
 > 用途：复制下面内容到 Nexus 的 mod 页。Summary 填「名称/摘要」栏，
 > Description 填「描述」栏（Nexus 描述框可用 BBCode，纯文本换行也正常）。
@@ -32,7 +32,7 @@ Starfield 从不告诉你去哪接任务，全靠自己撞见。这个 mod 在�
 [*] 汇总「无限任务」的接取入口（12 处任务板：新亚特兰蒂斯 / 阿基拉城 / 霓虹城 / 塞多尼亚 / 霍普镇 / 新家园 / 星船厂 / 星钥站…… + 8 位提供可重复任务的 NPC，条目带「（可重复）」标记），点一下就能导航过去
 [*] 选中即可调用游戏原生引导，导航到接取地点（蓝点 / 路径线）
 [*] 引导目标优先指向**有名字的任务发布者（NPC）**，而不是附近的路标 / 内部标记；你在远处时自动落到常驻目标，飞近后自动切回 NPC
-[*] 已完成的、已在任务日志里的任务自动隐藏
+[*] 已完成的、已在任务日志里的任务自动隐藏（**可重复任务例外**：这类任务完成一次后仍留在列表里，描述第一句写明「（可重复）怎么再接」—— 共 20 条）
 [*] **进度没到不会显示**：前置任务没做完、剧情还没推进到的任务不会出现在列表里（判据来自游戏数据里的任务条件 + 对话条件；列表里留下的都是你现在真能接的）
 [*] 没有导航目标的任务会明确提示：条目名字前面直接标注**「（不可导航）」**，描述里写明原因，不用点就知道它没法引导
 [*] 导航目标很远的任务：远处点引导会先落到**就近位置**（不再「点了没反应」），走近后自动切换到精确目标；极少数（20 条）连就近目标都取不到的任务，描述会**提前**写明「需要靠近」，HUD 会提示、引导保持待生效，靠近后自动生效（不必重新点）
@@ -85,7 +85,7 @@ Starfield never tells you where to pick up quests — you just have to stumble i
 [*] Native guidance: quest marker + scanner route line to the quest giver
 [*] Guidance prefers the **named quest giver (NPC)** over nearby signposts / internal markers; from a distance it falls back to a persistent target and automatically upgrades back to the NPC once you get close
 [*] SET COURSE (R / X) goes one step further: it also opens the star map with the route plotted to the pickup location, exactly like a vanilla quest
-[*] Already-completed quests and quests already in your log are hidden
+[*] Already-completed quests and quests already in your log are hidden (repeatable quests are the exception: they stay listed after you finish them, and their description tells you how to take them again - 20 of them)
 [*] Quests with no navigation target are clearly flagged (the description explains why) — no dead ends
 [*] Some pickup locations only load when you get near: the description says so in advance, and the HUD reminds you after you press guide; the guidance stays pending and activates automatically once you arrive (no need to press it again)
 [*] Guidance is cancelled automatically once you accept the quest
@@ -125,6 +125,11 @@ Please include SFSE\Plugins\SAQ_ShowAvailableQuests.log, install method (MO2 / m
 ---
 
 ## 更新日志（Changelog）
+
+### v0.1.8（2026-09-22）
+- 新增：**「可重复任务」完成一次后不再从列表里消失** —— 这类任务（共 20 条：赛多尼亚的丹尼斯·艾文林、新家园的几位商人、红里、龙神大厦、锚点星际站、随机太空遭遇……）设计上可以反复接取；完成一次后它们会继续留在列表里，描述第一句写明「（可重复）完成一次后还能再次接取 —— 去找 / 去哪 XX 即可」，照着描述就能再接
+- 改进：**没有导航目标的任务一眼可辨** —— 条目名前面直接标注「（不可导航）」（此前要点开描述才知道）；右侧描述仍写明原因，点击时的提示里用的是任务原名
+- 其它：内部测试与验证设施更新（不影响游戏内行为；发布包仍不包含任何测试代码）
 
 ### v0.1.7（2026-09-22）
 - 改进：「进度没到就不显示」的门槛判定升级为引擎级精确语义 —— 支持任务条件里的「或」逻辑。极少数任务（如「亲爱的姐妹」）此前只要前置 A 完成就会显示，现在会等到「A 完成**且**（B **或** C 之一完成）」才显示，进一步减少「显示出来了却还接不到」的情况
@@ -173,7 +178,7 @@ Please include SFSE\Plugins\SAQ_ShowAvailableQuests.log, install method (MO2 / m
 
 | 项 | 说明 |
 | --- | --- |
-| 上传包 | `dist\SAQ-ShowAvailableQuests-0.1.7.zip`（由 `tools\package-saq.ps1` 生成；会先以发布构建重编 DLL —— 包里不含任何 harness/测试代码） |
+| 上传包 | `dist\SAQ-ShowAvailableQuests-0.1.8.zip`（由 `tools\package-saq.ps1` 生成；会先以发布构建重编 DLL —— 包里不含任何 harness/测试代码） |
 | 测试功能 | 包内**不含任何测试资产**（用例文件 / 结果 JSON），配置强制为「正常玩」的默认值（ini `[Test] Mode=0 / Harness=0`）；发布 DLL 不含 harness 编译 —— 由打包脚本 + `verify_saq_build.py` 三层校验把守 |
 | 版本号 | 三处一致：`plugin\xmake.lua`、`plugin\src\main.cpp`、`meta.ini` |
 | 依赖声明 | Nexus 上标注 SFSE 为必需依赖（版本 0.2.21+） |
