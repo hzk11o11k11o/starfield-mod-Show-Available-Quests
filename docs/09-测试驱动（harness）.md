@@ -1129,3 +1129,43 @@ if (line.find("harness：") != std::string::npos) { continue; }
 * 判据：`check_results.py` / `log_hygiene.py` 退出码均 0 + r106 两条 PASS（A 假 / B 真）；
 * 通过后：打 **0.1.12** 上传包（含第 106 轮 operator 全量产品化）；★ 第 106 轮遗留的
   「补收 7 条在列表里的显示 / 点击」仍未单独验证（本轮用例集未覆盖，见 `docs/99` 十一）。
+
+## 十四·补三十一、第 108 轮（2026-09-23 07:00~07:08 会话）：**32 条 32/32 全 PASS** —— 第 107 轮修正实机收口 + **0.1.12 上传包完成**
+
+> 会话：07:00 启动（部署早于启动 ⇒ 测的就是第 106/107 轮产物）→ 07:08:13 结束（463031 ms，
+> `驱动器 v70`，`stamp=63`，用例集 32 条）。汇总：**32 PASS / 0 FAIL / 0 SKIP**；
+> `check_results.py` / `log_hygiene.py` 退出码均 0（1112 行零坏字节）；`[E]` 0 条 /
+> `[W]` 24 全为老现象（「推送失败（第 1 次）」）；日志 610748 B（会话前 ~3.5 分钟内容被
+> 1MB 滚动清掉 = 正常）。
+
+### 1. 第 107 轮处置的实证（两条判据回归）
+
+* `r106_info_or`（A）/ `r106_info_or_pass`（B）两条 PASS，探针产品行被 `assert.log` 命中：
+  A 段 `组[0]:s112[OR]+s114[OR]假` → B 段推 112 后 `…真`（114 仍未做 = OR 语义）；
+  ⇒ 第 106 轮「INFO 侧 8 个 OR 组 / `DecideProgressGates` 语义」实机行为 + 判据双闭环
+  （第 107 轮「去 `=`」修正生效；`SAQ_Test.cpp:1301` 的 `REX::INFO("信息探针…")` 产品行）。
+
+### 2. 判据三连（交叉验证）
+
+* `plan_regex_audit.py` 在**本次日志**上 **126/126 全命中**（修正后的正则在真实执行日志上
+  直接拿到证据；9 个用例段被滚动清掉 = 提示而非缺陷）；
+* `verify_saq_build.py` 全过（含 `部署 == 工作区`）。
+
+### 3. 0.1.12 上传包（本轮收尾）
+
+* 版本号 6 处同步（xmake ×2 / main.cpp / package-saq ×2 / build-saq metaVer）+ changelog
+  v0.1.12（补收 7 条 + INFO OR 组）+ Nexus 文案 / README 数字更新（278 条 / 61 条不可导航 /
+  415 对话 / 501 条件）；
+* `tools\package-saq.ps1`：发布构建 + 部署 → `verify --release` 全过 → 打包
+  ⇒ `dist\SAQ-ShowAvailableQuests-0.1.12.zip` **1,846,610 B** /
+  SHA256 `1E461BA122EB7A21551F1044B555F3334081980F6BCBDFE874A28CFDCEF20C11`；
+* 打包后补跑 verify 覆盖**新包**（第 88 轮教训）：「不含测试资产（7 个文件）」✓；
+  包内 6 产物与工作区 SHA256 逐一致（发布 DLL **842240 B** / SWF 733272+733372 /
+  ESM 4752 / PEX 17666 / ini 4104）；
+* 打完后切回开发构建（DLL **1025024 B**，含 harness）+ MO2 ini `Harness=0`。
+
+### 4. 遗留
+
+* ★ 第 106 轮遗留「补收 7 条在列表里的显示 / 点击」仍未单独验证（用例集未覆盖）；
+* 下一轮候选：给 7 条补引导候选（`extra_quests.json` 加 `guides` 字段或
+  `gen_guide_targets.py` 支持名单）。

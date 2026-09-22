@@ -51,7 +51,7 @@
   内含测试过滤开关（只显示有目标 / 无目标 / DLC / 任务板入口 ……），默认关闭。
 
 六、已知限制
-  · 少量任务（271 条中的 54 条）暂时没有可用的导航目标：条目名会标注
+  · 少量任务（278 条中的 61 条）暂时没有可用的导航目标：条目名会标注
     「（不可导航）」，界面如实提示，不会假装能引导。
   · 无限生成任务本身不显示，但其接取入口（12 处任务板 + 8 位可重复任务 NPC）会作为独立条目列出；
     无论你在哪都能一键导航过去——远处先给大致方位，走到那块板所在的区域后
@@ -60,7 +60,7 @@
     位置（HUD 会提示「目标尚未加载」），走近后自动生效，不必重新点。
   · 「游戏进度还没到时应当不显示」覆盖两类条件：任务记录里「引用别的任务」的
     前置条件（7 条任务 / 11 条条件，含条件组里的「或」逻辑），以及任务对话
-    （INFO）里的同类条件（80 条任务 / 418 条对话 / 492 条条件，含官方 DLC，
+    （INFO）里的同类条件（80 条任务 / 415 条对话 / 501 条条件，含官方 DLC，
     例如「大器晚成」要「孤立无援」完成）；另有任务链门槛（后续任务在前置完成前
     不显示）；位置/遭遇类条件暂未覆盖。
   · 本 mod 会覆盖 Interface\missionmenu.swf 与 missionmenu_lrg.swf：
@@ -139,7 +139,7 @@
   mission boards only…), off by default.
 
 6. Known limitations
-  · 54 of 271 quests currently have no usable navigation target; the UI
+  · 61 of 278 quests currently have no usable navigation target; the UI
     says so honestly instead of pretending.
   · Radiant (infinite) quests themselves are not listed, but their pickup
     points (12 mission boards + 8 repeatable-job NPCs) are listed as
@@ -153,8 +153,8 @@
   · "Not shown when your progress is not far enough" covers two layers of
     conditions: record-level preconditions that reference another quest
     (7 quests / 11 conditions, including "or" groups) and the same kind of
-    conditions inside a quest's dialogues (INFOs, 80 quests / 418 dialogues
-    / 492 conditions, official DLC included, e.g. "A House Divided" needs
+    conditions inside a quest's dialogues (INFOs, 80 quests / 415 dialogues
+    / 501 conditions, official DLC included, e.g. "A House Divided" needs
     "The Empty Nest" finished), plus a quest-chain gate (a follow-up quest
     stays hidden until its prerequisite is done); location/encounter based
     conditions are not covered yet.

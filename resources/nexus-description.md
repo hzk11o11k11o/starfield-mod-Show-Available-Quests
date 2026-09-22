@@ -1,4 +1,4 @@
-# Nexus 上传素材（v0.1.11）
+# Nexus 上传素材（v0.1.12）
 
 > 用途：复制下面内容到 Nexus 的 mod 页。Summary 填「名称/摘要」栏，
 > Description 填「描述」栏（Nexus 描述框可用 BBCode，纯文本换行也正常）。
@@ -56,10 +56,10 @@ Starfield 从不告诉你去哪接任务，全靠自己撞见。这个 mod 在�
 
 [b]已知限制[/b]
 [list]
-[*] 271 条任务中有 54 条暂无导航目标：条目名会标注「（不可导航）」，界面如实提示，不会假装能引导
+[*] 278 条任务中有 61 条暂无导航目标：条目名会标注「（不可导航）」，界面如实提示，不会假装能引导
 [*] 无限生成任务本身不显示，但其接取入口（12 处任务板 + 8 位提供可重复任务的 NPC）作为独立条目列出；任何位置都能一键导航过去——在远处先给你一个大致方位，等你走到那块任务板所在的区域，蓝点会自动落到任务板上（不会停在几米外；读档或重启游戏后也会自动校正）
 [*] 引导在关闭任务菜单后生效（与原版一致：HUD 蓝点本来就要关菜单才可见）
-[*] 「进度没到就不显示」覆盖**两层条件**：任务记录级条件里「引用别的任务」的那一类（7 条任务 / 11 条条件，含条件组里的「或」逻辑，例如「要先完成 A 才能接到 B」），以及任务对话（INFO）里的同类条件（80 条任务 / 418 条对话 / 492 条条件，含官方 DLC，例如「大器晚成」要「孤立无援」完成）；另有**任务链门槛**（后续任务在前置完成前不显示，含官方 DLC）；位置/遭遇类条件暂未覆盖
+[*] 「进度没到就不显示」覆盖**两层条件**：任务记录级条件里「引用别的任务」的那一类（7 条任务 / 11 条条件，含条件组里的「或」逻辑，例如「要先完成 A 才能接到 B」），以及任务对话（INFO）里的同类条件（80 条任务 / 415 条对话 / 501 条条件，含官方 DLC，例如「大器晚成」要「孤立无援」完成）；另有**任务链门槛**（后续任务在前置完成前不显示，含官方 DLC）；位置/遭遇类条件暂未覆盖
 [*] 会覆盖任务菜单的 UI 文件（missionmenu.swf / missionmenu_lrg.swf），与其它改任务菜单的 mod 需要打补丁
 [/list]
 
@@ -108,10 +108,10 @@ Mission menu (TAB) -> "Available Quests" -> select an entry -> expand the "Go to
 
 [b]Known limitations[/b]
 [list]
-[*] 54 of 271 quests currently have no navigation target; the UI says so honestly
+[*] 61 of 278 quests currently have no navigation target; the UI says so honestly
 [*] Radiant quests themselves are not listed, but their pickup points (12 mission boards + 8 repeatable-job NPCs) are listed as entries; every entry can be navigated to from anywhere — far away you get the approximate direction, and once you reach the board's area the marker automatically snaps onto the board itself (no more stopping a few metres short; it also self-corrects after a save reload or restart)
 [*] Guidance applies after you close the mission menu (same as vanilla: the HUD marker only appears outside menus)
-[*] "Hidden when your progress isn't far enough" covers **two layers**: record-level preconditions that reference another quest (7 quests / 11 conditions, including "or" groups, e.g. "you must finish A before B shows up") and the same kind of conditions inside a quest's dialogues (INFOs: 80 quests / 418 dialogues / 492 conditions, official DLC included), plus a quest-chain gate (a follow-up quest stays hidden until its prerequisite is done, official DLC included); location/encounter based conditions are not covered yet
+[*] "Hidden when your progress isn't far enough" covers **two layers**: record-level preconditions that reference another quest (7 quests / 11 conditions, including "or" groups, e.g. "you must finish A before B shows up") and the same kind of conditions inside a quest's dialogues (INFOs: 80 quests / 415 dialogues / 501 conditions, official DLC included), plus a quest-chain gate (a follow-up quest stays hidden until its prerequisite is done, official DLC included); location/encounter based conditions are not covered yet
 [*] Overrides the mission menu UI (missionmenu.swf / missionmenu_lrg.swf): patching needed with other mission-menu mods
 [/list]
 
@@ -125,6 +125,11 @@ Please include SFSE\Plugins\SAQ_ShowAvailableQuests.log, install method (MO2 / m
 ---
 
 ## 更新日志（Changelog）
+
+### v0.1.12（2026-09-23）
+- 新增：**补收 7 条此前漏掉的任务** —— 巴雷特个人任务「阴阳两隔」、新亚特兰蒂斯「搜查与扣押 / 双城传说」、阿基拉城阿什塔线「防御措施 / 误报 / 群兽领袖 / 登陆不顺」。这些任务没有任务类型标记，此前被过滤掉了；现在正常显示，并带完整的前置条件判定（进度没到不会出现）。这几条暂无可导航的接取点，条目名会标注「（不可导航）」
+- 改进：「进度没到就不显示」的对话（INFO）条件判定升级 —— 支持条件组里的「或」逻辑（例如「A **或** B 推进到某一步」即可显示，此前组里只要有一条没做过就可能一直隐藏）；同时把一批被误当成「接取前置」的任务推进对话从判定里剔除，个别任务不再被错误隐藏
+- 其它：可接任务总数 271 → 278；内部测试与验证设施更新（不影响游戏内行为；发布包仍不包含任何测试代码）
 
 ### v0.1.11（2026-09-22）
 - 改进：「进度没到就不显示」对官方 DLC 的覆盖继续补全 —— 破碎空间「另一边」、地球舰队后续任务（深入VOID / 失控 / 互助互赢·互谅互让·互利互惠 / 隐蔽入侵）、自由航道后续任务（失踪的爱人 / 绝非虚言 / 旧伤）现在也会在前置剧情没推进到时隐藏（判据全部取自官方脚本里的真实启动条件）
@@ -190,7 +195,7 @@ Please include SFSE\Plugins\SAQ_ShowAvailableQuests.log, install method (MO2 / m
 
 | 项 | 说明 |
 | --- | --- |
-| 上传包 | `dist\SAQ-ShowAvailableQuests-0.1.11.zip`（由 `tools\package-saq.ps1` 生成；会先以发布构建重编 DLL —— 包里不含任何 harness/测试代码） |
+| 上传包 | `dist\SAQ-ShowAvailableQuests-0.1.12.zip`（由 `tools\package-saq.ps1` 生成；会先以发布构建重编 DLL —— 包里不含任何 harness/测试代码） |
 | 测试功能 | 包内**不含任何测试资产**（用例文件 / 结果 JSON），配置强制为「正常玩」的默认值（ini `[Test] Mode=0 / Harness=0`）；发布 DLL 不含 harness 编译 —— 由打包脚本 + `verify_saq_build.py` 三层校验把守 |
 | 版本号 | 三处一致：`plugin\xmake.lua`、`plugin\src\main.cpp`、`meta.ini` |
 | 依赖声明 | Nexus 上标注 SFSE 为必需依赖（版本 0.2.21+） |
