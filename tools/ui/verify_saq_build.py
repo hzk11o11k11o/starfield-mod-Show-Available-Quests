@@ -527,6 +527,17 @@ HARNESS_STRINGS = (
     #   SAQ_Test.cpp 的 op 名）⇒ 发布 DLL 必须一条都不见（本表反向检查覆盖）。
     ("harness 引擎直读探针 op 名", "quest.probe"),
     ("harness 引擎直读探针文案", "quest.probe 0x"),
+    # ★★★ 第 104 轮（2026-09-22 22:40 会话 r98 B 段唯一 FAIL 的定调用）：探针结果
+    #   必须**同时打一行产品日志**（`任务探针 quest.probe 0x…`）—— `assert.log` 只认
+    #   产品行（`LogFind` 跳过一切含 `harness：` 的行 = 第 56 轮防回声红线），probe
+    #   输出若只出现在 `[PASS] quest.probe …` 这条 harness 步骤行里，任何 probe 断言
+    #   都必然假 FAIL（症状：步骤 PASS、断言「日志里没出现」+ evidence 为空）。
+    #   ⇒ 这条特征串钉住「探针结果会打一行产品日志」不被回退。
+    #   ★ 实现细节：产品行是 `REX::INFO("任务探针 {}", probe)` —— 二进制里
+    #     `任务探针 {}`（本条）与 `quest.probe 0x…`（上一条）是**两段独立字面量**，
+    #     拼不出 `任务探针 quest.probe 0x` 这样的连续串（第一版写错成那个，MISS 过）。
+    #     两条必须**成对**在：上一条管「探针输出格式」，本条管「结果会进产品日志」。
+    ("harness 探针产品行（可被 assert.log 取证）", "任务探针 {}"),
 )
 
 

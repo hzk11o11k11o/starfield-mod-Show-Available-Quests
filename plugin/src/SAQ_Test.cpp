@@ -1267,7 +1267,16 @@ namespace SAQ::Test
 					}
 					REX::INFO("harness：  参数解析 {}", resolved);
 				}
-				CompleteStep(true, ProbeQuestStages(formID, step.stages), {});
+				const auto probe = ProbeQuestStages(formID, step.stages);
+				// ★★ 第 104 轮（2026-09-22 22:40 会话 r98 B 段 FAIL 的定调用）：探针结果
+				//   必须**同时打一行产品日志** —— `assert.log` 只认产品行（`LogFind` 跳过
+				//   一切含 `harness：` 的行，第 56 轮红线防回声），而 probe 输出此前只出现在
+				//   `[PASS] quest.probe …` 这条 harness 步骤行里 ⇒ 第 103 轮 r98 B 段的
+				//   5 条 probe 断言**全部必然假 FAIL**（步骤自身 PASS、断言却超时；报文
+				//   「窗口从 idx … 起」+「本步骤之后没有产生任何日志行」就是它）。
+				//   ★ 只加这一行产品日志，不改任何判据语义：断言的窗口规则照旧适用。
+				REX::INFO("任务探针 {}", probe);
+				CompleteStep(true, probe, {});
 				return true;
 			}
 
