@@ -150,7 +150,7 @@ SFSE_PLUGIN_LOAD(const SFSE::LoadInterface* a_sfse)
 	SFSE::Init(a_sfse, { .logName = kLogName });
 	ApplyLogSizeLimit();
 
-	REX::INFO("SAQ_ShowAvailableQuests v0.1.8 loading (SFSE build {})", SFSE::GetSFSEVersion());
+	REX::INFO("SAQ_ShowAvailableQuests v0.1.9 loading (SFSE build {})", SFSE::GetSFSEVersion());
 
 	// ★★ 第 84 轮（自动测试二跑复查）：结果 JSON 因**一处非法 UTF-8** 整体读不出来
 	//   （`check_results.py` 退出码 2 —— 判据通道失效，比单条用例 FAIL 严重得多）。

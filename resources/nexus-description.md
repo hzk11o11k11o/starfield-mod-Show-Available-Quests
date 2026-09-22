@@ -1,4 +1,4 @@
-# Nexus 上传素材（v0.1.8）
+# Nexus 上传素材（v0.1.9）
 
 > 用途：复制下面内容到 Nexus 的 mod 页。Summary 填「名称/摘要」栏，
 > Description 填「描述」栏（Nexus 描述框可用 BBCode，纯文本换行也正常）。
@@ -32,7 +32,7 @@ Starfield 从不告诉你去哪接任务，全靠自己撞见。这个 mod 在�
 [*] 汇总「无限任务」的接取入口（12 处任务板：新亚特兰蒂斯 / 阿基拉城 / 霓虹城 / 塞多尼亚 / 霍普镇 / 新家园 / 星船厂 / 星钥站…… + 8 位提供可重复任务的 NPC，条目带「（可重复）」标记），点一下就能导航过去
 [*] 选中即可调用游戏原生引导，导航到接取地点（蓝点 / 路径线）
 [*] 引导目标优先指向**有名字的任务发布者（NPC）**，而不是附近的路标 / 内部标记；你在远处时自动落到常驻目标，飞近后自动切回 NPC
-[*] 已完成的、已在任务日志里的任务自动隐藏（**可重复任务例外**：这类任务完成一次后仍留在列表里，描述第一句写明「（可重复）怎么再接」—— 共 20 条）
+[*] 已完成的、已在任务日志里的任务自动隐藏（**可重复任务例外**：这类任务完成一次后仍留在列表里 —— 共 20 条，名字前同样带「（可重复）」标记并整组排在列表末尾，描述第一句写明「（可重复）怎么再接」）
 [*] **进度没到不会显示**：前置任务没做完、剧情还没推进到的任务不会出现在列表里（判据来自游戏数据里的任务条件 + 对话条件；列表里留下的都是你现在真能接的）
 [*] 没有导航目标的任务会明确提示：条目名字前面直接标注**「（不可导航）」**，描述里写明原因，不用点就知道它没法引导
 [*] 导航目标很远的任务：远处点引导会先落到**就近位置**（不再「点了没反应」），走近后自动切换到精确目标；极少数（20 条）连就近目标都取不到的任务，描述会**提前**写明「需要靠近」，HUD 会提示、引导保持待生效，靠近后自动生效（不必重新点）
@@ -57,7 +57,7 @@ Starfield 从不告诉你去哪接任务，全靠自己撞见。这个 mod 在�
 [b]已知限制[/b]
 [list]
 [*] 271 条任务中有 54 条暂无导航目标：条目名会标注「（不可导航）」，界面如实提示，不会假装能引导
-[*] 无限生成任务本身不显示，但其接取入口（12 处任务板）作为独立条目列出；任何位置都能一键导航过去——在远处先给你一个大致方位，等你走到那块任务板所在的区域，蓝点会自动落到任务板上（不会停在几米外；读档或重启游戏后也会自动校正）
+[*] 无限生成任务本身不显示，但其接取入口（12 处任务板 + 8 位提供可重复任务的 NPC）作为独立条目列出；任何位置都能一键导航过去——在远处先给你一个大致方位，等你走到那块任务板所在的区域，蓝点会自动落到任务板上（不会停在几米外；读档或重启游戏后也会自动校正）
 [*] 引导在关闭任务菜单后生效（与原版一致：HUD 蓝点本来就要关菜单才可见）
 [*] 「进度没到就不显示」覆盖**两层条件**：任务记录级条件里「引用别的任务」的那一类（7 条任务 / 11 条条件，含条件组里的「或」逻辑，例如「要先完成 A 才能接到 B」），以及任务对话（INFO）里的同类条件（80 条任务 / 418 条对话 / 492 条条件，含官方 DLC，例如「大器晚成」要「孤立无援」完成）；另有**任务链门槛**（后续任务在前置完成前不显示）；位置/遭遇类条件暂未覆盖
 [*] 会覆盖任务菜单的 UI 文件（missionmenu.swf / missionmenu_lrg.swf），与其它改任务菜单的 mod 需要打补丁
@@ -85,7 +85,7 @@ Starfield never tells you where to pick up quests — you just have to stumble i
 [*] Native guidance: quest marker + scanner route line to the quest giver
 [*] Guidance prefers the **named quest giver (NPC)** over nearby signposts / internal markers; from a distance it falls back to a persistent target and automatically upgrades back to the NPC once you get close
 [*] SET COURSE (R / X) goes one step further: it also opens the star map with the route plotted to the pickup location, exactly like a vanilla quest
-[*] Already-completed quests and quests already in your log are hidden (repeatable quests are the exception: they stay listed after you finish them, and their description tells you how to take them again - 20 of them)
+[*] Already-completed quests and quests already in your log are hidden (repeatable quests are the exception: they stay listed after you finish them - 20 of them - and are tagged "(Repeatable)" and grouped at the end of the list; their description tells you how to take them again)
 [*] Quests with no navigation target are clearly flagged (the description explains why) — no dead ends
 [*] Some pickup locations only load when you get near: the description says so in advance, and the HUD reminds you after you press guide; the guidance stays pending and activates automatically once you arrive (no need to press it again)
 [*] Guidance is cancelled automatically once you accept the quest
@@ -125,6 +125,10 @@ Please include SFSE\Plugins\SAQ_ShowAvailableQuests.log, install method (MO2 / m
 ---
 
 ## 更新日志（Changelog）
+
+### v0.1.9（2026-09-22）
+- 改进：**可重复任务的条目更好认、更好找** —— 做完一次还能再接的任务（共 20 条：城里的重复支线、赏金 / 回收类委托、DLC 锚点星际站的委托等）名字前面现在也标注「（可重复）」，并且**整组集中排列在列表末尾**（接在任务板 /「（可重复）」NPC 入口之后），一眼就能扫到；做完一次后它们依然留在列表里
+- 其它：内部测试与验证设施更新（不影响游戏内行为；发布包仍不包含任何测试代码）
 
 ### v0.1.8（2026-09-22）
 - 新增：**「可重复任务」完成一次后不再从列表里消失** —— 这类任务（共 20 条：赛多尼亚的丹尼斯·艾文林、新家园的几位商人、红里、龙神大厦、锚点星际站、随机太空遭遇……）设计上可以反复接取；完成一次后它们会继续留在列表里，描述第一句写明「（可重复）完成一次后还能再次接取 —— 去找 / 去哪 XX 即可」，照着描述就能再接
@@ -178,7 +182,7 @@ Please include SFSE\Plugins\SAQ_ShowAvailableQuests.log, install method (MO2 / m
 
 | 项 | 说明 |
 | --- | --- |
-| 上传包 | `dist\SAQ-ShowAvailableQuests-0.1.8.zip`（由 `tools\package-saq.ps1` 生成；会先以发布构建重编 DLL —— 包里不含任何 harness/测试代码） |
+| 上传包 | `dist\SAQ-ShowAvailableQuests-0.1.9.zip`（由 `tools\package-saq.ps1` 生成；会先以发布构建重编 DLL —— 包里不含任何 harness/测试代码） |
 | 测试功能 | 包内**不含任何测试资产**（用例文件 / 结果 JSON），配置强制为「正常玩」的默认值（ini `[Test] Mode=0 / Harness=0`）；发布 DLL 不含 harness 编译 —— 由打包脚本 + `verify_saq_build.py` 三层校验把守 |
 | 版本号 | 三处一致：`plugin\xmake.lua`、`plugin\src\main.cpp`、`meta.ini` |
 | 依赖声明 | Nexus 上标注 SFSE 为必需依赖（版本 0.2.21+） |
