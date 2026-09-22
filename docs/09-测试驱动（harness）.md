@@ -1028,7 +1028,7 @@ if (line.find("harness：") != std::string::npos) { continue; }
 > 自查方法：写完新 op 后问一句「这行会以什么前缀进日志？」——
 > 若只有 `harness：` 前缀，就必须补产品行（照抄 `kQuestProbe` 这一行的写法）。
 
-### 6. 待实机判据（重开游戏重跑 30 条）
+### 6. 待实机判据（重开游戏重跑 30 条）★ 已由补二十九收口
 
 * `r98_dlc_chain_pass` 的 5 条 probe 断言全部命中（`stageDone(100)=1` → `stageDone(4000)=1`
   + MQIN `stageDone(10)=1` + `stageDone(1600)=1` 记录项）；
@@ -1036,3 +1036,45 @@ if (line.find("harness：") != std::string::npos) { continue; }
   `ui.select` 命中）；
 * 回归：其余 29 条不变、`check_results.py` / `log_hygiene.py` 退出码 0；
 * ⇒ 通过后重打 **0.1.11** 上传包。
+
+## 十四·补二十九、第 105 轮（2026-09-22 22:50~22:58 会话）：**30 条 30/30 全 PASS** —— 第 104 轮修复实机收口 + **0.1.11 上传包完成**
+
+> 会话：22:50 启动（部署 22:32 早于启动 ⇒ 测的就是第 104 轮产物）→ 22:57:54 结束
+> （455031 ms，`驱动器 v70`，`stamp=63`，用例集 30 条）。汇总：**30 PASS / 0 FAIL / 0 SKIP**；
+> `check_results.py` / `log_hygiene.py` 退出码均 0；`[E]` 0 条 / `[W]` 35（34 条「推送失败
+> （第 1 次）」+ 1 条 UI 桥解析失败，全老现象）；日志 813631 B（滚动正常）。
+
+### 1. 补二十八处置的实证（红线六）
+
+* 6 行 **产品日志**（无 `harness：` 前缀）真实打印并被 `assert.log` 取证：
+  `[I] 任务探针 quest.probe 0x01030C2B：运行中 flags=0x18101｜stageDone(100)=1` 等；
+* `r98_dlc_chain_pass`（31656 ms）5 条 probe 断言全中：
+  `stageDone(100)=1`（MQ03 / 发掘过去）→ `stageDone(4000)=1` + MQIN `stageDone(10)=1`
+  + `stageDone(1600)=1`（记录项）；★ 探针行命中证据显示来源 `[SAQ_Test.cpp:1278]`
+  —— 正是第 104 轮补的那一行（`CompleteStep` 之前 `REX::INFO("任务探针 {}", probe)`）；
+* 判据①/②：`assert.nolog 链式没到:.*(狂热逾界|信念之争|发掘过去)` PASS +
+  `ui.select ~0x0010AAD5` 命中「另一边」（`ok|idx=168|0x110aad5@另一边`）；
+* 负向对照成立：预热后 probe 三次（`MQ03/MQ5 运行中 + stageDone(100)=1`，
+  `MQIN 未开始 + stageDone(10)=0`）→ 推 `MQ03@4000` 后 `MQIN 运行中 + stageDone(10)=1`。
+
+### 2. 数据侧与回归（照旧全对）
+
+* `stamp=63` / 数据源 4 master 记录命中 100%（212/212 · 15/15 · 22/22 · 22/22）/
+  `入口=20(可导航 20｜marker 10 原板 10 兜底 0 不可用 0)`；
+* 其余 29 条用例逐条 PASS（含 `r62_reload_observe` 20844 ms、`r45_candidates` 52344 ms）。
+
+### 3. 0.1.11 上传包（本轮收尾）
+
+* 版本号同步 6 处（`xmake.lua` ×2 / `main.cpp` / `package-saq.ps1` ×2 / `build-saq.ps1`
+  的 `metaVer`）+ changelog v0.1.11 + Nexus 文案标题/清单 + `docs/01` 注释；
+* changelog 内容 = **第 101 轮 DLC 链式门槛二期**（另一边 ← MQ03@4000 / MQ04@7000 /
+  MQ05@1600；地球舰队六级链含 need_stage；自由航道三条 ⇒ 表内 **78 条任务 / 84 边**）
+  —— 这是 0.1.10 之后唯一的玩家可见变化；
+* `tools\package-saq.ps1`：发布构建 + 部署 → `verify --release` 全过 → 打包
+  ⇒ `dist\SAQ-ShowAvailableQuests-0.1.11.zip` **1,845,427 B** /
+  SHA256 `65928FCDF0C69DD77B5011D27BCD526C8F0742370E3CDA6E1430600504A24357`；
+* 打包后补跑 verify 覆盖**新包**（第 88 轮教训）：`上传包(…0.1.11.zip) · 不含测试资产
+  （7 个文件）` ✓；包内 5 产物与工作区 SHA256 逐一致（发布 DLL **840704 B**）；
+  ini 玩家默认值（`[Test] Mode=0 / Harness=0`）+ README `v0.1.11`；
+* 打完后切回开发构建（DLL **1017344 B**，`部署 == 工作区` verify 全过）+ MO2 ini
+  `Harness=0`（`AutoLoad` 保留 —— 与 r62 用例的指定存档保持一致）。

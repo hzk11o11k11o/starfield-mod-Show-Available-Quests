@@ -1,4 +1,4 @@
-# Nexus 上传素材（v0.1.10）
+# Nexus 上传素材（v0.1.11）
 
 > 用途：复制下面内容到 Nexus 的 mod 页。Summary 填「名称/摘要」栏，
 > Description 填「描述」栏（Nexus 描述框可用 BBCode，纯文本换行也正常）。
@@ -126,6 +126,10 @@ Please include SFSE\Plugins\SAQ_ShowAvailableQuests.log, install method (MO2 / m
 
 ## 更新日志（Changelog）
 
+### v0.1.11（2026-09-22）
+- 改进：「进度没到就不显示」对官方 DLC 的覆盖继续补全 —— 破碎空间「另一边」、地球舰队后续任务（深入VOID / 失控 / 互助互赢·互谅互让·互利互惠 / 隐蔽入侵）、自由航道后续任务（失踪的爱人 / 绝非虚言 / 旧伤）现在也会在前置剧情没推进到时隐藏（判据全部取自官方脚本里的真实启动条件）
+- 其它：内部测试与验证设施更新（不影响游戏内行为；发布包仍不包含任何测试代码）
+
 ### v0.1.10（2026-09-22）
 - 改进：「进度没到就不显示」对官方 DLC 的覆盖补全 —— 破碎空间主线的后续任务（「家族调和」及其后的议会线）现在也会在前置剧情没推进到时隐藏（判据取自官方脚本里的真实启动条件；此前这几条只能保守放行）
 - 其它：内部测试与验证设施更新（不影响游戏内行为；发布包仍不包含任何测试代码）
@@ -186,7 +190,7 @@ Please include SFSE\Plugins\SAQ_ShowAvailableQuests.log, install method (MO2 / m
 
 | 项 | 说明 |
 | --- | --- |
-| 上传包 | `dist\SAQ-ShowAvailableQuests-0.1.10.zip`（由 `tools\package-saq.ps1` 生成；会先以发布构建重编 DLL —— 包里不含任何 harness/测试代码） |
+| 上传包 | `dist\SAQ-ShowAvailableQuests-0.1.11.zip`（由 `tools\package-saq.ps1` 生成；会先以发布构建重编 DLL —— 包里不含任何 harness/测试代码） |
 | 测试功能 | 包内**不含任何测试资产**（用例文件 / 结果 JSON），配置强制为「正常玩」的默认值（ini `[Test] Mode=0 / Harness=0`）；发布 DLL 不含 harness 编译 —— 由打包脚本 + `verify_saq_build.py` 三层校验把守 |
 | 版本号 | 三处一致：`plugin\xmake.lua`、`plugin\src\main.cpp`、`meta.ini` |
 | 依赖声明 | Nexus 上标注 SFSE 为必需依赖（版本 0.2.21+） |
