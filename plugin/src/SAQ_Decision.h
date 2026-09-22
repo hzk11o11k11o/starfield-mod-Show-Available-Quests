@@ -199,7 +199,7 @@ namespace SAQ::Decision
 	bool IsGatePinned(std::uint8_t a_companionPin, std::int8_t a_factionEntry);
 
 	// ========================================================================
-	//  3c. 列表顺序（第 74/75 轮）：两类「固定显示」的任务**前置**
+	//  3c. 列表顺序（第 74/75/96 轮）：「固定显示」的任务**前置**、可重复任务**后置**
 	//
 	//  收集完成后按这个键排序（stable_sort ⇒ 其余条目保持表顺序）：
 	//    ① ★★ 第 75 轮：四大势力开头任务 —— 玩家要求「固定排在可接任务列表的
@@ -207,21 +207,31 @@ namespace SAQ::Decision
 	//       龙神 → 深红舰队）；
 	//    ② ★ 第 74 轮：同伴任务 —— 玩家要求「把它们放在一起」；按同伴下标分组，
 	//       同一位同伴的「入口」（个人任务）在「后续」（承诺任务）之前；
-	//    ③ 其余：group 2 —— 比较器对两个「其余」都返回 false（保持原顺序）。
+	//    ③ 其余：group 2 —— 比较器对两个「其余」都返回 false（保持原顺序）；
+	//    ④ ★★ 第 96 轮：可重复任务（a_repeatable，做完一次还能再接的那 20 条）——
+	//       玩家要求「前面加（可重复）提示 + 一样把它们排列在一起（像图里的
+	//       （可重复）NPC 入口那样）」⇒ group 3 = 整组排到**列表末尾**。
+	//       ★ 关键：任务板 / 可重复 NPC 入口（SAQ.cpp::AppendEntryRows）是**先追加、
+	//       后排序**（它们落在 group 2 的末尾 —— 输入在最后 + 稳定排序）⇒ 这一组会
+	//       恰好接在「（可重复）NPC」入口之后，末尾连成一片「（可重复）…」条目。
+	//    ⑤ 数据语义（静态表不会这样，但语义要稳）：势力 > 同伴 > 可重复 ——
+	//       一条任务同时命中多个标记时按前一个分组（重复任务不抢同伴/势力分组）。
 	//
-	//  界面侧的 `order=` 探针（MissionsList.SAQ_OrderProbe）给出运行期真实顺序；
-	//  内嵌回退载荷（gen_quest_table.py::payload_order）必须与本排序**逐条同序**。
+	//  界面侧的 `order=` 探针（MissionsList.SAQ_OrderProbe —— 前 6 条 + `|tail=`
+	//  末尾两行的 uID=显示名）给出运行期真实顺序；内嵌回退载荷
+	//  （gen_quest_table.py::payload_order）必须与本排序**逐条同序**。
 	//  ========================================================================
 	struct EntryOrderKey
 	{
-		std::int32_t group{};  // 0 = 势力开头任务；1 = 同伴任务；2 = 其余
+		std::int32_t group{};  // 0 = 势力开头任务；1 = 同伴任务；2 = 其余；3 = 可重复任务
 		std::int32_t rank{};   // 组内次序（势力 = factionEntry；同伴 = companion*2 + 入口优先）
 	};
 
+	// ★★ 第 96 轮：a_repeatable（静态表 repeatable ≥ 0）⇒ 组 3（列表末尾）。
 	EntryOrderKey PinnedOrderKey(std::int8_t a_factionEntry, std::int8_t a_companion,
-		std::uint8_t a_companionPin);
+		std::uint8_t a_companionPin, bool a_repeatable);
 
-	// 是否 a 应排在 b 前面（stable_sort 的比较器；两个「其余」⇒ false）。
+	// 是否 a 应排在 b 前面（stable_sort 的比较器；同组的两个键 ⇒ false = 保持原顺序）。
 	bool PinnedOrderLess(const EntryOrderKey& a, const EntryOrderKey& b);
 
 	// 门槛求值的最终动作（三个门槛 —— 进度 / INFO / 链式 —— 共用）：

@@ -419,6 +419,56 @@ package
          return _loc1_.join(",");
       }
       
+      // ★★ 第 74/96 轮（列表顺序自检 —— 与普通版 ui/missionmenu/src/MissionsList.as 同款）：
+      //   报出本 tab **前 6 行**的 uID，外加**末尾两行**的 `<uID>=<显示名>`
+      //   （SAQ_Report 的 `order=[…|tail=…]` 字段用它）。
+      //   · 前 6 条 = 第 74/75 轮「势力开头任务排最前 + 同伴任务随后」的运行期证据；
+      //   · `|tail=` 段 = 第 96 轮「可重复任务整组排在列表末尾」的运行期证据
+      //     （名字带「（可重复）」前缀 —— 前缀真的进渲染字段 sName 的现场）。
+      //   ★ 为什么 lrg 版要单独维护：make_lrg_source.py 只同步 MissionMenu.as /
+      //     QuestUtils.as —— MissionsList.as 是两份各自反编译的源码；本文件此前**漏了**
+      //     这个探针（lrg SWF 里 SAQ_Report 调它会报「方法不存在」）。两处必须一起改。
+      public function SAQ_OrderProbe() : String
+      {
+         var _loc1_:Array = new Array();
+         try
+         {
+            var _loc2_:int = 0;
+            while(_loc2_ < entryCount && _loc1_.length < 6)
+            {
+               var _loc3_:Object = entryList[_loc2_];
+               if(_loc3_ != null && _loc3_.bSaqAvailable === true && _loc3_.uID != null)
+               {
+                  _loc1_.push("0x" + Number(_loc3_.uID).toString(16));
+               }
+               _loc2_++;
+            }
+            var _loc4_:Array = new Array();
+            var _loc5_:int = entryCount - 1;
+            while(_loc5_ >= 0 && _loc4_.length < 2)
+            {
+               var _loc6_:Object = entryList[_loc5_];
+               if(_loc6_ != null && _loc6_.bSaqAvailable === true && _loc6_.uID != null)
+               {
+                  var _loc7_:String = _loc6_.sName != null ? String(_loc6_.sName) : "";
+                  if(_loc7_.length > 16)
+                  {
+                     _loc7_ = _loc7_.substr(0,16);
+                  }
+                  _loc4_.push("0x" + Number(_loc6_.uID).toString(16) + "=" + _loc7_);
+               }
+               _loc5_--;
+            }
+            _loc4_.reverse();
+            return _loc1_.join(",") + "|tail=" + _loc4_.join(",");
+         }
+         catch(e:Error)
+         {
+            return _loc1_.join(",") + "(ex)";  // 诊断函数绝不能让菜单崩
+         }
+         return _loc1_.join(",");
+      }
+      
       override public function onEntryRollover(param1:Event) : *
       {
          if(this.bMouseRolloverEnabled)

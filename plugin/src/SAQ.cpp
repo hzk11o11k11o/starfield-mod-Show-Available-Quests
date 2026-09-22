@@ -211,6 +211,11 @@ namespace SAQ
 			std::size_t repeatableTotal{};    // 这次列表里的可重复任务数（含未完成的）
 			std::size_t repeatableKept{};     // 其中**已完成但被豁免保留**的条数（核心证据）
 			std::string repeatableSamples;    // 被豁免保留的名单（名字 + FormID + 状态）
+			//   ★★ 第 96 轮（可重复任务分组）：整组排到列表末尾（顺序见 SAQ.cpp 的
+			//     stable_sort 调用点 / Decision::PinnedOrderKey 的 group 3）——
+			//     这里的数字 = 排序后落在末尾的可重复任务数（日志/用例证据；
+			//     顺序本身的运行期证据见界面 `order=` 探针第 96 轮起的 `|tail=` 段）。
+			std::size_t repeatableOrdered{};  // 列表**末尾**的可重复任务数
 			bool        filterApplied{};      // 这次到底有没有按运行时状态过滤
 			std::string samples;              // 被剔掉的前几条（名字 + 状态）
 			std::string vtableSamples;        // 未识别虚表的样本（诊断）
@@ -1282,40 +1287,51 @@ namespace SAQ
 				Decision::RecognizedPct(a_stats.recognized, a_stats.live));
 			a_stats.hidden = a_stats.filterApplied ? hiddenByRuntime : 0;
 
+			// ★ 第 27 轮：追加「无限任务入口」（任务板；第 80 轮起还有「（可重复）NPC」）
+			//   条目（见 AppendEntryRows）。
+			//   默认模式（0）与「只显示入口」模式（5）显示；其它测试模式 1~4 不加
+			//   （那几种是任务筛选的测试，混进入口条目会干扰验证）。
+			//   ★★ 第 96 轮：**移到排序之前** —— 入口条目属于 group 2（「其余」），
+			//   先追加（输入在最后）+ 稳定排序 ⇒ 它们保持在本组非可重复任务之后、
+			//   可重复任务（group 3）之前 ⇒ 列表末尾连成一片「（可重复）…」条目。
+			if (a_testMode == 0 || entryOnly) {
+				AppendEntryRows(a_out, a_stats);
+			}
+
 			// ★★ 第 74 轮（同伴好感度任务）：**把它们放在一起**（玩家要求：「同伴任务是
 			//   不是都放在一起（我观察到任务板都是按顺序放在一起的），如果不是，把它们
 			//   放在一起」）—— 同伴任务前置到列表开头，按同伴分组、同一位同伴的
 			//   「入口」（个人任务）在「后续」（承诺任务）之前；其余任务保持原顺序
-			//   （稳定排序 ⇒ 非同伴条目相对顺序不变）；任务板入口照旧追加在末尾。
+			//   （稳定排序 ⇒ 非同伴条目相对顺序不变）。
 			// ★★ 第 75 轮（四大势力开头任务）：玩家要求「固定排在可接任务列表的**前四个**」
 			//   ⇒ 这一组排在最前（排在同伴之前），组内按静态表下标 = 固定顺序
 			//   （联合殖民地 → 自由星 → 龙神 → 深红舰队）。
+			// ★★ 第 96 轮（可重复任务分组）：玩家要求「豁免『已完成』过滤的那些条目
+			//   前面也加上（可重复）提示，然后一样把它们排列在一起（就像图里的
+			//   （可重复）NPC 入口那样）」⇒ 可重复任务整组排到列表**末尾**（group 3；
+			//   名称前缀在 AS3 侧加，见 MissionMenu.SaqRepeatablePrefix）。
 			//   排序判据在离线层（Decision::PinnedOrderKey / PinnedOrderLess，有单测）；
 			//   内嵌回退载荷（gen_quest_table.py::payload_order）与此**逐条同序**。
 			//   排序在界面侧同样成立：载荷顺序 → BuildMergedList → InitializeEntries
 			//   （`_loc2_` 正常段保持输入顺序）→ 我们的 tab 只看 bSaqAvailable 条目
-			//   （运行期证据 = SAQ_Report 的 `order=` 探针）。
+			//   （运行期证据 = SAQ_Report 的 `order=` 探针：前 6 条 + 第 96 轮起的
+			//   `|tail=` 末尾两行）。
 			std::stable_sort(a_out.begin(), a_out.end(),
 				[](const QuestEntry& a, const QuestEntry& b) {
 					return Decision::PinnedOrderLess(
 						Decision::PinnedOrderKey(a.factionEntry, a.companion,
-							a.companionPinned ? 1u : 0u),
+							a.companionPinned ? 1u : 0u, a.repeatable),
 						Decision::PinnedOrderKey(b.factionEntry, b.companion,
-							b.companionPinned ? 1u : 0u));
+							b.companionPinned ? 1u : 0u, b.repeatable));
 				});
 			for (const auto& e : a_out) {
 				if (e.factionEntry >= 0) {
 					++a_stats.factionOrdered;     // 列表**最前**的势力开头任务数
 				} else if (e.companion >= 0) {
 					++a_stats.companionOrdered;   // 列表开头的同伴条目数（日志/用例证据）
+				} else if (e.repeatable) {
+					++a_stats.repeatableOrdered;  // ★★ 第 96 轮：列表**末尾**的可重复任务数
 				}
-			}
-
-			// ★ 第 27 轮：追加「无限任务入口」（任务板）条目（见 AppendEntryRows）。
-			//   默认模式（0）与「只显示入口」模式（5）显示；其它测试模式 1~4 不加
-			//   （那几种是任务筛选的测试，混进入口条目会干扰验证）。
-			if (a_testMode == 0 || entryOnly) {
-				AppendEntryRows(a_out, a_stats);
 			}
 		}
 
@@ -1470,8 +1486,12 @@ namespace SAQ
 			//   `已完成保留` = 本该被「只挡已完成」剔掉、因可重复豁免**留在列表里**的条数
 			//   （这类任务做完一次还能再接，见 docs/11）。名单供玩家反馈时核对 FormID。
 			if (a_stats.repeatableTotal) {
-				out += std::format(" 可重复任务={}(已完成保留{})",
-					a_stats.repeatableTotal, a_stats.repeatableKept);
+				// ★★ 第 96 轮（可重复任务分组）：追加「排在末尾」数 —— 玩家要求
+				//   「一样把他们排列在一起（像图里的（可重复）NPC 入口）」；顺序本身
+				//   见界面 `order=` 探针的 `|tail=` 段（末尾两行的 uID=显示名）。
+				out += std::format(" 可重复任务={}(已完成保留{}｜排在末尾{})",
+					a_stats.repeatableTotal, a_stats.repeatableKept,
+					a_stats.repeatableOrdered);
 			}
 			if (!a_stats.repeatableSamples.empty()) {
 				out += " 可重复保留: " + a_stats.repeatableSamples;

@@ -469,6 +469,8 @@ package
       // ★★ 第 74 轮（同伴好感度任务）：列表**顺序**自检 —— 报出**显示列表**前 6 条的
       //   uID（hex，`,` 连接）。SAQ_Report 的 `order=` 字段用它，例如：
       //     order=[0x21ecd0,0x369ab,0x263262,0x2c7c11,0x351a,…]
+      //   ★★ 第 96 轮（可重复任务分组）：追加 `|tail=<uID>=<显示名>` 段（最后两行）
+      //     —— 「可重复任务整组排到列表末尾」的运行期证据（见函数内注释）。
       //
       // 为什么需要：C++ 把同伴任务**前置**（按同伴分组、入口在后续前）后，载荷顺序
       //   → BuildMergedList → InitializeEntries（`_loc2_` 正常段保持输入顺序）→
@@ -494,6 +496,32 @@ package
                }
                _loc2_++;
             }
+            // ★★ 第 96 轮（可重复任务分组）：**末尾段** —— 从后往前收本 tab 最后两行的
+            //   `<uID>=<显示名>`（例：`|tail=0x29f1c8=（可重复）翻新商品`）。
+            //   为什么需要：C++ 把可重复任务**整组排到列表末尾**（排在任务板 /
+            //   「（可重复）NPC」入口之后 —— 玩家要求「排列在一起」）；前 6 条的
+            //   `order=` 只看得到列表开头，覆盖不到这类「后置」⇒ 载荷顺序 →
+            //   BuildMergedList → InitializeEntries → entryList 这条链路在**末尾**
+            //   没有运行期证据（第 74/75 轮的「前置」探针同理，只是方向相反）。
+            //   名字截 16 字：只作判据用，不占报告长度（报告有 1500 字节上限）。
+            var _loc4_:Array = new Array();
+            var _loc5_:int = entryCount - 1;
+            while(_loc5_ >= 0 && _loc4_.length < 2)
+            {
+               var _loc6_:Object = entryList[_loc5_];
+               if(_loc6_ != null && _loc6_.bSaqAvailable === true && _loc6_.uID != null)
+               {
+                  var _loc7_:String = _loc6_.sName != null ? String(_loc6_.sName) : "";
+                  if(_loc7_.length > 16)
+                  {
+                     _loc7_ = _loc7_.substr(0,16);
+                  }
+                  _loc4_.push("0x" + Number(_loc6_.uID).toString(16) + "=" + _loc7_);
+               }
+               _loc5_--;
+            }
+            _loc4_.reverse();
+            return _loc1_.join(",") + "|tail=" + _loc4_.join(",");
          }
          catch(e:Error)
          {

@@ -58,8 +58,8 @@
     },
     "ui/missionmenu/saqdata/SaqEmbeddedPayload.inc": {
       "desc": "内嵌回退载荷（gen_quest_table.py）",
-      "sha256": "d6449e73ec79c1f32b95eb7da1c1f9c4b7282baf99029e638b353ac3d20ef2de",
-      "summary": "条目 212 / 第一条 2905089"
+      "sha256": "69ff8ff0ad7cc41be36fbc7cac8f0b5e2a489df3dc90ef79e74a83ab37a88290",
+      "summary": "条目 212 / 第一条 2905089 / 末尾可重复 15"
     },
     "plugin/src/SAQ_EntryTable.h": {
       "desc": "入口条目表（gen_entry_table.py，DLL 编译进去）",

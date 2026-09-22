@@ -244,10 +244,10 @@ namespace SAQ::Decision
 		return IsCompanionPinned(a_companionPin) || IsFactionEntryPinned(a_factionEntry);
 	}
 
-	// ------------------------------------------------- 3c. 列表顺序（第 74/75 轮）
+	// ------------------------------------------------- 3c. 列表顺序（第 74/75/96 轮）
 
 	EntryOrderKey PinnedOrderKey(std::int8_t a_factionEntry, std::int8_t a_companion,
-		std::uint8_t a_companionPin)
+		std::uint8_t a_companionPin, bool a_repeatable)
 	{
 		if (a_factionEntry >= 0) {
 			// 四大势力开头任务：最靠前；组内按下标 = 固定顺序（UC → FC → RI → CF）。
@@ -256,6 +256,14 @@ namespace SAQ::Decision
 		if (a_companion >= 0) {
 			// 同伴任务：按同伴分组；同一位同伴的「入口」（pin）在「后续」之前。
 			return { 1, a_companion * 2 + (IsCompanionPinned(a_companionPin) ? 0 : 1) };
+		}
+		if (a_repeatable) {
+			// ★★ 第 96 轮（可重复任务分组）：整组排到列表末尾（组内保持表顺序 ——
+			//   rank 恒 0 ⇒ 比较器对同组两元素返回 false，stable_sort 保持输入顺序）。
+			//   ★ 入口条目（任务板 / 可重复 NPC，AppendEntryRows）也在 group 2，
+			//   但它们**先追加、后排序**（输入在最后）⇒ 稳定排序后落在 group 2 末尾、
+			//   即本组之前 —— 末尾连成一片「（可重复）…」条目（见 SAQ.cpp 的调用点）。
+			return { 3, 0 };
 		}
 		return { 2, 0 };
 	}

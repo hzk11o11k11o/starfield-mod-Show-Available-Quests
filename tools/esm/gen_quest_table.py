@@ -176,25 +176,38 @@ def sanitize_name(s: str) -> str:
 
 
 def payload_order(rows: list[dict]) -> list[dict]:
-    """★★ 第 74/75 轮：内嵌回退载荷的条目顺序 —— 与 C++ 侧**逐条对齐**。
+    """★★ 第 74/75/96 轮：内嵌回退载荷的条目顺序 —— 与 C++ 侧**逐条对齐**。
 
-    C++（SAQ.cpp 的 CollectAvailableQuests）收集完成后把两类「固定显示」的任务**前置**：
+    C++（SAQ.cpp 的 CollectAvailableQuests）收集完成后按 Decision::PinnedOrderKey 排序
+    （stable_sort ⇒ 组内保持表顺序）：
       ① ★★ 第 75 轮：四大势力开头任务（faction_entry ≥ 0）—— 玩家要求
          「固定排在可接任务列表的**前四个**」，组内按 faction_entry 下标（= 固定顺序）；
       ② ★ 第 74 轮：同伴任务（按同伴分组、同一位同伴的「入口」在「后续」之前）；
-    其余任务保持表顺序（稳定排序）。
+      ③ 其余任务；
+      ④ ★★ 第 96 轮：可重复任务（repeatable ≥ 0）—— 玩家要求「一样把它们排列在一起
+         （像图里的（可重复）NPC 入口）」⇒ 整组排到列表**末尾**（C++ 侧 = group 3）。
+         ★ 注意：内嵌载荷里没有「入口」条目（任务板 / 可重复 NPC 由 DLL 追加）——
+         C++ 运行时它们落在「其余」组的末尾（先追加、后稳定排序）⇒ 可重复组正好接在
+         「（可重复）NPC」入口之后；回退载荷里可重复组之后同样**没有别的行**（末尾）。
     内嵌载荷必须同序 —— 否则「C++ 推送失败 → 内嵌回退」的窗口里列表顺序会跳变
-    （第 65 轮踩过列不对齐的坑，顺序同理；★ 第 74 轮的 `order=` 探针会直接把顺序报出来）。
+    （第 65 轮踩过列不对齐的坑，顺序同理；★ 第 74 轮的 `order=` 探针会直接把顺序报出来，
+    第 96 轮起还报 `|tail=` 末尾两行 —— 两个来源都在它的覆盖下）。
     """
     factions = [r for r in rows if int(r.get("faction_entry", -1)) >= 0]
     companions = [r for r in rows if int(r.get("faction_entry", -1)) < 0
                   and int(r.get("companion", -1)) >= 0]
+    # ★★ 第 96 轮：可重复任务单独一组、排在最后（判据与 C++ 的组序一致：
+    #   势力 > 同伴 > 其余 > 可重复；输入顺序 = 表顺序，列表推导天然稳定）。
+    repeatables = [r for r in rows if int(r.get("faction_entry", -1)) < 0
+                   and int(r.get("companion", -1)) < 0
+                   and int(r.get("repeatable", -1)) >= 0]
     others = [r for r in rows if int(r.get("faction_entry", -1)) < 0
-              and int(r.get("companion", -1)) < 0]
+              and int(r.get("companion", -1)) < 0
+              and int(r.get("repeatable", -1)) < 0]
     factions.sort(key=lambda r: int(r["faction_entry"]))
     companions.sort(key=lambda r: (int(r["companion"]),
                                    0 if int(r.get("companion_pin", 0)) else 1))
-    return factions + companions + others
+    return factions + companions + others + repeatables
 
 
 def build_payload(rows: list[dict], title_zh: str = "可接任务", title_en: str = "Available") -> str:
@@ -218,7 +231,8 @@ def build_payload(rows: list[dict], title_zh: str = "可接任务", title_en: st
       「在玩家日志里」的丢弃（已完成 + 可重复 ⇒ 保留；进行中照旧隐藏）。
     """
     lines = ["SAQ1", f"T\t{title_zh}\t{title_en}"]
-    # ★★ 第 74/75 轮：顺序与 C++ 对齐（势力开头任务 → 同伴任务 → 其余，见 payload_order）
+    # ★★ 第 74/75/96 轮：顺序与 C++ 对齐（势力开头任务 → 同伴任务 → 其余 →
+    #   可重复任务；见 payload_order —— C++ 侧是 Decision::PinnedOrderKey 的四个组）。
     for r in payload_order(rows):
         fid = r["formid"] if isinstance(r["formid"], int) else int(r["formid"], 16)
         has_target = "1" if int(r.get("cand_count", 0)) else "0"

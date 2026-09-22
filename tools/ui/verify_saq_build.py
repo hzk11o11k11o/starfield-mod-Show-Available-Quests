@@ -178,6 +178,20 @@
              MissionsListEntry.SetEntryText 渲染的字段 —— 前缀真的进显示名的运行期证据）。
           本脚本检查：SWF 的 ①/②/③ 六条 + stamp=62 + 反向检查（stamp=61 不残留）；
           用例计划：r75 新增 nonav= 断言 + 提示语仍报原名（两条断言都在）。
+  第 96 轮（可重复任务分组 —— 玩家反馈）：「豁免『已完成』过滤的那些条目前面也加上
+          （可重复）提示，然后一样把它们排列在一起（就像第 80 轮的『（可重复）NPC』
+          入口那样）」——两类改动：
+          ① **显示名前缀**（SWF）：SaqRepeatablePrefix（中/英）+ SaqBuildEntry 按
+             载荷第 11 列 bSaqRepeatable 给 sName 加前缀（原名仍在 sSaqBaseName）；
+          ② **整组排在列表末尾**（C++ + 内嵌载荷）：Decision::PinnedOrderKey 新增
+             group 3（可重复任务；入口条目「先追加、后稳定排序」⇒ 落在 group 2 末尾、
+             正好接在「（可重复）NPC」入口之后）；gen_quest_table.py::payload_order
+             同序（内嵌回退载荷的最后一段就是可重复任务）。
+          本脚本检查：SWF 的 ① 三条 + `rq=` 探针（SaqRepeatableQuestProbe：报可重复
+          条目的**显示名** = 前缀真的进渲染字段的运行期证据）+ `order=` 的 `|tail=` 段
+          （MissionsList.SAQ_OrderProbe 末两行的 uID=显示名 —— 整组排末尾的运行期证据）
+          + stamp=63 + 反向检查（stamp=62 不残留）；静态表/载荷侧检查 payload_order 的
+          组序（可重复任务在最后）+ 用例计划：r96 新增两条断言。
 
 用法：python tools/ui/verify_saq_build.py [--release|--dev]
 """
@@ -720,7 +734,11 @@ def main() -> int:
         #   ★★ 第 91 轮（不可导航提示更明显）：stamp 62 —— 不可导航条目的显示名加
         #     「（不可导航）」前缀（SaqNotNavigablePrefix）+ 提示/探针改报原名
         #     （SaqBaseName / sSaqBaseName）+ `nonav=` 探针。
-        "构建指纹 stamp=62": b"stamp=62",
+        #   ★★ 第 96 轮（可重复任务分组 —— 玩家反馈）：stamp 63 —— 可重复任务
+        #     （载荷第 11 列 bSaqRepeatable）的显示名加「（可重复）」前缀
+        #     （SaqRepeatablePrefix）+ `rq=` 探针（显示名证据）+ `order=` 的
+        #     `|tail=` 段（末两行 —— 整组排列表末尾的运行期证据）。
+        "构建指纹 stamp=63": b"stamp=63",
         # ★★ 第 80 轮（可重复 NPC 入口）：type 101 的界面链路 ——
         #   ① 常量与合并判据（SaqIsEntryType —— 子项/描述/不可导航提示统一用它）；
         #   ② 子项名与描述文案（中英各一段，证明不是只改了判据没接文案）；
@@ -802,6 +820,18 @@ def main() -> int:
         "条目原名取值 SaqBaseName": b"SaqBaseName",
         "不可导航探针函数": b"SaqNotNavigableProbe",
         "报告字段 nonav=[": b" nonav=[",
+        # ★★ 第 96 轮（可重复任务分组 —— 玩家反馈「前面也加上（可重复）提示，
+        #   然后一样把他们排列在一起（就像图里的（可重复）NPC 入口那样）」）：
+        #   ① 前缀函数（中/英文案由 SaqUseChinese 选，见函数体）；
+        #   ② `rq=` 探针（SaqRepeatableQuestProbe：报可重复条目的**显示名** ——
+        #      sName 正是 MissionsListEntry.SetEntryText 渲染的字段，前缀真的进
+        #      显示名的运行期证据，与 nonav= 同一思路）；
+        #   ③ `order=` 的 `|tail=` 段（MissionsList.SAQ_OrderProbe 从列表**末尾**
+        #      回收两行的 `<uID>=<显示名>` —— 「整组排在列表末尾」的运行期证据）。
+        "可重复前缀函数": b"SaqRepeatablePrefix",
+        "可重复任务探针函数": b"SaqRepeatableQuestProbe",
+        "报告字段 rq=[": b" rq=[",
+        "顺序探针末尾段 |tail=": b"|tail=",
         }
     swf_paths = [
         ROOT / "ui/missionmenu/build/missionmenu.swf",
@@ -826,10 +856,10 @@ def main() -> int:
         gone = "星图:已请求(代理任务".encode() not in blob
         print(("OK  " if gone else "MISS") + f" {p.name} · 已删除原版星图 dispatch(反向检查)")
         all_ok &= gone
-        # 反向检查：★★ 第 91 轮 —— 旧构建指纹不许残留（同一份 SWF 只该带一个 stamp；
+        # 反向检查：★★ 第 96 轮 —— 旧构建指纹不许残留（同一份 SWF 只该带一个 stamp；
         #   起因同第 50 轮的教训：部署了但游戏加载的是旧 SWF 时，指纹是唯一判据）。
-        gone = b"stamp=61" not in blob
-        print(("OK  " if gone else "MISS") + f" {p.name} · 旧构建指纹 stamp=61 已替换(反向检查)")
+        gone = b"stamp=62" not in blob
+        print(("OK  " if gone else "MISS") + f" {p.name} · 旧构建指纹 stamp=62 已替换(反向检查)")
         all_ok &= gone
 
     # ★★ 第 49 轮补丁③（复测复查）：**入口发布清单**检查 —— 新增 root 入口必须挂到 root。
@@ -1255,6 +1285,9 @@ def main() -> int:
                             # ★★ 第 90 轮：DLC（SFBGS00D）可重复任务同一条链路 ——
                             #   目标 = 「职业杀手」（记录号 0x0002A418，`~0x…` 写法）
                             "r90_dlc_repeatable",
+                            # ★★ 第 96 轮：可重复任务 —— 名字「（可重复）」前缀 +
+                            #   整组排在列表末尾（rq= / order= 的 |tail= 段为判据）
+                            "r96_repeatable_group",
                             "r62_reload_observe"):
                     all_ok &= check(f"用例计划 · [case:{cid}]", plan_text.encode(),
                                     f"[case:{cid}]".encode())
@@ -1421,6 +1454,21 @@ def main() -> int:
                     print(("OK  " if ok93 else "MISS") +
                           f" 用例计划 · {cid} ui.tab + ui.select 显示层证据（第 93 轮定稿）")
                     all_ok &= ok93
+                # ★★ 第 96 轮（可重复任务分组 —— 玩家反馈）：r96 用例的三条判据 ——
+                #   ① `rq=` 探针（SaqRepeatableQuestProbe）报的可重复任务**显示名**
+                #      带「（可重复）」前缀（前缀真的进了渲染字段 sName）；
+                #   ② `order=` 的 `|tail=` 段（本 tab 最后两行）带「（可重复）」——
+                #      「整组排在列表末尾」的运行期证据；
+                #   ③ C++ 统计行带「排在末尾N」（分组真的执行了）。
+                all_ok &= check("用例计划 · r96 显示名前缀断言（assert.ui rq=）",
+                                plan_text.encode(),
+                                "assert.ui rq=\\[\\d+\\|0x[0-9a-f]+=（可重复）".encode())
+                all_ok &= check("用例计划 · r96 整组在末尾断言（order= 的 |tail= 段）",
+                                plan_text.encode(),
+                                "assert.ui order=\\[.*\\|tail=0x[0-9a-f]+=（可重复）".encode())
+                all_ok &= check("用例计划 · r96 C++ 统计（排在末尾）",
+                                plan_text.encode(),
+                                "assert.log 可重复任务=\\d+\\(已完成保留\\d+｜排在末尾[1-9]".encode())
                 plan_deployed = MO2_MOD / "SFSE/Plugins/SAQ_TestPlan.txt"
                 if plan_deployed.exists():
                     same = plan_deployed.read_bytes() == plan_src.read_bytes()
@@ -2414,6 +2462,35 @@ def main() -> int:
             print(("OK  " if note_ok else "MISS") +
                   " 内嵌载荷 · 四大势力开头任务的「简要说明」两列都在")
             all_ok &= note_ok
+            # ★★ 第 96 轮（可重复任务分组 —— 玩家反馈「一样把他们排列在一起」）：
+            #   内嵌回退载荷的**最后一段**必须全是可重复任务（末列 repeatable = "1"）——
+            #   与 C++ 的 group 3（列表末尾）逐条同序；回退载荷只含 Starfield.esm 的
+            #   212 条 ⇒ 末尾连续段长度 = 该 master 的可重复任务数（ref 清单里 = 15）。
+            #   ★ 行级判断必须基于**还原后的载荷**：chunk 在 6000 字符处切分，实测有
+            #   2 行 Q 正好被切在两段字面量之间 ⇒ 在原始文本里按行扫会漏行（顺序检查
+            #   会假红/假绿——这里一次性把「提取字面量 → 反转义 → join」写成通用做法）。
+            _inc_chunks = re.findall(r'"((?:[^"\\]|\\.)*)"', inc, re.S)
+            _inc_parts: list[str] = []
+            for _c in _inc_chunks:
+                try:
+                    _inc_parts.append(json.loads('"' + _c + '"'))
+                except json.JSONDecodeError:
+                    _inc_parts.append(_c)   # 反解失败就原样保留（不静默丢内容）
+            payload_rows = [r for r in "".join(_inc_parts).split("\n")
+                            if r.startswith("Q\t")]
+            want_tail = (sum(1 for g in rpj if g.get("master") == "Starfield.esm")
+                         if rp_json.exists() else 15)
+            tail_run = 0
+            for _r in reversed(payload_rows):
+                if not _r.endswith("\t1"):
+                    break
+                tail_run += 1
+            tail_ok = (want_tail > 0 and tail_run == want_tail
+                       and len(payload_rows) > tail_run)
+            print(("OK  " if tail_ok else "MISS") +
+                  f" 内嵌载荷 · 可重复任务整组在末尾（末尾连续 repeatable=1 共 "
+                  f"{tail_run}/{want_tail} 条；总行 {len(payload_rows)}）")
+            all_ok &= tail_ok
 
         # ★★ 第 65 轮（任务专属图标）：**图标映射表** —— 「数据 -> 图标帧」永不落空。
         #

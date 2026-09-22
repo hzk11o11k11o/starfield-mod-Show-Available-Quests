@@ -387,41 +387,52 @@ MT_TEST(势力开头任务_固定显示与两类来源合并)
 	}
 }
 
-MT_TEST(列表顺序_势力开头在最前_同伴随后_其余保持原序)
+MT_TEST(列表顺序_势力开头在最前_同伴随后_其余保持原序_可重复垫底)
 {
 	// 键：group 0 = 势力开头任务（rank = factionEntry）；1 = 同伴（rank = 同伴*2 + 入口优先）；
-	//     2 = 其余（rank 固定 0 —— 比较器对两个「其余」返回 false，保持输入顺序）。
-	const auto f0 = PinnedOrderKey(0, -1, 0);
-	const auto f3 = PinnedOrderKey(3, -1, 0);
-	const auto c0 = PinnedOrderKey(-1, 0, 1);          // 同伴 0 的「入口」
-	const auto c0f = PinnedOrderKey(-1, 0, 0);         // 同伴 0 的「后续」
-	const auto c1 = PinnedOrderKey(-1, 1, 1);
-	const auto other = PinnedOrderKey(-1, -1, 0);
-	const auto other2 = PinnedOrderKey(-1, -1, 1);
+	//     2 = 其余（rank 固定 0 —— 比较器对两个「其余」返回 false，保持输入顺序）；
+	//     3 = 可重复任务（★★ 第 96 轮；rank 固定 0 —— 组内保持原顺序）。
+	const auto f0 = PinnedOrderKey(0, -1, 0, false);
+	const auto f3 = PinnedOrderKey(3, -1, 0, false);
+	const auto c0 = PinnedOrderKey(-1, 0, 1, false);    // 同伴 0 的「入口」
+	const auto c0f = PinnedOrderKey(-1, 0, 0, false);   // 同伴 0 的「后续」
+	const auto c1 = PinnedOrderKey(-1, 1, 1, false);
+	const auto other = PinnedOrderKey(-1, -1, 0, false);
+	const auto other2 = PinnedOrderKey(-1, -1, 1, false);
+	const auto r0 = PinnedOrderKey(-1, -1, 0, true);    // 可重复任务 ×2（组内保持原顺序）
+	const auto r1 = PinnedOrderKey(-1, -1, 1, true);
 
 	MT_CHECK_EQ(f0.group, 0);
 	MT_CHECK_EQ(c0.group, 1);
 	MT_CHECK_EQ(other.group, 2);
+	MT_CHECK_EQ(r0.group, 3);              // ★★ 第 96 轮：可重复任务 = 组 3
 
-	// 全序：势力（按下标升序）→ 同伴（按同伴分组、入口在后续前）→ 其余
+	// 全序：势力（按下标升序）→ 同伴（按同伴分组、入口在后续前）→ 其余 → 可重复
 	MT_CHECK(PinnedOrderLess(f0, f3));
 	MT_CHECK(PinnedOrderLess(f3, c0));
 	MT_CHECK(PinnedOrderLess(c0, c0f));    // 同一位同伴：入口在后续之前
 	MT_CHECK(PinnedOrderLess(c0f, c1));    // 按同伴分组
 	MT_CHECK(PinnedOrderLess(c1, other));
-	// 其余之间：两个方向都 false（stable_sort ⇒ 保持原顺序）
+	MT_CHECK(PinnedOrderLess(other, r0));  // ★★ 第 96 轮：其余 → 可重复（垫底）
+	MT_CHECK(PinnedOrderLess(other2, r1));
+	// 其余之间 / 可重复之间：两个方向都 false（stable_sort ⇒ 保持原顺序）
 	MT_CHECK_EQ(PinnedOrderLess(other, other2), false);
 	MT_CHECK_EQ(PinnedOrderLess(other2, other), false);
+	MT_CHECK_EQ(PinnedOrderLess(r0, r1), false);
+	MT_CHECK_EQ(PinnedOrderLess(r1, r0), false);
 	// 自反：任何键都不小于自己
-	for (const auto& k : { f0, f3, c0, c0f, c1, other }) {
+	for (const auto& k : { f0, f3, c0, c0f, c1, other, r0, r1 }) {
 		MT_CHECK_EQ(PinnedOrderLess(k, k), false);
 	}
 	// 势力组内按「固定顺序」：0（联合殖民地）→ 1（自由星）→ 2（龙神）→ 3（深红舰队）
-	MT_CHECK(PinnedOrderLess(PinnedOrderKey(0, -1, 0), PinnedOrderKey(1, -1, 0)));
-	MT_CHECK(PinnedOrderLess(PinnedOrderKey(1, -1, 0), PinnedOrderKey(2, -1, 0)));
-	MT_CHECK(PinnedOrderLess(PinnedOrderKey(2, -1, 0), PinnedOrderKey(3, -1, 0)));
-	// 势力键即使同时带同伴下标，也仍然归势力组（静态表数据不会这样，但语义要稳）
-	MT_CHECK_EQ(PinnedOrderKey(2, 3, 1).group, 0);
+	MT_CHECK(PinnedOrderLess(PinnedOrderKey(0, -1, 0, false), PinnedOrderKey(1, -1, 0, false)));
+	MT_CHECK(PinnedOrderLess(PinnedOrderKey(1, -1, 0, false), PinnedOrderKey(2, -1, 0, false)));
+	MT_CHECK(PinnedOrderLess(PinnedOrderKey(2, -1, 0, false), PinnedOrderKey(3, -1, 0, false)));
+	// 语义优先级（静态表数据不会重叠，但语义要稳）：势力 > 同伴 > 可重复 ——
+	//   同时带多个标记时按靠前的分组（可重复不抢同伴/势力分组）。
+	MT_CHECK_EQ(PinnedOrderKey(2, 3, 1, false).group, 0);
+	MT_CHECK_EQ(PinnedOrderKey(2, 3, 1, true).group, 0);    // 势力 + 可重复 ⇒ 仍归势力
+	MT_CHECK_EQ(PinnedOrderKey(-1, 1, 1, true).group, 1);   // 同伴 + 可重复 ⇒ 仍归同伴
 }
 
 // ---------------------------------------------------------------- 5. 候选池

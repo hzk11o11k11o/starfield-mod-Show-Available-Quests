@@ -848,6 +848,19 @@ package
          return this.SaqUseChinese() ? "（不可导航）" : "(Not navigable) ";
       }
       
+      // ★★ 第 96 轮（可重复任务分组 —— 玩家反馈）：可重复任务（载荷第 11 列
+      //   bSaqRepeatable = true）在**列表名前面**加这个前缀（「（可重复）翻新商品」）。
+      //
+      //   为什么需要：这类任务做完一次还能再接（豁免「已完成」过滤 ⇒ 一直留在列表里），
+      //   但此前「可重复」只写在**描述第一句**里 —— 玩家在长列表里扫一眼根本看不出来
+      //   （与第 91 轮「（不可导航）」前缀同一手法：名字本身带标记，不用选中就能区分）。
+      //   前缀与第 80 轮的「（可重复）NPC」入口条目同名同形（玩家要求「一样」）。
+      //   语言判定与描述文案同源（SaqUseChinese），中英各一条；英文带一个空格分隔。
+      private function SaqRepeatablePrefix() : String
+      {
+         return this.SaqUseChinese() ? "（可重复）" : "(Repeatable) ";
+      }
+      
       // 右侧详情面板里的描述文案（固定内容，告诉玩家这条记录怎么用）。
       // ★ 第 27 轮：第 2 个参数 = 条目类型（100 = 入口任务板）—— 它没有「接取地点」
       //   的概念，描述改成「这是什么、怎么去」。
@@ -1103,6 +1116,53 @@ package
          }
       }
       
+      // ★★ 第 96 轮（可重复任务分组）：报告里报出**可重复任务**的计数 + 前 2 条的
+      //   `<uID>=<显示名>`（例：`rq=[20|0x224fe8=（可重复）翻新商品,0x…]`）。
+      //
+      //   为什么需要：前缀加在 SaqBuildEntry 的 sName 上 ——「代码里有前缀」与
+      //   「列表里真的显示前缀」中间隔着载荷解析 + 条目构建两层，只靠读代码保证；
+      //   本探针给出**运行期显示名**（sName = MissionsListEntry.SetEntryText 渲染的
+      //   字段），harness 用例据此断言（与 order= / nonav= 探针同一思路）。
+      //   ★ 分组（整组排列表末尾）的运行期证据在 `order=` 的 `|tail=` 段（MissionsList.
+      //     SAQ_OrderProbe 报本 tab 最后两行的显示名）。
+      //   只报 2 条 + 名字截 24 字：报告有长度上限，别把 qdata 那类专业证据挤掉。
+      private function SaqRepeatableQuestProbe() : String
+      {
+         try
+         {
+            if(this.AvailableQuests == null)
+            {
+               return "";
+            }
+            var _loc1_:int = 0;
+            var _loc2_:Array = new Array();
+            var _loc3_:int = 0;
+            while(_loc3_ < this.AvailableQuests.length)
+            {
+               var _loc4_:Object = this.AvailableQuests[_loc3_];
+               if(_loc4_ != null && _loc4_.bSaqRepeatable == true)
+               {
+                  _loc1_++;
+                  if(_loc2_.length < 2)
+                  {
+                     var _loc5_:String = _loc4_.sName != null ? String(_loc4_.sName) : "";
+                     if(_loc5_.length > 24)
+                     {
+                        _loc5_ = _loc5_.substr(0,24);
+                     }
+                     _loc2_.push("0x" + Number(_loc4_.uID).toString(16) + "=" + _loc5_);
+                  }
+               }
+               _loc3_++;
+            }
+            return _loc1_ + "|" + _loc2_.join(",");
+         }
+         catch(e:Error)
+         {
+            return "(ex)";
+         }
+      }
+      
       private function SaqBuildEntry(param1:Object) : Object
       {
          // ★★ 第 75 轮：势力开头任务的「简要说明」（按语言挑；空串 = 普通任务）。
@@ -1117,12 +1177,21 @@ package
          //   这条点了不会有导航）—— 见 SaqNotNavigablePrefix。
          //   原名另存 sSaqBaseName：提示（「该任务暂无导航目标:…」）与日志探针报它，
          //   否则会出现「该任务暂无导航目标:（不可导航）X」这种废话，也会打乱既有用例。
+         // ★★ 第 96 轮（可重复任务分组）：显示名**前面**再加「（可重复）」——
+         //   可重复任务（载荷第 11 列 bSaqRepeatable = true）做完一次还能再接（一直留在
+         //   列表里），名字本身带标记才好在长列表里一眼认出来（见 SaqRepeatablePrefix）。
+         //   两个前缀的次序：可重复在前、不可导航在后（「（可重复）（不可导航）危险材料」）。
+         //   入口条目（type 100/101）不带 bSaqRepeatable ⇒ 「（可重复）NPC」入口的字样
+         //   仍来自载荷名字，**不会**被加第二遍。
          var _loc2_:String = this.SaqUseChinese() ? param1.sNameZh : param1.sNameEn;
          if(_loc2_ == null)
          {
             _loc2_ = "";
          }
          var _loc3_:Boolean = param1.bSaqHasTarget == false;
+         var _loc4_:Boolean = param1.bSaqRepeatable == true;
+         var _loc5_:String = (_loc4_ ? this.SaqRepeatablePrefix() : "")
+            + (_loc3_ ? this.SaqNotNavigablePrefix() : "");
          return {
             "uID":param1.uID,
             "uInstanceID":0,
@@ -1132,8 +1201,9 @@ package
             //   的阵营名 / 彩色图标（MissionInfo → FactionUtils.GetFactionName /
             //   GetQuestColorIcon）都用它，显示效果与原版任务菜单一致。
             "iFaction":SaqSafeFaction(param1.iFaction),
-            "sName":_loc3_ ? this.SaqNotNavigablePrefix() + _loc2_ : _loc2_,
+            "sName":_loc5_.length > 0 ? _loc5_ + _loc2_ : _loc2_,
             // ★★ 第 91 轮：不带前缀的原名（提示 / 探针用，见 SaqBaseName）。
+            //   ★★ 第 96 轮：可重复前缀同样不带进这里 —— 提示/日志仍报「翻新商品」。
             "sSaqBaseName":_loc2_,
             // ★ 第 27 轮：入口条目（任务板）的描述用专门文案（第 2 个参数）。
             // ★★ 第 74 轮：第 4 个参数 = 「入口」同伴任务（描述里提示好感度要求）。
@@ -1426,7 +1496,11 @@ package
          //     （bSaqHasTarget = false）的名字加「（不可导航）」前缀
          //     （SaqNotNavigablePrefix / SaqBuildEntry）+ 提示与探针改用原名
          //     （SaqBaseName / sSaqBaseName）+ 新增 `nonav=` 探针（显示名证据）。
-         _loc8_ += " stamp=62";
+         //   ★★ 第 96 轮（可重复任务分组）：stamp 63 —— 可重复任务（bSaqRepeatable）
+         //     的显示名加「（可重复）」前缀（SaqRepeatablePrefix / SaqBuildEntry）+
+         //     新增 `rq=` 探针（显示名证据）+ `order=` 增加 `|tail=` 段（整组排在
+         //     列表末尾的运行期证据，见 MissionsList.SAQ_OrderProbe）。
+         _loc8_ += " stamp=63";
          // ★★ 第 51 轮：入口自检（ep=）—— 见 SaqEntryProbe 的说明。
          //   位置在 stamp 之后、其余字段之前：报告有长度上限，这个字段是当前排查
          //   「测试入口调不到」问题的关键证据，必须优先保下来。
@@ -1466,6 +1540,11 @@ package
          //   （`nonav=[<N>|0x<uID>=<显示名>]`）—— 前缀真的进了列表渲染字段（sName）
          //   的运行期证据（见 SaqNotNavigableProbe）。
          _loc8_ += " nonav=[" + this.SaqNotNavigableProbe() + "]";
+         // ★★ 第 96 轮（可重复任务分组）：可重复任务的计数 + 前 2 条的**显示名**
+         //   （`rq=[<N>|0x<uID>=<显示名>]`）——「（可重复）」前缀真的进了列表渲染
+         //   字段（sName）的运行期证据（见 SaqRepeatableQuestProbe）；整组排末尾的
+         //   证据见上面的 `order=…|tail=`。
+         _loc8_ += " rq=[" + this.SaqRepeatableQuestProbe() + "]";
          // 玩家任务日志名单（第 11 轮，诊断用）：QuestData 的「FormID:名字」，最多 12 条。
          // 用途：玩家说「某条可接任务没找到」时，先看它是不是**已经在玩家日志里**
          // （那样它被 C++/AS3 两层过滤中的某一层正当挡掉）—— 在这个名单里一查便知。

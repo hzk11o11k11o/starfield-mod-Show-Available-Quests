@@ -135,9 +135,26 @@ def summarize(rel: str, path: pathlib.Path) -> str:
             return f"键 {len(obj)}" if isinstance(obj, dict) else f"条目 {len(obj)}"
         if rel.endswith("SaqEmbeddedPayload.inc"):
             # ★★ 第 74 轮续：内嵌载荷 —— 条数 + 第一条 FormID（顺序不变量的第一眼证据）
+            # ★★ 第 96 轮：+「末尾连续可重复段」—— 顺序改动（可重复任务整组在末尾）
+            #   必须反映在摘要里，否则 --update 的 diff 看不出来（本轮踩过：只报条数/
+            #   第一条，顺序变了摘要却一模一样）。
+            #   ★ 行级解析必须基于**还原后的载荷**（提取字面量 → 反转义 → join）：
+            #   chunk 在 6000 字符处切分，个别 Q 行正好被切在两段字面量之间。
             text = path.read_text(encoding="utf-8", errors="replace")
-            fids = re.findall(r"Q\\t(\d+)\\t", text)
-            return f"条目 {len(fids)} / 第一条 {fids[0] if fids else '?'}"
+            parts: list[str] = []
+            for c in re.findall(r'"((?:[^"\\]|\\.)*)"', text, re.S):
+                try:
+                    parts.append(json.loads('"' + c + '"'))
+                except json.JSONDecodeError:
+                    parts.append(c)   # 反解失败就原样保留（不静默丢内容）
+            rows = [r for r in "".join(parts).split("\n") if r.startswith("Q\t")]
+            tail = 0
+            for r in reversed(rows):
+                if not r.endswith("\t1"):
+                    break
+                tail += 1
+            first = rows[0].split("\t")[1] if rows else "?"
+            return f"条目 {len(rows)} / 第一条 {first} / 末尾可重复 {tail}"
         if path.suffix.lower() == ".h":
             text = path.read_text(encoding="utf-8-sig")
             names = {

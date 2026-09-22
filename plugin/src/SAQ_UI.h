@@ -76,6 +76,9 @@ namespace SAQ
 		//   **载荷第 11 列** —— AS3 侧 FilterKnownQuests 据此豁免「在玩家日志里」的
 		//   丢弃（已完成 + 可重复 ⇒ 保留；进行中照旧隐藏）。
 		//   C++ 侧已先豁免「已完成」过滤（Decision::DecideRuntimeFilter 的 repeatable 参数）。
+		//   ★★ 第 96 轮（可重复任务分组）：这个标记**也进列表排序** ——
+		//   Decision::PinnedOrderKey 的 group 3（整组排到列表末尾），见 SAQ.cpp 的调用点；
+		//   名称前缀「（可重复）」由 AS3 侧按同一列加（MissionMenu.SaqRepeatablePrefix）。
 		bool          repeatable{};
 		// ★★ 第 75 轮：描述里的「简要说明」（加入方式 / 前置条件）—— 只有这四条非空
 		//   （静态表 kFactionEntryNotesZh/En；数据源 ref/faction_entry_quests.json）。
