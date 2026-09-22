@@ -418,9 +418,9 @@ if (-not $SkipDeploy) {
     }
 
     $meta = Join-Path $dest 'meta.ini'
-    # ★ 第 53 轮（大项 F）：meta.ini 的版本号与 xmake.lua / main.cpp 同步（本次 0.1.9）。
+    # ★ 第 53 轮（大项 F）：meta.ini 的版本号与 xmake.lua / main.cpp 同步（本次 0.1.10）。
     #   老逻辑只在文件不存在时创建 ⇒ 升级版本后 MO2 里显示的还是旧版本号。
-    $metaVer = '0.1.9'
+    $metaVer = '0.1.10'
     if (-not (Test-Path $meta)) {
         @"
 [General]
