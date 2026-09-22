@@ -345,3 +345,72 @@ GetQuestCompleted(自己)` 这种自引用按既有约定**不算门槛**（`doc
   A 段「藏」+ B 段「放行」= **DLC 链式门槛双向实证** ⇒ **DLC 收口完成**；
 * 健康：日志 686948 B（曾超 1MB ⇒ `SizeLimitedFileSink` 清空旧内容，与第 94/97 轮同现象）+
   `[E]` 0 / `[W]` 0；`check_results.py` / `log_hygiene.py` 退出码均 0；verify 全过。
+
+---
+
+## 十、第 101 轮（B3）：链式门槛二期 —— 把候选清单里证据同样硬的边全收
+
+> 起源：第 98 轮收口时留下的「二期候选」（本节末尾的清单）。本轮**只做取证 + 数据落地**：
+> 运行时零改动（`StaticChainGate` 本来就只有 host/master/stage，跨 master 第 98 轮已通）。
+> 结果：`ref/quest_chain_dlc.json` **6 → 21 条边 / 6 → 18 条任务**；
+> 表内链式门栏 **66 条任务 / 69 边 → 78 条任务 / 84 条边**。
+
+### 10.1 工具侧两处升级（`tools/esm/gen_dlc_chain.py`）
+
+| 升级 | 内容 |
+| --- | --- |
+| **op 进定稿表** | 定稿元组从 4 元扩成 6 元：`(目标, 宿主, 写入表的 stage, op, 候选里的 stage, 说明)`。二期的新边大多是 `Start`（旧实现写死只认 `SetStage` ⇒ 一条都收不进来）。op 只做证据留档，运行时不用 |
+| **need_stage 边可收** | 非 stage fragment 的形态（脚本函数里的 `QuestCompleted()` → `MQ02A.Start()`）现在能落成「宿主的 **Complete-Quest stage**」，且该 stage **从官方 ESM 现读核验**（QSDT bit0；写错 ⇒ 定稿直接失败）。`SFTER_MQ01` 的 CQ stage = **1700** |
+
+### 10.2 收进来的 15 条边（逐条都有字节码原文）
+
+| 分组 | 边 |
+| --- | --- |
+| 破碎空间 · 另一边 `MQIN` | ← `MQ03@4000` / `MQ04@7000` / `MQ05@1600`（三条收尾分支各 `MQIN.SetStage(10)`，fragment 里带 `If !MQIN.GetStageDone(10)` 守卫）|
+| 地球舰队 `SFTER_SE_MQIntro` | ← `MQIntro`（地球舰队侵袭）@600 `Start()` |
+| 地球舰队 `SFTER_MQ01`（失踪的华庭号） | ← `SE_MQIntro`@200 `Start()` |
+| 地球舰队 `SFTER_MQ02A`（深入VOID） | ← `SFTER_MQ01`@1700（**need_stage**：`sfter_mq01questscript.psc:1008` 的 `QuestCompleted()`；1700 = CQ stage）|
+| 地球舰队 `SFTER_MQ02B`（失控） | ← `MQ02A`@9999 `Start()` |
+| 地球舰队 `MQOutpostUC/FC/RI`（互助互赢/互谅互让/互利互惠） | ← `MQ02B`@1180/1182/1184 `Start()` |
+| 地球舰队 `SFTER_MS02`（隐蔽入侵） | ← `MQ03`@1700 `Start()` |
+| 自由航道 `SFFL_Z01`（失踪的爱人） | ← `SFFL_Z01_SE1`@10 `Start()` / @150 `SetStage(120)` |
+| 自由航道 `SFFL_AnchorpointZ01`（绝非虚言） | ← `SFFL_DialogueAnchorpoint`@95 `SetStage(5)` |
+| 自由航道 `SFFL_AnchorpointZ03`（旧伤） | ← `SFFL_DialogueAnchorpoint`@90 `Start()`（+ 开场 Scene）|
+
+### 10.3 三处「有意不收」（verify 里有反向检查，防以后被误加回来）
+
+| 不收的对象 | 决定性证据 | 为什么不收 |
+| --- | --- | --- |
+| `SFTER_MQIntro`（地球舰队侵袭）← `SE_MQIntro@200` | 它是这条线的**入口**，全量反编译里它自己**没有任何启动边**（入口在数据侧）| 挂上链式门槛 ⇒ 永远不被放行 ⇒ **必然误藏**（比误显糟）|
+| `DialogueHVDazra@5`（一次 Start 8 条城市支线：MS01/MS04/MS05/VKaiZ03a/DazraZ01…）| 全量反编译里 `SetStage(5)` **只**出现在 `Fragment_Stage_0000`（MS03 / DazraZ03），同函数里还有 `MoveTo(调试 marker)` + `AddPerk(...)`；正常路径一律 `SetStage(1)` | 调试入口，不是「进城解锁全城支线」|
+| `VKaiZ03a`（失而复得）/ `VkaiZ03b` | 互启环：`VkaiZ03b` 的唯一 `Start()` 在 `VKaiZ03a@300`，`VKaiZ03a` 的 `Start()` 只有 `VkaiZ03b@998/999` + 上面那条调试 fragment；两者 `DNAM` bit0（Start Game Enabled）= 0 | 真实入口在数据侧（触发器/Scene）⇒ 挂上有误藏风险；留三期（需查 Scene 的 StartQuest 动作）|
+
+### 10.4 噪声判据（本轮又用上两次）
+
+第 98 轮定的四条判据照旧：**调试跳关 fragment（stage 0000/0001/0002）、版本补丁修复片段、回写、`SetStage(0)`** 都不算启动边。本轮实见两例：
+
+* `MQIN ← MQ_Shell@2`：stage 0002 的 fragment 是「跳到某 stage 调试入口」；
+* `MQIN ← MQ03@16`：整个函数是一长串 `Self.SetStage(...)` + `MoveTo(Alias_MQ03EkrisQS)` +
+  `Self.SetStage(0)/(100)…` + `MQIN.SetStage(10)` + **`MQIN.Stop()`** ⇒ 典型调试跳关。
+
+### 10.5 验证与落地（离线全绿）
+
+| 步骤 | 判据 |
+| --- | --- |
+| 定稿 | `gen_dlc_chain.py --skip-extract --skip-decompile` ⇒ **18 条任务 / 21 条边**，全部对候选核验通过（含 need_stage 边的 CQ stage 现读核验）|
+| 静态表 | `gen_quest_table.py` ⇒ 链式门槛 **78 条任务 / 84 条启动边** |
+| verify | **0 MISS**：边集合与四个数据源逐边对账 `84/84 · 78/78`；+14 条二期样本（每条都带 host master 现算的下标）+ 两条反向检查（不含调试跳关边 / 「有意不收」三处未进表）+ 用例计划 4 条 |
+| 离线层 | 18 用例 / 929 断言 + 15 件快照全绿（快照有意更新两处：`quest_chain_dlc.json` 6→21 边、`SAQ_QuestTable.h` 链式边 69→84）|
+| 重编 | 内嵌回退载荷**逐字节不变**（DLC 条目不在里面）⇒ **不用重编 SWF**；Papyrus / ESM 也不动 ⇒ 只重编 DLL |
+
+### 10.6 harness 用例（已写好，待实机）
+
+`[case:r101_dlc_chain2]`（A：reset 新目标与宿主 ⇒ 「链式没到」名单里**至少一条**新目标）+
+`[case:r101_dlc_chain2_pass]`（B：推 `MQ03@4000` ⇒ 名单里没有「另一边」）。设计要点：
+
+* 「或」的成员挑**必然能走到链式判定**的（离线预判：深入VOID / 失控 / MQIntro星际遭遇战 /
+  失踪的爱人 在 `ref/info_gates_final.json` 里**没有门槛**；另一边 / 互助互赢… 属 want=0 或
+  成对条件形态 ⇒ 不会被 INFO 先藏）；
+* B 段推的 `MQ03@4000` fragment = `SetObjectiveCompleted/Displayed` + 守卫 + 关掉几个未死的
+  Actor —— **无 Stop、无成就**（第 99 轮的教训：不推带 `Stop()`/`AddAchievement` 的收尾边）；
+* 名字只写 `[0x`（运行期 FormID 带加载前缀，不写死）；两条都自清场（reset 七条）。

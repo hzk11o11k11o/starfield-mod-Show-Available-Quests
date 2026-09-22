@@ -1270,6 +1270,87 @@ step = wait 2500
 step = menu.close
 
 ; ----------------------------------------------------------------------------
+;  用例：第 101 轮 —— DLC 的链式门槛**二期**（14 + 1 条新边；官方 .pex 反编译取证）
+;
+;  背景：第 98 轮收了破碎空间主线的 6 条边。第 101 轮把候选清单里证据同样硬的边收进来
+;        （`ref/quest_chain_dlc.json` 6 → **21 条边 / 18 条任务**）：
+;          · 破碎空间「另一边」（MQIN）← 狂热逾界@4000 / 信念之争@7000 / 发掘过去@1600；
+;          · 地球舰队链：MQIntro星际遭遇战 ← 地球舰队侵袭@600 → 失踪的华庭号 ← 遭遇战@200 →
+;            深入VOID ← 失踪的华庭号**完成**（CQ stage 1700，构建期从 ESM 现读核验）→
+;            失控 ← 深入VOID@9999 → 互助互赢/互谅互让/互利互惠 ← 失控@1180/1182/1184 →
+;            隐蔽入侵 ← SFTER_MQ03@1700；
+;          · 自由航道锚点站：失踪的爱人 ← SFFL_Z01_SE1@10/@150、
+;            绝非虚言 ← 锚点站对话@95、旧伤 ← 锚点站对话@90。
+;        **有意不收**（verify 里有反向检查，防以后被误加回来）：
+;          MQIntro（这条线的入口 —— 它自己没有任何脚本启动边，挂上链式会**永远被藏**）、
+;          DialogueHVDazra@5（调试入口：全量反编译里只有 Fragment_Stage_0000 调它，
+;          同函数里还有 MoveTo(调试 marker) + AddPerk）、
+;          VKaiZ03a/VkaiZ03b（结局分支互启环 + 真实入口在数据侧）。
+;
+;  判据（与 r67/r98 的链式用例同构）：
+;    ① `[case:r101_dlc_chain2]`（A）：把新目标与宿主回滚到「没开始」⇒ `链式没到:` 名单里
+;       **至少有它们中的一条**（= 链式判据真的跑了并把它藏了）。
+;       ★ 为什么用「或」而不是点名一条：测试存档的 DLC 进度未知，且 INFO 门槛在链式门槛
+;         **之前**判定 —— 离线预判（第 101 轮）：「深入VOID / 失控 / MQIntro星际遭遇战 /
+;         失踪的爱人」在 `ref/info_gates_final.json` 里**没有门槛**（绝不会被 INFO 先藏），
+;         另有「另一边 / 互助互赢…」属成对条件 / want=0 形态 ⇒ 必然有目标走到链式判定。
+;       ★ 名字那一格带 `[0x`（运行期 FormID 带加载前缀，**不写死** —— `~0x…` 的教训）。
+;    ② `[case:r101_dlc_chain2_pass]`（B）：把「狂热逾界」（MQ03）推到 stage 4000
+;       （fragment 原文：`If !MQIN.GetStageDone(10)` → `MQIN.SetStage(10)` + 两行
+;       SetObjective + 关掉几个未死的 Actor —— **没有 Stop、没有成就**）
+;       ⇒ **本条用例的窗口里**名单没有「另一边」（MQIN 的共同启动边被覆盖）。
+;       ★ 与 r67/r98 同款说明：边一触发即放行 ⇒ 证的是「**不再因链式门槛**被藏」；
+;         之后是否进列表还要过运行时/显示层（不在此断言）。
+;  自清场：两条都 `quest.reset` 回滚（MQ01 / MQ02A / MQ02B / MQ03 / MQ04 / MQ05 / MQIN）。
+;  ★ 只动这些 DLC 任务的状态；不传送、不开星图、不读档（紧接着就是 r62 读档用例，
+;    会把世界整体覆盖回存档现场）。
+; ----------------------------------------------------------------------------
+[case:r101_dlc_chain2]
+desc = 第 101 轮：DLC 链式门槛二期（A）—— 新收的 DLC 后续在「链式没到」名单里（进度没到 ⇒ 藏）
+step = note === 准备：新目标与它们的宿主回滚到「没开始」===
+step = ping
+step = quest.reset ~0x0010AAD5
+step = quest.reset ~0x00030C2B
+step = quest.reset ~0x00035E1A
+step = quest.reset ~0x00035E1C
+step = quest.reset ~0x0002808F
+step = quest.reset ~0x00015670
+step = quest.reset ~0x0001A39D
+step = quest.reset ~0x0000599F
+step = wait 2500
+step = note === 进度没到 ⇒ 至少一条必须出现在「链式没到」名单里（= 被藏）===
+step = menu.open
+step = assert.log 推送成功 scope=prev timeout=12000
+; 红线（第 68 轮）：正则只写单反斜杠；统计行与名单在推送前若干毫秒打印 ⇒ scope=case。
+step = assert.log 链式门槛=\d+\(过\d+/藏\d+/未知\d+ scope=case timeout=3000
+step = assert.log 链式没到: .*(另一边|深入VOID|失控|MQIntro星际遭遇战|失踪的爱人)\[0x scope=case timeout=3000
+step = menu.close
+step = wait 1500
+
+[case:r101_dlc_chain2_pass]
+desc = 第 101 轮：DLC 链式门槛二期（B）—— 推「狂热逾界」到 stage 4000 后，「另一边」不再被链式藏
+step = note === 推进「狂热逾界」（MQ03）到 stage 4000（fragment：If !MQIN.GetStageDone(10) → MQIN.SetStage(10)；无 Stop、无成就）===
+step = ping
+step = quest.reset ~0x00030C2B
+step = wait 1500
+step = quest.start ~0x00030C2B
+step = wait 2000
+step = quest.stage ~0x00030C2B 4000
+step = wait 2500
+step = note === MQ03@4000 已触发 ⇒「另一边」不再被链式门槛藏（重启/换候选由后续链路负责）===
+step = menu.open
+step = assert.log 推送成功 scope=prev timeout=12000
+step = assert.nolog 链式没到:.*另一边 scope=case timeout=3000
+step = menu.close
+step = wait 1500
+step = note === 收尾：MQ03 / MQ04 / MQ05 / MQIN reset 回去（自清场）===
+step = quest.reset ~0x00030C2B
+step = quest.reset ~0x00035E1A
+step = quest.reset ~0x00035E1C
+step = quest.reset ~0x0010AAD5
+step = wait 2500
+
+; ----------------------------------------------------------------------------
 [case:r62_reload_observe]
 desc = 第 62 轮：自动读档（指定存档）→ 读档后链路自检 + 候选可得性记录
 step = note === 读档前：先开一次菜单（预建静态表 + 确认推送链路）===

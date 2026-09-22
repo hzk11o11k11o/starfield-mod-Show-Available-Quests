@@ -53,13 +53,13 @@
     },
     "ref/quest_chain_dlc.json": {
       "desc": "DLC 链式启动边（gen_dlc_chain.py）",
-      "sha256": "bcf07d4c50e483aeef8065125a13b2bd8920090f5ec5218f41eb1a4ce1a4e070",
-      "summary": "任务 6 / 边 6（宿主 SFBGS001_MQ01/SFBGS001_MQ02/SFBGS001_MQ_Shell）"
+      "sha256": "859cf769142f954a97d3d8ce8d2395791a8f68074c391a8753ea0300d6df70e6",
+      "summary": "任务 18 / 边 21（宿主 SFBGS001_MQ01/SFBGS001_MQ02/SFBGS001_MQ03/SFBGS001_MQ04/SFBGS001_MQ05/SFBGS001_MQ_Shell/SFFL_DialogueAnchorpoint/SFFL_Z01_SE1/SFTER_MQ01/SFTER_MQ02A/SFTER_MQ02B/SFTER_MQ03/SFTER_MQIntro/SFTER_SE_MQIntro）"
     },
     "plugin/src/SAQ_QuestTable.h": {
       "desc": "静态任务表（gen_quest_table.py，DLL 编译进去）",
-      "sha256": "fb3d8facbc15183df03cf724d91002e2c2ed8cb05d787c20710b82a162ac100a",
-      "summary": "任务 271 / 候选 960 / 进度门槛 11 / INFO对话 418 / INFO条件 492 / 链式边 69 / 同伴 4 / 势力入口 4 / 地标 10 / 可重复 20"
+      "sha256": "4c189be5f94ba6b5c08e799a7e435ab14e70619a27d5d6229f67b0c988dfe525",
+      "summary": "任务 271 / 候选 960 / 进度门槛 11 / INFO对话 418 / INFO条件 492 / 链式边 84 / 同伴 4 / 势力入口 4 / 地标 10 / 可重复 20"
     },
     "ui/missionmenu/saqdata/SaqEmbeddedPayload.inc": {
       "desc": "内嵌回退载荷（gen_quest_table.py）",

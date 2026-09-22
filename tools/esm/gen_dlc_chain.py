@@ -26,11 +26,19 @@
      输出 `ref/quest_chain_dlc.json`（与 `quest_chain_extra.json` 同格式，
      可直接被 `gen_quest_table.py --chain-extra` 一类的合并逻辑消费）。
 
+★★★ 第 101 轮（B3 · DLC 链式门槛二期）给本工具加的两件事：
+  ① 定稿表带 **op**（Start / SetStage / …）—— 候选核验按 (目标, 宿主, 宿主stage, op) 匹配，
+     不再写死只认 `SetStage`（二期的新边大多是 `Start`）；
+  ② 支持 **need_stage 边**（非 stage fragment，如 `sfter_mq01questscript.psc` 的
+     `QuestCompleted()` 里 `SFTER_MQ02A.Start()`）：定稿时把「宿主的 Complete-Quest
+     stage」（QSDT bit0）**从官方 ESM 现读**核验 —— 写错 stage 直接失败（零猜测）。
+
 用法：
     python tools/esm/gen_dlc_chain.py                 # 全流程（抽 + 反编译 + 候选 + 定稿）
     python tools/esm/gen_dlc_chain.py --stats         # 只统计候选（不写产物）
     python tools/esm/gen_dlc_chain.py --force         # 强制重抽 / 重反编译
     python tools/esm/gen_dlc_chain.py --list          # 打印全部候选边
+    python tools/esm/gen_dlc_chain.py --skip-extract --skip-decompile   # 只重算候选 + 定稿
 """
 from __future__ import annotations
 
@@ -71,26 +79,92 @@ RE_QF = re.compile(r"^qf_([a-z0-9_]+?)_([0-9a-f]{8})(?:_\d+)?$", re.I)
 # ---------------------------------------------------------------------------
 # 定稿表（★ 人工核实；每条边都必须能在候选里找到 —— 构建期核验防手写漂移）
 #
+# 字段：(目标 EDID, 宿主 EDID, **写进产物的 host_stage**, op, **候选里的 host_stage**, 说明)
+#   * op = 宿主 fragment 里的调用形态（Start / SetStage / SendStoryEvent…）——
+#     **运行时不用它**（StaticChainGate 只存 host/master/stage，语义 = 「该 stage 已完成
+#     ⇒ 这条启动边发生过」），写进产物只为留证据；
+#   * 「候选里的 host_stage」一般与写进产物的值相同；只有 **非 stage fragment**
+#     （工具标的 `need_stage`，如脚本函数 `QuestCompleted()`）才写 None —— 这时
+#     「写进产物的 stage」必须 = 宿主的 **Complete-Quest stage**（QSDT bit0），
+#     定稿时从官方 ESM **现读核验**（写错直接失败）。
+#
 # 破碎空间主线（第 98 轮取证，证据全在官方 .pex 的 stage fragment 里）：
 #   MQ01「残留之物」@10000 → MQ02.SetStage(100)
 #   MQ02「虚妄的得诺者」@2000 → MQ_Shell.SetStage(100)
 #   MQ_Shell「家族的调和」@100 → MQ03 / MQ04 / MQ05 各 SetStage(100)（三条议会任务一起开）
 #   MQ_Shell@1100（终局）→ MQ06.SetStage(100)
+#
+# ★★★ 第 101 轮（B3 · DLC 链式门槛二期：14 + 1 条新边）：
+#   ① 破碎空间「另一边」MQIN ← MQ03@4000 / MQ04@7000 / MQ05@1600 —— 三条收尾分支各调
+#      `MQIN.SetStage(10)`（fragment 里带 `If !MQIN.GetStageDone(10)` 守卫）。
+#      **排除**同表的另外两条候选：MQ_Shell@2（调试 stage 0002）、MQ03@16（调试跳关 ——
+#      整个函数是一串 `Self.SetStage(...)` + `MoveTo(调试 marker)` + `MQIN.Stop()`）；
+#   ② 地球舰队（SFBGS050.esm）链：SE_MQIntro ← MQIntro@600、MQ01 ← SE_MQIntro@200、
+#      MQ02A ← MQ01@1700（★ need_stage 边：`sfter_mq01questscript.psc:1008` 的
+#      `QuestCompleted()` 里 `SFTER_MQ02A.Start()`；1700 = MQ01 的 CQ stage，现读核验）、
+#      MQ02B ← MQ02A@9999、MQOutpostUC/FC/RI ← MQ02B@1180/1182/1184、MS02 ← MQ03@1700
+#      （MQ03 不在「可接任务」表里 —— 作为宿主合法，它仍然真实运行）。
+#      **有意不收** `MQIntro ← SE_MQIntro@200`：MQIntro「地球舰队侵袭」是这条线的入口，
+#      它自己没有任何脚本启动边（入口在数据侧）⇒ 挂上去会让它永远被藏（误藏，比误显糟）；
+#   ③ 自由航道（SFBGS00D.esm）：SFFL_Z01 ← SFFL_Z01_SE1@10 / @150、
+#      SFFL_AnchorpointZ01 ← DialogueAnchorpoint@95、SFFL_AnchorpointZ03 ← DialogueAnchorpoint@90。
+#      **有意不收**两处（见 docs/06 第十节）：
+#       · `DialogueHVDazra@5`（一次 Start 8 条城市支线）—— 反证 = 全量反编译里 `SetStage(5)`
+#         只出现在 `Fragment_Stage_0000`（MS03 / DazraZ03），同函数里还有 `MoveTo(调试 marker)`
+#         + `AddPerk(...)`；所有正常路径一律 `SetStage(1)` ⇒ 调试入口，不是「进城解锁」；
+#       · `VKaiZ03a` / `VkaiZ03b`（失而复得线的两个结局分支）—— 互启环 + 真实入口在
+#         数据侧（触发器/Scene），挂上链式门槛有误藏风险 ⇒ 留三期。
+#
 # 语义（与基础游戏链式门槛完全一致）：**全部入边都没触发 ⇒ 隐藏**（进度没到）。
 # ---------------------------------------------------------------------------
 CURATED = [
-    ("SFBGS001_MQ02", "SFBGS001_MQ01", 10000,
+    # ---- 破碎空间主线（第 98 轮）----
+    ("SFBGS001_MQ02", "SFBGS001_MQ01", 10000, "SetStage", 10000,
      "残留之物@10000（收尾 fragment）里 SFBGS001_MQ02.SetStage(100) —— 虚妄的得诺者"),
-    ("SFBGS001_MQ_Shell", "SFBGS001_MQ02", 2000,
+    ("SFBGS001_MQ_Shell", "SFBGS001_MQ02", 2000, "SetStage", 2000,
      "虚妄的得诺者@2000（收尾）里 SFBGS001_MQ_Shell.SetStage(100) —— 家族的调和"),
-    ("SFBGS001_MQ03", "SFBGS001_MQ_Shell", 100,
+    ("SFBGS001_MQ03", "SFBGS001_MQ_Shell", 100, "SetStage", 100,
      "家族的调和@100 里 MQ03/MQ04/MQ05 三条议会任务一起 SetStage(100)"),
-    ("SFBGS001_MQ04", "SFBGS001_MQ_Shell", 100,
+    ("SFBGS001_MQ04", "SFBGS001_MQ_Shell", 100, "SetStage", 100,
      "家族的调和@100 里 MQ03/MQ04/MQ05 三条议会任务一起 SetStage(100)"),
-    ("SFBGS001_MQ05", "SFBGS001_MQ_Shell", 100,
+    ("SFBGS001_MQ05", "SFBGS001_MQ_Shell", 100, "SetStage", 100,
      "家族的调和@100 里 MQ03/MQ04/MQ05 三条议会任务一起 SetStage(100)"),
-    ("SFBGS001_MQ06", "SFBGS001_MQ_Shell", 1100,
+    ("SFBGS001_MQ06", "SFBGS001_MQ_Shell", 1100, "SetStage", 1100,
      "家族的调和@1100（终局）里 SFBGS001_MQ06.SetStage(100) —— 栉比堡垒"),
+    # ---- ① 破碎空间 · 另一边（第 101 轮）----
+    ("SFBGS001_MQIN", "SFBGS001_MQ03", 4000, "SetStage", 4000,
+     "狂热逾界@4000 里 `If !MQIN.GetStageDone(10)` → SFBGS001_MQIN.SetStage(10) —— 另一边"),
+    ("SFBGS001_MQIN", "SFBGS001_MQ04", 7000, "SetStage", 7000,
+     "信念之争@7000 里同款守卫 → SFBGS001_MQIN.SetStage(10)"),
+    ("SFBGS001_MQIN", "SFBGS001_MQ05", 1600, "SetStage", 1600,
+     "发掘过去@1600 里同款守卫 → SFBGS001_MQIN.SetStage(10)"),
+    # ---- ② 地球舰队链（第 101 轮）----
+    ("SFTER_SE_MQIntro", "SFTER_MQIntro", 600, "Start", 600,
+     "地球舰队侵袭@600 里 SFTER_SE_MQIntro.Start() —— MQIntro 星际遭遇战（太空遭遇）"),
+    ("SFTER_MQ01", "SFTER_SE_MQIntro", 200, "Start", 200,
+     "MQIntro 星际遭遇战@200 里 SFTER_MQ01.Start() —— 失踪的华庭号"),
+    ("SFTER_MQ02A", "SFTER_MQ01", 1700, "Start", None,
+     "★ need_stage：失踪的华庭号完成（脚本函数 QuestCompleted → SFTER_MQ02A.Start()）；"
+     "1700 = MQ01 的 Complete-Quest stage（ESM 现读核验）—— 深入VOID"),
+    ("SFTER_MQ02B", "SFTER_MQ02A", 9999, "Start", 9999,
+     "深入VOID@9999（收尾）里 SFTER_MQ02B.Start() —— 失控"),
+    ("SFTER_MQOutpostUC", "SFTER_MQ02B", 1180, "Start", 1180,
+     "失控@1180 里 SFTER_MQOutpostUC.Start() —— 互助互赢"),
+    ("SFTER_MQOutpostFC", "SFTER_MQ02B", 1182, "Start", 1182,
+     "失控@1182 里 SFTER_MQOutpostFC.Start() —— 互谅互让"),
+    ("SFTER_MQOutpostRI", "SFTER_MQ02B", 1184, "Start", 1184,
+     "失控@1184 里 SFTER_MQOutpostRI.Start() —— 互利互惠"),
+    ("SFTER_MS02", "SFTER_MQ03", 1700, "Start", 1700,
+     "SFTER_MQ03@1700（CQ stage）里 SFTER_MS02.Start() —— 隐蔽入侵"),
+    # ---- ③ 自由航道 / 锚点星际站（第 101 轮）----
+    ("SFFL_Z01", "SFFL_Z01_SE1", 10, "Start", 10,
+     "SFFL_Z01_SE1@10 里 SFFL_Z01.Start()"),
+    ("SFFL_Z01", "SFFL_Z01_SE1", 150, "SetStage", 150,
+     "SFFL_Z01_SE1@150 里 SFFL_Z01.SetStage(120)"),
+    ("SFFL_AnchorpointZ01", "SFFL_DialogueAnchorpoint", 95, "SetStage", 95,
+     "锚点站对话@95 里 SFFL_AnchorpointZ01.SetStage(5)"),
+    ("SFFL_AnchorpointZ03", "SFFL_DialogueAnchorpoint", 90, "Start", 90,
+     "锚点站对话@90 里 SFFL_AnchorpointZ03.Start()（+ 开场 Scene）"),
 ]
 
 
@@ -262,6 +336,34 @@ def build_candidates() -> list[dict]:
 # ---------------------------------------------------------------------------
 #  4. 定稿（核验 + 写 ref/quest_chain_dlc.json）
 # ---------------------------------------------------------------------------
+def cq_stage_of(master: str, edid: str) -> int | None:
+    """读官方 ESM，返回该 QUST 的 **Complete-Quest stage**（QSDT bit0）；没有 ⇒ None。
+
+    ★ 第 101 轮：只给 `need_stage` 边用 —— 那种边的宿主触发点不是 stage fragment
+    （典型 = 脚本函数 `QuestCompleted()` 里启动下一个任务），要落成运行时判据
+    （「宿主的这个 stage 已完成」）就必须知道宿主的完成 stage。**从官方数据现读，
+    不写死**（写错 ⇒ 定稿直接失败）。
+    """
+    from quest_dump import parse_quest, read_tes4, walk_quests  # tools/esm/quest_dump.py
+
+    p = GAME_DATA / master
+    if not p.exists():
+        print(f"（没有 {p} —— 无法核验 {edid} 的完成 stage）")
+        return None
+    buf = p.read_bytes()
+    meta = read_tes4(buf)
+    meta["file"] = master
+    for formid, flags, payload in walk_quests(buf):
+        rec = parse_quest(formid, flags, payload, meta)
+        if (rec["edid"] or "").lower() != edid.lower():
+            continue
+        for s in rec["stages"]:
+            if s.get("flags", 0) & 0x01:      # QSDT bit0 = Complete Quest
+                return s["id"] & 0xFFFF
+        return None
+    return None
+
+
 def curate(cands: list[dict]) -> int:
     idx: dict[tuple, dict] = {}
     meta: dict[str, dict] = {}
@@ -272,11 +374,20 @@ def curate(cands: list[dict]) -> int:
 
     out: dict[str, dict] = {}
     bad = []
-    for tgt_edid, host_edid, host_stage, note in CURATED:
-        e = idx.get((tgt_edid, host_edid, host_stage, "SetStage"))
+    for tgt_edid, host_edid, host_stage, op, cand_stage, note in CURATED:
+        e = idx.get((tgt_edid, host_edid, cand_stage, op))
         if e is None:
-            bad.append(f"{tgt_edid} <= {host_edid}@{host_stage}（候选里找不到）")
+            stage_txt = "?" if cand_stage is None else cand_stage
+            bad.append(f"{tgt_edid} <= {host_edid}@{stage_txt}（{op}）候选里找不到")
             continue
+        if cand_stage is None:
+            # ★ 第 101 轮：need_stage 边 —— 落成「宿主的 Complete-Quest stage」，
+            #   并且**现读官方 ESM 核验**（不核验的话这里就是全项目唯一一处手写 stage）。
+            cq = cq_stage_of(e["host_master"], host_edid)
+            if cq != host_stage:
+                bad.append(f"{tgt_edid} <= {host_edid}：写入 host_stage={host_stage}，"
+                           f"但官方 ESM 的 Complete-Quest stage={cq}（need_stage 必须翻成它）")
+                continue
         t = meta[tgt_edid]
         # 宿主 master / local 从候选边抄（含 DLC 的 master 名）
         out.setdefault(tgt_edid, {"formid": t["formid"], "edid": tgt_edid, "edges": []})
@@ -290,6 +401,9 @@ def curate(cands: list[dict]) -> int:
             "src": e["src"],
             "line": e["line"],
             "note": note,
+            **({"need_stage": True,
+                "stage_from": f"{host_edid} 的 Complete-Quest stage（ESM 现读核验）"}
+               if cand_stage is None else {}),
         })
 
     if bad:

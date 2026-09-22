@@ -1292,6 +1292,10 @@ def main() -> int:
                             #   A：破碎空间主线后续在「链式没到」名单里；B：推进 MQ01
                             #   到收尾 stage 后「虚妄的得诺者」不再被链式藏
                             "r98_dlc_chain", "r98_dlc_chain_pass",
+                            # ★★★ 第 101 轮：DLC 链式门槛**二期**（14 + 1 条新边）——
+                            #   A：新目标在「链式没到」名单里；B：推 MQ03@4000 后
+                            #   「另一边」不再被链式藏
+                            "r101_dlc_chain2", "r101_dlc_chain2_pass",
                             "r62_reload_observe"):
                     all_ok &= check(f"用例计划 · [case:{cid}]", plan_text.encode(),
                                     f"[case:{cid}]".encode())
@@ -1321,6 +1325,34 @@ def main() -> int:
                 print(("MISS " if bad_mq01_push else "OK  ") +
                       " 用例计划 · r98 不再推 MQ01@10000（反向检查，第 99 轮）")
                 all_ok &= not bad_mq01_push
+                # ★★★ 第 101 轮（B3 · DLC 链式门槛二期）：两条新用例的断言形状 ——
+                #   ① A：新目标**任一**进「链式没到」名单（名字只写 `[0x`，不写死 FormID）；
+                #      「或」的成员 = 离线预判里必然能走到链式判定的那几条（深入VOID / 失控 /
+                #      MQIntro星际遭遇战 / 失踪的爱人 在 INFO 数据里没有门槛）。
+                #   ② B：推 MQ03@4000（`If !MQIN.GetStageDone(10)` → MQIN.SetStage(10)，
+                #      无 Stop/无成就）⇒ 名单里没有「另一边」。
+                all_ok &= check("用例计划 · r101 DLC 链式二期断言（A：新目标任一被藏）",
+                                plan_text.encode(),
+                                "assert.log 链式没到: .*(另一边|深入VOID|失控|MQIntro星际遭遇战|失踪的爱人)\\[0x".encode())
+                all_ok &= check("用例计划 · r101 DLC 链式二期放行断言（B：assert.nolog 另一边）",
+                                plan_text.encode(),
+                                "assert.nolog 链式没到:.*另一边 scope=case".encode())
+                # 反向检查①：二期用例里同样不许写死运行期 FormID（必须 `~0x…` 记录号）。
+                bad_r101_fid = ("quest.reset 0x0110AAD5" in plan_text
+                                or "quest.stage 0x01030C2B" in plan_text)
+                print(("MISS " if bad_r101_fid else "OK  ") +
+                      " 用例计划 · r101 DLC 用例用 ~0x 记录号（反向检查）")
+                all_ok &= not bad_r101_fid
+                # 反向检查②：**不许**把「有意不收」的三处写进用例（防以后被误加回来）：
+                #   · `DialogueHVDazra`（调试入口，8 条城市支线）
+                #   · `SFBGS001_VKaiZ03a` / `VkaiZ03b`（结局分支互启环）
+                #   · `SFTER_MQIntro`（线的入口 —— 挂了会永远被藏）
+                bad_unwanted = any(s in plan_text for s in (
+                    "quest.reset ~0x0002FD76", "quest.reset ~0x0003DB1D",
+                    "quest.reset ~0x00040788", "quest.reset ~0x000059A0"))
+                print(("MISS " if bad_unwanted else "OK  ") +
+                      " 用例计划 · r101 不碰「有意不收」的任务（反向检查）")
+                all_ok &= not bad_unwanted
                 # ★★ 第 65 轮（任务专属图标）：r65 用例的图标断言必须走**界面报告**
                 #   （assert.ui —— icon= 字段是 SAQ_Report 的实时值，比日志断言更直接）。
                 all_ok &= check("用例计划 · r65 图标断言（assert.ui icon=）",
@@ -2261,6 +2293,109 @@ def main() -> int:
                         ok_e = True
             print(("OK  " if ok_e else "MISS") + f" 静态表 · DLC 链式边样本（{label}）")
             all_ok &= ok_e
+
+        # ★★★ 第 101 轮（B3 · DLC 链式门槛二期）：14 条新边的代表样本 + 反向检查。
+        #   判据与第 98 轮同构，但 **host master 不再假定是 ShatteredSpace** ——
+        #   二期同时收 SFBGS050.esm（地球舰队）与 SFBGS00D.esm（自由航道）的边，
+        #   所以每条样本都带 master 名、下标从 kQuestMasters 现算（不写死）。
+        _masters_all = re.findall(r'"([^"]+)"', m_masters.group(1)) if m_masters else []
+
+        def _master_idx(name: str) -> int:
+            for i, nm in enumerate(_masters_all):
+                if nm.lower() == name.lower():
+                    return i
+            return -1
+
+        for label, tgt, host, stage, master in (
+                # ① 破碎空间「另一边」（MQIN = 0x0010AAD5）：三条收尾分支各一条边
+                ("另一边 ← 狂热逾界@4000", "0010AAD5", "00030C2B", "4000", "ShatteredSpace.esm"),
+                ("另一边 ← 信念之争@7000", "0010AAD5", "00035E1A", "7000", "ShatteredSpace.esm"),
+                ("另一边 ← 发掘过去@1600", "0010AAD5", "00035E1C", "1600", "ShatteredSpace.esm"),
+                # ② 地球舰队（SFBGS050.esm）六级链
+                ("MQIntro星际遭遇战 ← 地球舰队侵袭@600", "0000599F", "000059A0", "600", "SFBGS050.esm"),
+                ("失踪的华庭号 ← 遭遇战@200", "0002808F", "0000599F", "200", "SFBGS050.esm"),
+                ("深入VOID ← 失踪的华庭号@1700（need_stage→CQ）", "00015670", "0002808F", "1700", "SFBGS050.esm"),
+                ("失控 ← 深入VOID@9999", "0001A39D", "00015670", "9999", "SFBGS050.esm"),
+                ("互助互赢 ← 失控@1180", "00028235", "0001A39D", "1180", "SFBGS050.esm"),
+                ("互谅互让 ← 失控@1182", "00028236", "0001A39D", "1182", "SFBGS050.esm"),
+                ("互利互惠 ← 失控@1184", "00028237", "0001A39D", "1184", "SFBGS050.esm"),
+                ("隐蔽入侵 ← SFTER_MQ03@1700", "00043828", "00028050", "1700", "SFBGS050.esm"),
+                # ③ 自由航道 / 锚点星际站（SFBGS00D.esm）
+                ("失踪的爱人 ← SFFL_Z01_SE1@10", "000325E6", "000325E7", "10", "SFBGS00D.esm"),
+                ("绝非虚言 ← 锚点站对话@95", "00033A2A", "00025B98", "95", "SFBGS00D.esm"),
+                ("旧伤 ← 锚点站对话@90", "0003D1DE", "00025B98", "90", "SFBGS00D.esm"),
+        ):
+            want_m = _master_idx(master)
+            ok_e = want_m >= 0
+            if ok_e:
+                m = re.search(r"\{\s*0x" + tgt + r"u,\s*\d+u,\s*\d+u,\s*0x[0-9A-F]+u,"
+                              r"\s*\d+u,\s*\d+u,\s*\d+u,\s*\d+u,\s*\d+u,\s*\d+u,"
+                              r"\s*(\d+)u,\s*(\d+)u,", blob)
+                ok_e = False
+                if m:
+                    cb, cc = int(m.group(1)), int(m.group(2))
+                    for i in range(cc):
+                        if cb + i >= len(c_rows):
+                            continue
+                        h, mast, st = c_rows[cb + i]
+                        if (h.upper() == host and int(st) == int(stage)
+                                and int(mast) == want_m):
+                            ok_e = True
+            print(("OK  " if ok_e else "MISS") +
+                  f" 静态表 · DLC 链式边二期样本（{label}）")
+            all_ok &= ok_e
+
+        # 反向检查①（第 101 轮）：**噪声边不许进表** —— 「另一边」的两条候选是
+        #   调试 fragment（MQ_Shell@2 = stage 0002；MQ03@16 = 整段 Self.SetStage +
+        #   MoveTo(调试 marker) + MQIN.Stop()）⇒ MQIN 的切片里不许出现这两条。
+        ok_noise = True
+        m_mqin = re.search(r"\{\s*0x0010AAD5u,\s*\d+u,\s*\d+u,\s*0x[0-9A-F]+u,"
+                           r"\s*\d+u,\s*\d+u,\s*\d+u,\s*\d+u,\s*\d+u,\s*\d+u,"
+                           r"\s*(\d+)u,\s*(\d+)u,", blob)
+        if m_mqin:
+            cb, cc = int(m_mqin.group(1)), int(m_mqin.group(2))
+            for i in range(cc):
+                if cb + i >= len(c_rows):
+                    continue
+                h, _mast, st = c_rows[cb + i]
+                if (h.upper() == "00035E1B" and int(st) == 2) or \
+                        (h.upper() == "00030C2B" and int(st) == 16):
+                    ok_noise = False
+        else:
+            ok_noise = False
+        print(("OK  " if ok_noise else "MISS") +
+              " 静态表 · 「另一边」不含调试跳关边（MQ_Shell@2 / MQ03@16，反向检查）")
+        all_ok &= ok_noise
+
+        # 反向检查②（第 101 轮）：**有意不收的三处不许进表** ——
+        #   ① 「地球舰队侵袭」（MQIntro = 0x000059A0）是这条线的入口：它自己没有任何
+        #      脚本启动边（入口在数据侧）⇒ 挂上链式门槛会**永远被藏**（误藏）；
+        #   ② `DialogueHVDazra@5` 的 8 条城市支线（调试入口 —— 只有 Fragment_Stage_0000
+        #      调它，同函数里还有 MoveTo(调试 marker) + AddPerk）；
+        #   ③ `VKaiZ03a` / `VkaiZ03b`（结局分支互启环 + 真实入口在数据侧）。
+        ok_unwanted = True
+        #   （MQIntro 是「宿主」出现在别人的边里 —— 要查的是**它自己有没有链式边**）
+        m_intro = re.search(r"\{\s*0x000059A0u,\s*\d+u,\s*\d+u,\s*0x[0-9A-F]+u,"
+                            r"\s*\d+u,\s*\d+u,\s*\d+u,\s*\d+u,\s*\d+u,\s*\d+u,"
+                            r"\s*(\d+)u,\s*(\d+)u,", blob)
+        if m_intro and int(m_intro.group(2)) != 0:
+            ok_unwanted = False
+        #   ②/③：直接查数据文件（比解表更直观）—— quest_chain_dlc.json 的宿主里
+        #   不许出现 DialogueHVDazra / VKaiZ03a / VkaiZ03b。
+        dlc_chain_json = ROOT / "ref" / "quest_chain_dlc.json"
+        bad_hosts = []
+        if dlc_chain_json.exists():
+            for t in json.loads(dlc_chain_json.read_text(encoding="utf-8")):
+                for e in t.get("edges", []):
+                    he = (e.get("host_edid") or "").lower()
+                    if he in ("sfbgs001_dialoguehvdazra", "sfbgs001_vkaiz03a",
+                              "sfbgs001_vkaiz03b"):
+                        bad_hosts.append(he)
+        if bad_hosts:
+            ok_unwanted = False
+        print(("OK  " if ok_unwanted else "MISS") +
+              " 静态表 · 「有意不收」的三处未进链式门槛（MQIntro/DialogueHVDazra/VKaiZ03*，反向检查）")
+        all_ok &= ok_unwanted
 
         # ★★ 第 69 轮（扩展链式边 · 同类问题收口）：样本 —— 两条实测过的形态
         #   ① Eleos 静修地线：「幽灵狩猎」（0x0016D4D1）← 「完全停止」（0x0017134F）@1000；
