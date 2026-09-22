@@ -31,7 +31,9 @@ param(
     # ★★ 第 62 轮补：主菜单自动读档（harness）—— 写进部署 ini 的 [Test] AutoLoad。
     #   填了之后：启动游戏 → 按任意键到主菜单 → 插件**自动读这个存档**并自动开跑用例
     #   （连「手动读档」都省了）。留空 = 保持 ini 已有值（不自动读档）。
-    #   例：-Harness -AutoLoad Save7_3AB5A2FA
+    #   例：-Harness -AutoLoad Exitsave0_FDBB7678_54696D6D6568
+    #   （★ 第 101 轮起测试指定存档 = Exitsave0_FDBB7678_54696D6D6568；两者必须一致，
+    #     verify 里有「用例计划 · r62 指定存档与部署 ini 的 AutoLoad 一致」检查）
     [string]$AutoLoad = ''
 )
 

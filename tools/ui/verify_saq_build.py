@@ -134,7 +134,7 @@
            唤醒脚本 —— 游戏内读档会重建 Papyrus VM，定时器可能没恢复）。
            本脚本检查：驱动器版本串 v61 + 存档列表诊断/读档排队/读档完成/唤醒脚本四条
            文案 + 两个 op 名 + 反向检查（v60 及更早不在）+ 用例计划（r62 用例在、
-           **只用用户指定的存档** Save7_3AB5A2FA）。
+           **只用用户指定的存档** Exitsave0_FDBB7678_54696D6D6568，★ 第 101 轮切换）。
   第 62 轮补（用户实测反馈 12:21 会话：游戏停在「按任意键继续 / 主菜单」时 harness 一直
            等脚本通道 —— 世界没加载、脚本实例不存在）：**主菜单自动读档** —— ini
            `[Test] AutoLoad`（存档名子串，空 = 关）；驱动器在主菜单阶段用 save.load 的原语
@@ -1727,11 +1727,33 @@ def main() -> int:
                                 plan_text.encode(),
                                 "assert.log 入口=20\\(可导航 20｜marker".encode())
                 # ★★ 第 62 轮（大项 I）：自动读档用例 —— ① 只允许用**用户指定的那个存档**
-                #   （子串 Save7_3AB5A2FA）；② 读档步骤在；③ 存档列表诊断在。
+                #   （子串 ★ 第 101 轮切换成 Exitsave0_FDBB7678_54696D6D6568）；② 读档步骤在；
+                #   ③ 存档列表诊断在；④ **与部署 ini 的 [Test] AutoLoad 一致**（见下）。
                 all_ok &= check("用例计划 · r62 自动读档（指定存档）",
-                                plan_text.encode(), "save.load Save7_3AB5A2FA".encode())
+                                plan_text.encode(),
+                                "save.load Exitsave0_FDBB7678_54696D6D6568".encode())
                 all_ok &= check("用例计划 · r62 存档列表诊断步骤",
                                 plan_text.encode(), "save.list".encode())
+                # ★★★ 第 101 轮（测试存档切换）：r62 的指定存档必须与**部署 ini** 的
+                #   `[Test] AutoLoad` 指的是同一个存档 —— 不然「自动读 A、用例读 B」，
+                #   两边状态不同、判据互相打架还看不出来。AutoLoad 为空（关自动读档）时不查。
+                _ini_deployed = MO2_MOD / "SFSE/Plugins/SAQ_ShowAvailableQuests.ini"
+                if _ini_deployed.exists():
+                    _ini_txt = _ini_deployed.read_text(encoding="utf-8", errors="replace")
+                    _m_al = re.search(r"(?mi)^\s*AutoLoad\s*=\s*(.+?)\s*$", _ini_txt)
+                    _al = (_m_al.group(1) if _m_al else "").strip()
+                    _m_sl = re.search(r"(?mi)^\s*step\s*=\s*save\.load\s+(\S+)", plan_text)
+                    _sl = (_m_sl.group(1) if _m_sl else "").strip()
+                    if not _al:
+                        print("OK   用例计划 · 部署 ini 未开自动读档（AutoLoad 空 ⇒ 不查一致性）")
+                    else:
+                        _same_save = (_sl.lower() == _al.lower()
+                                      or _sl.lower() in _al.lower()
+                                      or _al.lower() in _sl.lower())
+                        print(("OK  " if _same_save else "MISS") +
+                              f" 用例计划 · r62 指定存档与部署 ini AutoLoad 一致"
+                              f"（{_sl} vs {_al}）")
+                        all_ok &= _same_save
             else:
                 print(f"MISS 缺少用例计划 {plan_src}")
                 all_ok = False
