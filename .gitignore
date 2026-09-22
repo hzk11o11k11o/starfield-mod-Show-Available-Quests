@@ -14,6 +14,10 @@ tools/ffdec/
 tools/ffdec.zip
 tools/vendor/
 Interface-main.zip
+# 第 98 轮：DLC .pex 反编译用（Champollion · Orvid 分支 v1.3.2）
+#   下载：https://github.com/Orvid/Champollion/releases → tools/champollion/Champollion.exe
+#   （第三方二进制不入库；tools/esm/gen_dlc_chain.py 会提示并给出地址）
+tools/champollion/
 
 # --- 逆向 / 分析中间产物（都可由 tools 重新生成） ---
 ref/

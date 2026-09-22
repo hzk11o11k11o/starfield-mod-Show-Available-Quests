@@ -195,3 +195,72 @@ DLC 的**剧情后续**（破碎空间 虚妄的得诺者→…→栉比堡垒 /
 * DLC 条目**不在内嵌回退载荷里**（那份只含基础游戏）⇒ 本轮**不需要重编 SWF**；
 * 三条「未收」的基础游戏任务（独立盟之巅 / 供应线路 / 传播新闻）定案**不是**可重复任务
   —— 见 `docs/11` 第 90 轮 10.2（其中「供应线路」更正了第 89 轮「无 CQ 标记」的误判）。
+
+## 八、第 98 轮：DLC 链式门槛取证 —— 反编译 `.pex`（六节遗留缺口的解法）
+
+> 2026-09-22。起因 = 六节留下的那句「破碎空间主线后续目前仍会显示 —— 想收口需要
+> 『实机推进 + harness 验证』，不做猜测性门槛」。本轮证明：**不需要人工玩，也不需要猜**
+> —— 官方虽然不发 `.psc`，但 `.pex` 可以反编译回等价源码（含**属性声明**与**调用点**），
+> 启动边与基础游戏一样是硬数据。
+
+**结论（可行性）**：
+
+| 环节 | 结论 |
+| --- | --- |
+| `.pex` 格式 | Starfield = **version 3.12 / gameId 4**；`tools/re/pexinfo.py` 能读头部与字符串表 |
+| 反编译 | **Champollion（Orvid 分支）v1.3.2 直接支持**（`tools/champollion/Champollion.exe`，1.8 MB，第三方二进制不入库）：把 `qf_*.pex` 变回**可读 .psc**（属性声明 `Quest Property SFBGS001_MQ02`、fragment 函数体、调用原文都在） |
+| 一键取证 | 新工具 **`tools/esm/gen_dlc_chain.py`**：① 从 BA2 抽 `.pex`（ShatteredSpace 363 / SFBGS050 311 / SFBGS00D 293）；② 反编译到 `tmp/psc_dlc/`；③ 抽候选启动边 → `ref/dlc_chain_candidates.json`（**33 条表内任务 / 137 条边**）；④ 定稿表逐条核验 → `ref/quest_chain_dlc.json` |
+| 运行时 | **零代码改动**：`StaticChainGate` 本来就带 `hostMaster`（跨 master 前置），第 78 轮的 INFO 门槛已经跑通同一套 `Masters::MakeFormID` |
+
+**破碎空间主线的 6 条真实启动边**（定稿 `ref/quest_chain_dlc.json`，全部核验通过）：
+
+| 后续任务 | 启动边 | 官方字节码原文 |
+| --- | --- | --- |
+| 虚妄的得诺者 `MQ02` | `MQ01@10000` | `qf_sfbgs001_mq01…:529` `SFBGS001_MQ02.SetStage(100)` |
+| 家族的调和 `MQ_Shell` | `MQ02@2000` | `qf_sfbgs001_mq02…:496` `SFBGS001_MQ_Shell.SetStage(100)` |
+| 狂热逼界 `MQ03` | `MQ_Shell@100` | `qf_sfbgs001_mq_shell…:96` `SFBGS001_MQ03.SetStage(100)` |
+| 信念之争 `MQ04` | `MQ_Shell@100` | 同上 `:97`（**三条议会任务一起开**） |
+| 发觉过去 `MQ05` | `MQ_Shell@100` | 同上 `:98` |
+| 栉比堡垒 `MQ06` | `MQ_Shell@1100` | `qf_sfbgs001_mq_shell…:233`（终局 fragment） |
+
+**哪些形态不是启动边**（这批候选里的噪声，判据写进工具与本节，避免以后重踩）：
+
+| 形态 | 例 | 为什么排除 |
+| --- | --- | --- |
+| 调试跳关 fragment（stage 0000/0001/0002…） | `MS04@0 → MQ02.SetStage(1000)`（同函数里 `MoveTo(测试 marker)`）/ `MQ_Shell@1` `Self.SetStage(0)→(100)` | 官方给 CK 用的「跳到某 stage」入口，玩家路径不会走到 |
+| 版本补丁修复 fragment | `Patch_Update08@0 → MQ03.SetStage(160/400/100)` | 修老存档的补丁（片段自带条件），不是进程边 |
+| 回写（后一个任务改前一个任务的 stage） | `MQ03@200 → MQ_Shell.SetStage(300)` | 不是「谁能启动谁」，收进来只会让门槛虚化 |
+| `SetStage(0)` | — | 重置/回退 |
+
+**顺带查的另一来源（SMQN / Story Manager）**：三个 DLC 共 101 个 `SMQN` 节点 / 180 条 `CTDA`
+（新工具 **`tools/esm/scan_smqn_gates.py`** → `ref/smqn_gates.json`；函数号对照
+`0x38=GetQuestRunning / 0x3A=GetStage / 0x3B=GetStageDone / 0x21F=GetQuestCompleted`）。
+「引用别的任务」的条件共 13 条，其中**只有 2 条的目标是我们表内的任务**：
+
+| 节点 | 条件 | 被启动的任务 |
+| --- | --- | --- |
+| `SFTER_MS01_IntroSE` | `GetQuestCompleted(SFTER_MQ01) == 1` | 地球舰队 · **失踪的地球人**（要先做完**失踪的华庭号**） |
+| `SFTER_MS02QuestNode` | `GetQuestRunning(SFFL_MS02) == 0` | 地球舰队 · **隐蔽入侵**（守「星星派对没在跑」） |
+
+其余 11 条的目标都是内部任务（随机对话 / PostQuest 节点），且 `GetQuestRunning/GetStageDone/
+GetQuestCompleted(自己)` 这种自引用按既有约定**不算门槛**（`docs/08` 4.2）。
+⇒ 收法建议：走**进度门槛**（`kQuestConds` 已支持 `GetQuestCompleted` / want=0/1），
+或在 `analyze_ctda.py` 侧加一个「SMQN 来源」——属二期。
+
+**二期候选**（候选清单里还没收的，`ref/dlc_chain_candidates.json` 可随时复跑核对）：
+
+* 破碎空间 · 中插「另一侧」`MQIN` ← `MQ03@4000` / `MQ04@7000` / `MQ05@1600`（三条收尾）；
+* 破碎空间 · `VKaiZ03b` ← `VKaiZ03a@300`、`VKaiZ03a` ← `VKaiZ03b@998/999`（结局分支）；
+* 地球舰队链：`SE_MQIntro` ← `MQIntro@600`、`MQ01` ← `SE_MQIntro@200`、
+  `MQ02B` ← `MQ02A@9999`、`MQOutpostUC/FC/RI` ← `MQ02B@1180/1182/1184`、`MS02` ← `MQ03@1700`；
+  ★ `MQ02A ← MQ01`（`sfter_mq01questscript` 的 `QuestCompleted` 函数）**没有宿主 stage**
+  —— 工具会以 `need_stage` 记下，需要人工翻成「MQ01 的完成 stage」再收；
+* 自由航道：`SFFL_Z01 ← SFFL_Z01_SE1@10/150`、`SFFL_AnchorpointZ01/Z03 ← DialogueAnchorpoint@90/95`；
+* ★ **待复核**：破碎空间的 `DialogueHVDazra@5` 一次 `Start()` 8 条城市支线
+  （MS01/MS04/MS05/VKaiZ01/02/03a/DazraZ01/DazraZ03）—— 像调试入口，但也可能是
+  「进城后解锁全城支线」的真实时点，需要对照 `DLC001_DialogueHVDazra` 的 stage 结构再定。
+
+**还没做（下一轮）**：把 `ref/quest_chain_dlc.json` 接进 `gen_quest_table.py`
+（与 `--chain-extra` 同一套合并逻辑）+ `verify_saq_build.py` 的边计数/样本 + 黄金快照 +
+harness 用例（A 段：空进度 ⇒ MQ02~MQ06 进「链式没到」名单；B 段：`quest.setstage` MQ01@10000
+⇒ MQ02 放行）—— 四处齐了才算「DLC 收口」实机验收。
