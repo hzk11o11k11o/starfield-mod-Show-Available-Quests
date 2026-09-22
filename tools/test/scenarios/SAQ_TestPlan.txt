@@ -1362,6 +1362,36 @@ step = menu.close
 step = wait 1500
 
 ; ----------------------------------------------------------------------------
+[case:r106_info_or]
+desc = 第 106 轮：INFO 门槛 OR 组（A）—— 112/114 都没完成 ⇒ OR 组为假（旧实现这条组根本不存在）
+step = note === 准备：回滚同伴宿主任务 Com_Companion_Barrett（112/114 都没做）===
+step = ping
+step = quest.reset 0x001C7187
+step = wait 2000
+step = note === 探针：巴雷特：承诺（表内记录号 0x001C7185）第 1 条对话 = (112 OR 114) ⇒ 假 ===
+step = info.probe 0x001C7185
+step = assert.log 信息探针 .*组\[0\]:s112\[OR\]\+s114\[OR\]=假 scope=prev timeout=5000
+step = note === 收尾：清场 ===
+step = quest.reset 0x001C7187
+step = wait 1500
+
+; ----------------------------------------------------------------------------
+[case:r106_info_or_pass]
+desc = 第 106 轮：INFO 门槛 OR 组（B）—— 推 112 后同一条组变真（114 仍未完成 = OR 语义）
+step = note === 准备：宿主推到 stage 112 ===
+step = ping
+step = quest.reset 0x001C7187
+step = quest.start 0x001C7187
+step = quest.stage 0x001C7187 112
+step = wait 2500
+step = note === 探针：同一条组 (112 OR 114) 应变「真」（只看 114 会判假 —— 新旧差异点）===
+step = info.probe 0x001C7185
+step = assert.log 信息探针 .*组\[0\]:s112\[OR\]\+s114\[OR\]=真 scope=prev timeout=5000
+step = note === 收尾：清场 ===
+step = quest.reset 0x001C7187
+step = wait 1500
+
+; ----------------------------------------------------------------------------
 [case:r62_reload_observe]
 desc = 第 62 轮：自动读档（指定存档）→ 读档后链路自检 + 候选可得性记录
 step = note === 读档前：先开一次菜单（预建静态表 + 确认推送链路）===

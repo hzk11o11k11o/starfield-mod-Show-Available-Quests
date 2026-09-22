@@ -136,6 +136,7 @@ namespace SAQ::Test
 			kGuideClear,   // 取消引导（DLL 自己的产品路径：Guide::SetGuideTarget(0)）
 			kGuideProbe,   // ★ 第 60 轮：候选可得性探针（只读，见 ProbeGuideCandidates）
 			kQuestProbe,   // ★★ 第 101 轮补丁：quest.probe —— 直读 IsStageDone（只读，见 ProbeQuestStages）
+			kInfoProbe,    // ★★★ 第 106 轮：info.probe —— INFO 门槛 OR 组探针（只读，见 ProbeInfoGates）
 			kSaveList,     // ★★ 第 62 轮：存档列表诊断（BGSSaveLoadManager，只读）
 			kSaveLoad,     // ★★ 第 62 轮：自动读档（排队 → 等加载走完 → 通道重新就绪）
 		};
@@ -648,6 +649,17 @@ namespace SAQ::Test
 						a_error = "stage 不是数字：" + toks[i];
 						return false;
 					}
+				}
+			} else if (op == "info.probe") {
+				// ★★★ 第 106 轮（operator 全量产品化）：`info.probe <记录号>` —— 只读探针：
+				//   报出该任务 INFO 门槛里**含 OR 位的对话组**的求值结果（组内走与产品相同的
+				//   Decision::DecideProgressGates）+ 整任务结论（见 ProbeInfoGates）。
+				//   参数 = **静态表内的记录号**（不是运行期 FormID —— 不需要 master 解析）。
+				a_step.kind = Kind::kInfoProbe;
+				const auto itoks = SplitWs(rest);
+				if (itoks.empty() || !parseFormIDToken(itoks[0], a_step.formId)) {
+					a_error = "需要 <记录号>（如 info.probe 0x001C7185）";
+					return false;
 				}
 			} else if (op == "wait") {
 				a_step.kind = Kind::kWait;
@@ -1276,6 +1288,17 @@ namespace SAQ::Test
 				//   「窗口从 idx … 起」+「本步骤之后没有产生任何日志行」就是它）。
 				//   ★ 只加这一行产品日志，不改任何判据语义：断言的窗口规则照旧适用。
 				REX::INFO("任务探针 {}", probe);
+				CompleteStep(true, probe, {});
+				return true;
+			}
+
+			case Kind::kInfoProbe: {
+				// ★★★ 第 106 轮（operator 全量产品化）：只读探针 —— 一次性完成
+				//   （不等回执；菜单开着也能跑，与 quest.probe 同款）。
+				//   红线六（第 104 轮）：探针结果必须**同时打一行产品日志** ——
+				//   `assert.log` 只认产品行（LogFind 跳过一切含 `harness：` 的行）。
+				const auto probe = ProbeInfoGates(step.formId);
+				REX::INFO("信息探针 {}", probe);
 				CompleteStep(true, probe, {});
 				return true;
 			}

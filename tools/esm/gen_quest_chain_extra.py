@@ -200,6 +200,24 @@ EDGES: list[tuple[str, str, int, str, int, str]] = [
      "处理特工（Masako 可重复 radiant）：RI_Support@610 的 fragment 原文 RIR06.SetStage(1)"),
     ("RIR07", "RI_Support", 700, "SetStage", 1,
      "口舌之力（Masako 可重复 radiant）：RI_Support@700 的 fragment 原文 RIR07.SetStage(1)"),
+    # ---- ★★★ 第 106 轮（覆盖面全量复盘）：补收「无 QTYP 但完整」的漏收任务 --
+    #   起因 = tools/esm/audit_coverage.py 全量复盘：现行规则「只保留带 QTYP 的任务」
+    #   把一批**有任务目标（QOBJ>0）的正式剧情任务**整体排除了 —— 它们的 QTYP
+    #   子记录缺失，但内容完整（对话 / 目标 / stage 文本 / 脚本都有）。
+    #   本轮补收 7 条（名单与逐条判据见 ref/extra_quests.json）；其中这 5 条是
+    #   **链式后续环节**，边与本文件其它条目同款（人工核实 + 构建期源码核验）。
+    #   ★ 另外 2 条（City_Akila_Ashta01 防御措施 / City_Akila_Jansen 登陆不顺）
+    #   没有严格前置 —— 由守卫对话 / 阿基拉城对话管理器触发（玩家可达）⇒ 不加边。
+    ("COM_Quest_Barrett_Q02", "Com_Companion_Barrett", 208, "Start", 0,
+     "阴阳两隔（巴雷特线第二段）：同伴宿主@208 fragment 原文 COM_Quest_Barrett_Q02.Start()"),
+    ("FFNewAtlantis05", "FFNewAtlantis04", 100, "Start", 0,
+     "搜查与扣捉：黎明时分@100 fragment 原文 FFNewAtlantis05.Start()"),
+    ("FFNewAtlantis06", "FFNewAtlantis05", 100, "Start", 0,
+     "双城传说：搜查与扣捉@100 fragment 原文 FFNewAtlantis06.Start()（同 stage 两处调用）"),
+    ("City_Akila_Ashta02", "City_Akila_Ashta01", 200, "SetStage", 10,
+     "误报：防御措施@200 fragment 原文 City_Akila_Ashta02.SetStage(10)"),
+    ("City_Akila_Ashta03", "City_Akila_Ashta02", 200, "SetStage", 5,
+     "群兽领袖：误报@200 fragment 原文 City_Akila_Ashta03.SetStage(5)"),
 ]
 
 # ============================================================================

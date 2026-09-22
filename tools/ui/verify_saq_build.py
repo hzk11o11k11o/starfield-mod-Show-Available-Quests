@@ -1322,6 +1322,9 @@ def main() -> int:
                             #   所以 `r101_dlc_chain2_pass` / `r101_dlc_chain2_mq05`
                             #   两条用例已删除（不是漏掉，别再"补"回来）。
                             "r101_dlc_chain2",
+                            # ★★★ 第 106 轮（operator 全量产品化）：INFO 门槛 OR 组 ——
+                            #   A：112/114 都没做 ⇒ 探针报「组[0]=假」；B：推 112 ⇒ 组=真
+                            "r106_info_or", "r106_info_or_pass",
                             "r62_reload_observe"):
                     all_ok &= check(f"用例计划 · [case:{cid}]", plan_text.encode(),
                                     f"[case:{cid}]".encode())
@@ -1372,6 +1375,25 @@ def main() -> int:
                                 "全用例集里唯一推 MQ_Shell 的地方".encode())
                 all_ok &= check("用例计划 · r101 放行判据走显示层（ui.select 另一边）",
                                 plan_text.encode(), "ui.select ~0x0010AAD5".encode())
+                # ★★★ 第 106 轮（operator 全量产品化 · INFO 门槛 OR 组）：断言形状 ——
+                #   只读探针 `info.probe` + 组求值结果（A 段假 / B 段真），两条都必须以
+                #   `scope=prev` 取证**探针那一行**（产品日志 `信息探针 INFO探针 …`）。
+                all_ok &= check("用例计划 · r106 INFO OR 组断言（A：组为假）",
+                                plan_text.encode(),
+                                "assert.log 信息探针 .*组\\[0\\]:s112\\[OR\\]\\+s114\\[OR\\]=假 scope=prev".encode())
+                all_ok &= check("用例计划 · r106 INFO OR 组断言（B：组为真）",
+                                plan_text.encode(),
+                                "assert.log 信息探针 .*组\\[0\\]:s112\\[OR\\]\\+s114\\[OR\\]=真 scope=prev".encode())
+                all_ok &= check("用例计划 · r106 info.probe 步骤存在",
+                                plan_text.encode(), "info.probe 0x001C7185".encode())
+                # 反向检查：INFO OR 组不许「见第一条 kFail 即停」的旧写法残留 ——
+                #   DLL 侧特征（`不再「找第一条 kFail 即停」` 的说明字符串不在二进制里）
+                #   由离线单测 + 用例钉死；这里只挡注释文档层面的旧说法。
+                gone = "INFO 侧条件复用 StaticCondGate 结构 ⇒ 第 6 元恒 0".encode() \
+                    not in plan_text.encode()
+                print(("OK  " if gone else "MISS") +
+                      " 用例计划 · 旧「INFO 第 6 元恒 0」说明已替换(反向检查)")
+                all_ok &= gone
                 #   反向检查④（第 103 轮）：不许再用 `assert.nolog 链式没到:.*另一边` ——
                 #   「链式没到」是**累积名单**：本用例前面必然打过一行「另一边 被藏」
                 #   （预热后它的三条边都没触发）⇒ 必然假 FAIL（第 103 轮改判的直接产物）。
@@ -2240,6 +2262,63 @@ def main() -> int:
             hit = needle in blob
             print(("OK  " if hit else "MISS") + f" 静态表 · DLC INFO 门槛样本（{label}）")
             all_ok &= hit
+
+        # ★★★ 第 106 轮（operator 全量产品化）：INFO 门槛的条件**带 OR 位** ——
+        #   ① 计数与数据源对齐（kInfoConds 里 orBit=1 的条数 = info_gates_final
+        #      的 or_bit 条件数）；② 样本：巴雷特：违约（0x000369AB）的对话
+        #      [StageDone(0x001C7187,12)==1[OR], StageDone(...,14)==1] ——
+        #      12 那条 orBit=1（本次修正：旧实现只提取无 OR 位的 14 那条 ⇒ 会算错
+        #      OR 语义）；③ 反向检查：旧「INFO 侧第 6 元恒 0」注释文案已替换。
+        i0 = blob.find("kInfoConds[] = {")
+        i1 = blob.find("kInfoCondCount")
+        i_region = blob[i0:i1] if 0 <= i0 < i1 else ""
+        i_rows = re.findall(
+            r"\{\s*0x([0-9A-Fa-f]+)u,\s*(\d+)u,\s*(\d+)u,\s*(\d+)u,\s*(\d+)u,\s*(\d+)u\s*\},", i_region)
+        n_ib_or = sum(1 for r in i_rows if r[5] == "1")
+        exp_or = (sum(1 for t in ig_data for i in t["infos"] for c in i["conds"]
+                      if c.get("or_bit")) if exp_conds is not None else -1)
+        ok = (exp_or > 0 and n_ib_or == exp_or)
+        print(("OK  " if ok else "MISS") +
+              f" 静态表 · INFO 门槛 OR 位（{n_ib_or}/{exp_or} 条）")
+        all_ok &= ok
+        ok = "{ 0x001C7187u, 0u, 2u, 1u, 12u, 1u }," in blob
+        print(("OK  " if ok else "MISS") + " 静态表 · INFO 门槛 OR 位样本（巴雷特：违约 @12）")
+        all_ok &= ok
+        gone = "第 6 元恒 0" not in blob     # blob 是 str（table_h.read_text）—— 别加 .encode()
+        print(("OK  " if gone else "MISS") + " 静态表 · 旧「INFO 侧第 6 元恒 0」注释已替换(反向检查)")
+        all_ok &= gone
+
+        # ★★★ 第 106 轮（覆盖面全量复盘）：补收的 7 条「无 QTYP 但完整」漏收任务 ——
+        #   ① ref/extra_quests.json 的每一条都在表里（按记录号 + itype 对齐）；
+        #   ② 链式样本：阴阳两隔（0x00002FAE）的边 = Com_Companion_Barrett@208；
+        #   ③ 无前置的 2 条（防御措施 / 登陆不顺）chainCount = 0。
+        ex_path = ROOT / "ref" / "extra_quests.json"
+        ex_ok = True
+        n_ex = 0
+        if ex_path.exists():
+            ex_data = json.loads(ex_path.read_text(encoding="utf-8"))
+            ex_entries = ex_data.get("entries", []) if isinstance(ex_data, dict) else ex_data
+            n_ex = len(ex_entries)
+            for e in ex_entries:
+                loc = int(e["local"], 16) if isinstance(e["local"], str) else int(e["local"])
+                # 表里的 FormID 是 8 位十六进制（0x00002FAEu）—— 别用 %06X。
+                if not re.search(r"\{\s*0x%08Xu,\s*\d+u,\s*%du," % (loc, int(e.get("itype", 3))),
+                                 blob):
+                    print(f"MISS 静态表 · 补收任务 0x{loc:06X} {e['edid']} 不在表里")
+                    ex_ok = False
+        print(("OK  " if ex_ok else "MISS") + f" 静态表 · 补收任务 {n_ex} 条全在表里（无 QTYP 人工名单）")
+        all_ok &= ex_ok
+        ok_edge = "{ 0x001C7187u, 0u, 208u }," in blob
+        print(("OK  " if ok_edge else "MISS") +
+              " 静态表 · 补收链式边样本（阴阳两隔 ← Com_Companion_Barrett@208）")
+        all_ok &= ok_edge
+        for loc, nm in ((0x21625F, "防御措施"), (0x1A8B64, "登陆不顺")):
+            m_nc = re.search(
+                r"\{\s*0x%08Xu,\s*\d+u,\s*\d+u,\s*0x[0-9A-Fa-f]+u,"
+                r"\s*\d+u,\s*\d+u,\s*\d+u,\s*\d+u,\s*\d+u,\s*\d+u,\s*\d+u,\s*(\d+)u," % loc, blob)
+            ok_nc = bool(m_nc) and int(m_nc.group(1)) == 0
+            print(("OK  " if ok_nc else "MISS") + f" 静态表 · 补收无前置任务 chainCount=0（{nm}）")
+            all_ok &= ok_nc
 
         # ★★ 第 67 轮：任务链门槛（编号任务链的启动边）—— 数据侧完整性：
         #   ① 结构/数组存在；② 边数/有边任务数与**两个数据源**（编号链 + 第 69 轮的扩展边）

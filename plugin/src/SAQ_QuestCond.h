@@ -40,10 +40,14 @@ namespace SAQ
 	// SAQ_QuestTable.h 的 kInfoGroups / kInfoConds，生成链见 docs/08）。
 	//
 	// a_groupBegin / a_groupCount 来自 StaticQuestInfo（kInfoGroups[] 的切片）；
-	// 每个 group 再切片到 kInfoConds[] ——「一条对话 = 一组条件（AND）」。
+	// 每个 group 再切片到 kInfoConds[] ——「一条对话 = 一组条件」：
+	//   ★ 第 106 轮（operator 全量产品化）：组内 = 无 OR 位的条件相互 AND、
+	//   OR 组（自带 OR 位那条起、含关闭组的第一条无 OR 位条件）组内相互 OR、
+	//   组作为整体参与 AND —— 复用 Decision::DecideProgressGates（与记录级
+	//   同款引擎语义，见 docs/08 4.3）。
 	//
 	// 语义（保守，误藏最小化）：
-	//   * 一条对话只要有**一条「已知为假」**的条件 ⇒ 这条对话不可用；
+	//   * 一条对话的条件组**确定为假** ⇒ 这条对话不可用；
 	//   * **全部对话都不可用** ⇒ kFail（进度没到 ⇒ 隐藏）；
 	//   * 任何一条对话「没有已知为假的条件」（条件全真 / 有不可判定项 / 求值不了）
 	//     ⇒ kPass（可能可用 ⇒ 显示）；
@@ -82,5 +86,20 @@ namespace SAQ
 	//   同类先例：第 99 轮 `MQ01@10000`（「回执全成功但统计行逐字段一致」）。
 	//   只读、无副作用、菜单开着也能跑（与 kGuideProbe 同款）。
 	std::string ProbeQuestStages(std::uint32_t a_formID, const std::vector<std::uint16_t>& a_stages);
+
+	// ★★★ 第 106 轮（operator 全量产品化 · harness 只读探针 `info.probe`）：
+	//   把某条任务（参数 = **表内记录号**）的 INFO 门槛报告中**含 OR 位的对话组**
+	//   逐组列出：`组[i]:<条件串>=真/假/未知` —— 组内求值走与产品**完全相同**的
+	//   Decision::DecideProgressGates（同款 OR 组语义，见 docs/08 4.3），
+	//   最后再报整任务的结论（EvaluateInfoGates 的三态）。
+	//
+	//   为什么需要它（用例怎么判读）：第 106 轮把 INFO 侧的 `== + OR 位` 条件
+	//   纳入门槛（scan_info_gates.py 的 OR 组提取）—— 差异点是「这条对话**是否参与**
+	//   判定」以及「OR 组里一条为真即组真」。用列表隐藏/显示做判据要构造 20+ 条
+	//   对话全假的状态（不可达）；这个探针直接报「组求值」，A/B 两段可精确断言：
+	//     · 112/114 都没完成 ⇒ `组[0]:112[OR]+114[OR]=假`；
+	//     · 推 112 之后 ⇒ 同一条组变 `=真`（旧实现只提取无 OR 位的条件 ⇒ 组不存在）。
+	//   只读、无副作用、菜单开着也能跑（与 kQuestProbe 同款）。
+	std::string ProbeInfoGates(std::uint32_t a_localFormID);
 #endif  // SAQ_WITH_HARNESS
 }

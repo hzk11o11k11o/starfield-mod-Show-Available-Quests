@@ -95,18 +95,41 @@ def main() -> int:
             continue
         ser = []
         for info_id, conds in sorted(infos.items()):
-            cs = []
-            for c in conds:
+            # ★ 第 106 轮（operator 全量产品化）：条件可以带 OR 位（scan_info_gates.py
+            #   已按引擎 OR 组语义提取 —— 组内相互 OR、组作为整体 AND，见 docs/08 4.3）。
+            #   这里按同样的组结构转写；再做一次「前置 master 能否解析」的保险：
+            #   **组里任一条解析不了 ⇒ 整组不参与判定**（半组会把 OR 语义算错）。
+            def make_cond(c):
                 pre_master = (c.get("preMaster") or "Starfield.esm").lower()
                 if pre_master not in master_idx:
-                    continue  # 前置在表里没有 master（无法解析）⇒ 丢掉这条条件（保守）
-                cs.append({
+                    return None  # 前置在表里没有 master（无法解析）
+                return {
                     "func": FUNC_TO_CHECK[c["func"]],
                     "quest_master": master_idx[pre_master],
                     "quest_local": int(c["pre"]) & 0xFFFFFF,
                     "want": int(c["want"]),
                     "stage": int(c.get("stage", 0)) & 0xFFFF,
-                })
+                    "or_bit": int(c.get("orBit", 0)),
+                }
+
+            cs = []
+            i, n = 0, len(conds)
+            while i < n:
+                if not conds[i].get("orBit"):
+                    ci = make_cond(conds[i])
+                    if ci:
+                        cs.append(ci)
+                    i += 1
+                    continue
+                j = i
+                while j < n and conds[j].get("orBit"):
+                    j += 1
+                if j < n:
+                    j += 1   # 含关闭组的那个条件（第一条无 OR 位）
+                grp = [make_cond(x) for x in conds[i:j]]
+                if all(grp):
+                    cs.extend(grp)
+                i = j
             if not cs:
                 continue
             ser.append({"info": info_id, "conds": cs})

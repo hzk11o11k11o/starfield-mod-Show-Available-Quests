@@ -8,8 +8,8 @@
     },
     "ref/info_gates_final.json": {
       "desc": "INFO 门槛数据（analyze_info_gates.py）",
-      "sha256": "5da208b066bbf2acf3a85dc88acb65f1afa23de11f6f8fc09b164056ebf94ece",
-      "summary": "任务 80 / 对话 418 / 条件 492"
+      "sha256": "a50d4d37d7bfd3770ab471296aa9b6b583fbb8220561468d9b7618eeccfc5d61",
+      "summary": "任务 80 / 对话 415 / 条件 501"
     },
     "ref/guide_targets.json": {
       "desc": "引导目标候选池（gen_guide_targets.py）",
@@ -58,13 +58,13 @@
     },
     "plugin/src/SAQ_QuestTable.h": {
       "desc": "静态任务表（gen_quest_table.py，DLL 编译进去）",
-      "sha256": "4c189be5f94ba6b5c08e799a7e435ab14e70619a27d5d6229f67b0c988dfe525",
-      "summary": "任务 271 / 候选 960 / 进度门槛 11 / INFO对话 418 / INFO条件 492 / 链式边 84 / 同伴 4 / 势力入口 4 / 地标 10 / 可重复 20"
+      "sha256": "f38d79bb53eb1f278309627a8be98bcd4e832fa9188877f04e84dcc181a2b665",
+      "summary": "任务 278 / 候选 960 / 进度门槛 11 / INFO对话 415 / INFO条件 501 / 链式边 89 / 同伴 4 / 势力入口 4 / 地标 10 / 可重复 20"
     },
     "ui/missionmenu/saqdata/SaqEmbeddedPayload.inc": {
       "desc": "内嵌回退载荷（gen_quest_table.py）",
-      "sha256": "69ff8ff0ad7cc41be36fbc7cac8f0b5e2a489df3dc90ef79e74a83ab37a88290",
-      "summary": "条目 212 / 第一条 2905089 / 末尾可重复 15"
+      "sha256": "395b3a0ae67de4ef6a5d5ec380181eda46a5c273222026e9ecce8d01fda0ed53",
+      "summary": "条目 219 / 第一条 2905089 / 末尾可重复 15"
     },
     "plugin/src/SAQ_EntryTable.h": {
       "desc": "入口条目表（gen_entry_table.py，DLL 编译进去）",

@@ -1,0 +1,54 @@
+{
+ "_why": "第 106 轮（覆盖面全量复盘）：无 QTYP 但 QOBJ>0 的正式剧情任务 —— 名单逐条人工核验（对话 / 目标 / stage 文本 / 启动路径全在），justification 见 tools/esm/audit_coverage.py 与本条 note。",
+ "entries": [
+   {
+    "master": "Starfield.esm",
+    "local": "0x002FAE",
+    "edid": "COM_Quest_Barrett_Q02",
+    "itype": 3,
+    "note": "阴阳两隔（Worlds Apart）—— 巴雷特线第二段：QOBJ=48 / stages=95 / 有 TIF 对话；由 Com_Companion_Barrett@208 fragment 原文 COM_Quest_Barrett_Q02.Start() 启动（链式边见 gen_quest_chain_extra.py；主线 MQ201B/MQ204 会检查它）。"
+   },
+   {
+    "master": "Starfield.esm",
+    "local": "0x08E2D9",
+    "edid": "FFNewAtlantis05",
+    "itype": 3,
+    "note": "搜查与扣捉（Search and Seizure）—— 黎明时分（FFNewAtlantis04，表内）的后续：QOBJ=8；由 FFNewAtlantis04@100 fragment 原文 FFNewAtlantis05.Start() 启动。"
+   },
+   {
+    "master": "Starfield.esm",
+    "local": "0x089F4E",
+    "edid": "FFNewAtlantis06",
+    "itype": 3,
+    "note": "双城传说（Two Tales, Two Cities）—— 搜查与扣捉（FFNewAtlantis05）的后续：QOBJ=11；由 FFNewAtlantis05@100 fragment 原文 FFNewAtlantis06.Start() 启动（同 stage 两处调用）。"
+   },
+   {
+    "master": "Starfield.esm",
+    "local": "0x21625F",
+    "edid": "City_Akila_Ashta01",
+    "itype": 3,
+    "note": "防御措施（Defensive Measures）—— 阿基拉城阿什塔线第一环：QOBJ=9；由守卫犯罪对话脚本 DialogueCrimeGuardsQuestScript + 游骑兵 FC01@463 触发（玩家可达）⇒ 不加链式边、直接显示。"
+   },
+   {
+    "master": "Starfield.esm",
+    "local": "0x212B4F",
+    "edid": "City_Akila_Ashta02",
+    "itype": 3,
+    "note": "误报（False Positives）—— 防御措施的后续：QOBJ=11；由 City_Akila_Ashta01@200 fragment 原文 SetStage(10) 启动（另有一个安保终端 TERM 起点）。"
+   },
+   {
+    "master": "Starfield.esm",
+    "local": "0x212B4E",
+    "edid": "City_Akila_Ashta03",
+    "itype": 3,
+    "note": "群兽领袖（Leader of the Pack）—— 误报的后续：QOBJ=9；由 City_Akila_Ashta02@200 fragment 原文 SetStage(5) 启动（Patch_Update07b 有修复调用）。"
+   },
+   {
+    "master": "Starfield.esm",
+    "local": "0x1A8B64",
+    "edid": "City_Akila_Jansen",
+    "itype": 3,
+    "note": "登陆不顺（Rough Landings）—— 阿基拉城支线：QOBJ=5；由 DialogueFCAkilaCity@30 fragment 原文 City_Akila_Jansen.Start() 启动（城市对话管理器派发 ⇒ 玩家可达）⇒ 不加链式边。"
+   }
+  ]
+ }

@@ -461,6 +461,45 @@ def load_info_gates(path: Path) -> dict[int, list[dict]]:
     return {int(t["formid"]): t.get("infos", []) for t in raw}
 
 
+def load_extra_quests(path: Path) -> list[dict]:
+    """★★★ 第 106 轮（覆盖面全量复盘）：「无 QTYP 但完整」的补收任务。
+
+    起因：全量审计（tools/esm/audit_coverage.py）发现 —— 现行规则「只保留带 QTYP
+    的任务」把一批**有任务目标（QOBJ>0）的正式剧情任务**整体排除了。它们的
+    QTYP 子记录缺失（不进原版任务菜单的类型分类），但内容完整：有对话（TIF）、
+    有任务目标（QOBJ / QTGL）、有 stage 文本（NAM2）与脚本逻辑，而且都有**玩家可达
+    的启动路径**（同伴里程碑 / 前一个任务的收尾 fragment / 城市对话管理器 /
+    守卫犯罪对话）—— 是本 MOD「可接任务」应当覆盖的对象。
+
+    本名单是**逐条人工核验**的（每条 note 带证据）；gen 侧只做一件事：对名单里的
+    任务**豁免「无 QTYP」短路**（用名单给的 itype 继续走正常流程 —— 名字 / 过滤 /
+    门槛 / 引导候选都照常）。
+
+    为什么不用「QOBJ>0 自动收录」：无 QTYP + QOBJ>0 的还有十几条**不该收**的
+    （CUT_ 删减内容 / MB_*_OLD 废弃 / StarbornTempleQuest 主线环节 / 特质任务 /
+    SFFL_MS01 主线等）—— 自动规则会误收，必须逐条核验（清单见 docs/12）。
+
+    文件格式：{"_why": "...", "entries": [{"master","local"(hex 字符串或整数),
+    "edid","itype","note"}, ...]}。缺失 ⇒ 空名单（这些任务照旧不收）。
+    """
+    if not path.exists():
+        print(f"（没有 {path} —— 补收名单为空：无 QTYP 的漏收任务不会进表）")
+        return []
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    entries = raw.get("entries", []) if isinstance(raw, dict) else raw
+    out = []
+    for e in entries:
+        loc = e["local"]
+        out.append({
+            "master": e.get("master", "Starfield.esm"),
+            "local": int(loc, 16) if isinstance(loc, str) else int(loc),
+            "edid": e["edid"],
+            "itype": int(e.get("itype", 3)),
+            "note": e.get("note", ""),
+        })
+    return out
+
+
 def load_chain(path: Path) -> dict[int, list[dict]]:
     """★ 第 67 轮：任务链门槛表（tools/esm/gen_quest_chain.py 生成；没有 ⇒ 不做链式过滤）。
 
@@ -530,6 +569,9 @@ def main() -> int:
     ap.add_argument("--repeatables", default="ref/repeatable_quests.json",
                     help="★★ 第 89 轮：可重复任务（gen_repeatable_quests.py 产物；"
                          "缺失 ⇒ 这 15 条照旧「做完一次就消失」）")
+    ap.add_argument("--extra-quests", default="ref/extra_quests.json",
+                    help="★★★ 第 106 轮：补收名单（无 QTYP 但完整的漏收任务；"
+                         "逐条人工核验，见 load_extra_quests；缺失 ⇒ 不补收）")
     ap.add_argument("--out-header", default="plugin/src/SAQ_QuestTable.h")
     ap.add_argument("--out-json", default="ref/quest_table_debug.json")
     ap.add_argument("--out-as3", default="ui/missionmenu/saqdata/SaqEmbeddedPayload.inc")
@@ -585,6 +627,15 @@ def main() -> int:
     repeatables = load_repeatable_quests(Path(a.repeatables))
     rp_by_local = {int(g["local"]): i for i, g in enumerate(repeatables)}
 
+    # ★★★ 第 106 轮（覆盖面全量复盘）：补收名单（无 QTYP 但完整的漏收任务）——
+    #   豁免「无 QTYP」短路；链式边走 quest_chain_extra.json（见 load_extra_quests）。
+    extra_quests = load_extra_quests(Path(a.extra_quests))
+    extra_by = {((e["master"] or "").lower(), int(e["local"]) & 0xFFFFFF): e
+                for e in extra_quests}
+    n_extra_used = 0
+    if extra_quests:
+        print(f"补收名单（无 QTYP 人工核验）：{len(extra_quests)} 条")
+
     rows = []
     skipped_no_type = 0
     skipped_main = 0
@@ -593,12 +644,19 @@ def main() -> int:
 
     for q in quests:
         qtyp = q.get("qtyp")
+        itype = None
         if qtyp is None:
-            skipped_no_type += 1
-            continue
-        itype = QTYPE_TO_ITYPE.get(qtyp)
-        if itype is None:
-            continue
+            # ★★★ 第 106 轮：补收名单里的任务豁免「无 QTYP」短路（逐条人工核验）。
+            ex = extra_by.get(((q.get("master") or "").lower(), int(q["local"]) & 0xFFFFFF))
+            if ex is None:
+                skipped_no_type += 1
+                continue
+            itype = int(ex["itype"])
+            n_extra_used += 1
+        else:
+            itype = QTYPE_TO_ITYPE.get(qtyp)
+            if itype is None:
+                continue
         if itype == 1 and not a.include_main:
             skipped_main += 1
             continue
@@ -847,8 +905,9 @@ def main() -> int:
     print(f"引导候选池：{len(cand_flat)} 条候选 / {n_guide} 条任务"
           f"（平均 {len(cand_flat) / max(n_guide, 1):.1f} 个/任务）")
 
-    print(f"table rows: {len(rows)}（无类型 {skipped_no_type}，主线 {skipped_main}）；"
-          f"其中带引导目标 {n_guide} 条（{n_guide * 100 // max(len(rows), 1)}%）")
+    print(f"table rows: {len(rows)}（无类型 {skipped_no_type}，主线 {skipped_main}"
+          + (f"，补收 {n_extra_used}/{len(extra_quests)}" if extra_quests else "")
+          + f"）；其中带引导目标 {n_guide} 条（{n_guide * 100 // max(len(rows), 1)}%）")
 
     # ★ 第 35 轮：进度门槛（「游戏进度还不能让玩家接到 ⇒ 不显示」）
     #   数据链：xEdit 条件 dump → analyze_ctda.py（提取外部引用门槛）→ 这里平铺进表。
@@ -886,9 +945,10 @@ def main() -> int:
 
     # ★★ 大项 D（第 48 轮）：INFO 门槛（对话侧条件）—— 每条任务一组「参与判定的对话」，
     #   每条对话又是一组条件（切片）。运行时：全部对话都「有已知为假的条件」⇒ 隐藏。
+    #   ★ 第 106 轮（operator 全量产品化）：条件带 OR 位（第 6 元不再恒 0）——
+    #   一条对话内：无 OR 位的条件相互 AND、OR 组（含关闭组的第一条无 OR 位条件）
+    #   组内相互 OR；组作为整体参与 AND（引擎语义，见 docs/08 4.3）。
     info_by_fid = load_info_gates(Path(a.info_gates))
-    # ★ 第 87 轮：INFO 侧条件复用 StaticCondGate 结构 ⇒ 第 6 元恒 0
-    #   （INFO 门槛的提取保持保守：只收「无 flags 的 ==」条件，见 scan_info_gates.py）。
     info_cond_flat: list[tuple[int, int, int, int, int, int]] = []
     info_group_flat: list[tuple[int, int]] = []
     n_info_tasks = 0
@@ -902,9 +962,11 @@ def main() -> int:
             conds = inf.get("conds", [])
             info_group_flat.append((len(info_cond_flat), len(conds)))
             for c in conds:
+                # ★ 第 106 轮：第 6 元 = OR 位（or_bit，来自 scan_info_gates.py 的 OR 组
+                #   提取）；旧数据 / 旧 INFO 门槛缺这列 ⇒ 0（与旧行为一致）。
                 info_cond_flat.append((int(c["quest_local"]) & 0xFFFFFF, int(c["quest_master"]),
                                        int(c["func"]), int(c["want"]), int(c.get("stage", 0)) & 0xFFFF,
-                                       0))
+                                       int(c.get("or_bit", 0))))
     print(f"INFO 门槛：{n_info_tasks} 条任务 / {len(info_group_flat)} 条对话 / "
           f"{len(info_cond_flat)} 条条件")
 
@@ -1158,7 +1220,9 @@ def main() -> int:
     lines.append("")
     lines.append("\t// ★★ 大项 D（第 48 轮）：INFO 门槛（对话侧进度条件）——")
     lines.append("\t//   任务自己的对话（INFO）里「任务还没开始时才出现」的入口类 + 中性类对话，")
-    lines.append("\t//   其条件「引用别的任务」的进度检查（形态同 StaticCondGate）。")
+    lines.append("\t//   其条件「引用别的任务」的进度检查（形态同 StaticCondGate，")
+    lines.append("\t//   ★ 第 106 轮起带 OR 位 —— 一条对话内：无 OR 位的条件相互 AND、")
+    lines.append("\t//   OR 组（自带 OR 位那条起、含关闭组的第一条无 OR 位条件）组内相互 OR）。")
     lines.append("\t//   运行时判据（见 SAQ_QuestCond.cpp::EvaluateInfoGates）：")
     lines.append("\t//     每一条对话 = 一组条件（AND）；**全部对话都至少有「一条已知为假」"
                "的条件** ⇒ 隐藏。")

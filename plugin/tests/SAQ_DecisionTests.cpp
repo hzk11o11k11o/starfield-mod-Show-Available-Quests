@@ -283,6 +283,42 @@ MT_TEST(INFO门槛_全部对话都有已知假才隐藏)
 	MT_CHECK_EQ(DecideInfoGates(allEmpty).detail, std::string("全部对话的条件都为假"));
 }
 
+// ★ 第 106 轮（operator 全量产品化）：INFO 门槛的「一条对话」= 一组条件 ——
+//   组内语义与记录级完全相同（EvaluateInfoGates 组内直接复用 DecideProgressGates，
+//   见 SAQ_QuestCond.cpp）：无 OR 位的条件相互 AND、OR 组内相互 OR。
+//   这里用**表内真实形状**钉死本次纳入的两种（巴雷特：违约 [12(OR), 14] /
+//   MQ05 [35E1A(OR), 30C2B] ⇒ 都是「A OR B」）。
+MT_TEST(INFO门槛_组内OR_与记录级同款语义)
+{
+	const std::vector<std::uint8_t> orAB = { 1, 0 };   // [A(OR), B]
+
+	// A 没完成、B 完成 ⇒ 组为真 ⇒ 对话可用
+	const std::vector<CondCheck> ab1 = { F("A"), P() };
+	MT_CHECK_EQ(DecideProgressGates(ab1, orAB, 0, 2).verdict, CondV::kPass);
+
+	// ★ 新旧差异点：A 完成、B 没完成 ⇒ 组仍为真
+	//   （旧实现只提取了 B（无 OR 位那条）⇒ 判假 ⇒ 可能误藏 —— 本次修正）
+	const std::vector<CondCheck> ab2 = { P(), F("B") };
+	MT_CHECK_EQ(DecideProgressGates(ab2, orAB, 0, 2).verdict, CondV::kPass);
+
+	// 两个都没做 ⇒ 组为假 ⇒ 这条对话不可用（detail = 组内第一条判假）
+	const std::vector<CondCheck> ab3 = { F("A"), F("B") };
+	const auto both = DecideProgressGates(ab3, orAB, 0, 2);
+	MT_CHECK_EQ(both.verdict, CondV::kFail);
+	MT_CHECK_EQ(both.detail, std::string("A"));
+
+	// 组内 unknown ⇒ 放行（保守，不误藏）
+	const std::vector<CondCheck> ab4 = { U("A"), F("B") };
+	MT_CHECK_EQ(DecideProgressGates(ab4, orAB, 0, 2).verdict, CondV::kUnknown);
+
+	// 混合：[X, A(OR), B] ⇒ X AND (A OR B)
+	const std::vector<std::uint8_t> orXAB = { 0, 1, 0 };
+	const std::vector<CondCheck> x1 = { F("X"), P(), P() };
+	MT_CHECK_EQ(DecideProgressGates(x1, orXAB, 0, 3).verdict, CondV::kFail);
+	const std::vector<CondCheck> x2 = { P(), F("A"), P() };
+	MT_CHECK_EQ(DecideProgressGates(x2, orXAB, 0, 3).verdict, CondV::kPass);
+}
+
 // ---------------------------------------------------------------- 4b. 链式门槛（第 67 轮）
 
 MT_TEST(链式门槛_任一边触发即放行_全未触发才隐藏)

@@ -44,8 +44,11 @@ GATE_FUNCS = {
 def parse_ctda_raw(b: bytes) -> dict | None:
     if len(b) < 32:
         return None
+    # ★ 第 106 轮（operator 全量产品化）：op 改读 **u32** —— 与 analyze_ctda.py 同款位域
+    #   解析（运算符 = op >> 5、flags = op & 0x1F；第 86 轮反汇编实证见 docs/08 4.3）。
+    #   旧实现只读 b[0]（低字节）：实测数据恰好都 < 0x100 所以没出错，但不严谨。
     return {
-        "op": b[0],
+        "op": struct.unpack_from("<I", b, 0)[0],
         "cmp": round(struct.unpack_from("<f", b, 4)[0], 6),
         "func": struct.unpack_from("<H", b, 8)[0],
         "p1": struct.unpack_from("<I", b, 12)[0],
@@ -159,6 +162,15 @@ def main() -> int:
     n_vmad = 0
     gates = []
     per_quest = defaultdict(set)
+    # ★ 第 106 轮（operator 全量产品化）：全量 CTDA 的 operator/flags 盘点 ——
+    #   ① op_hist：全部条件按 (运算符, flags) 分布；
+    #   ② prog_hist：进度类形态（三函数 + Run On=Subject + cmp∈{0,1}）条件分布；
+    #   ③ pending：**外键进度类、但旧判据不收**（op != 0 —— 带运算符/flags）的清单
+    #     —— 这就是「还能收多少」的答案。本轮只统计，不改提取行为。
+    op_hist = Counter()
+    prog_hist = Counter()
+    pending = []
+    n_drop_group = 0   # 被放弃的 OR 组数（累计 —— 注意别放进 INFO 循环里重置）
     # ★ 大项 D：用「自引用条件」（任务自己未开始 / 已在某阶段）给 INFO 分类 ——
     #   入口类（未开始）/ 推进类（进行中）/ 中性。只有入口类里的「引用别的任务」
     #   条件才可能是**接取门槛**（推进类的是回报/分支对话，不能拿来判定接取）。
@@ -173,6 +185,7 @@ def main() -> int:
                 c = parse_ctda_raw(sp)
                 if c:
                     conds.append(c)
+                    op_hist[(c["op"] >> 5, c["op"] & 0x1F)] += 1
             elif s == b"VMAD":
                 has_vmad = True
         if has_vmad:
@@ -181,9 +194,19 @@ def main() -> int:
             continue
         n_ctda += 1
 
-        def is_progress(c):  # 保守子集形态（op/cmp/runOn）
-            return (c["op"] == 0x00 and c["cmp"] in (0.0, 1.0)
-                    and c["runOn"] == 0 and c["func"] in GATE_FUNCS)
+        # ★ 第 106 轮（operator 全量产品化）：判据拆两层 ——
+        #   · is_progress = 「进度类形态」（三函数 + Run On=Subject + cmp∈{0,1}），
+        #     **不含 op/flags 要求**：用于对话分类（入口/推进/中性）。
+        #     旧实现要求 op==0 ⇒ 带 OR 位的自引用条件看不见 ⇒ 分类会偏。
+        #   · is_gateable = 「可作为门槛条件」：进度类 + **运算符 == 且 flags 只允许
+        #     OR 位**（与记录级 analyze_ctda.py 的 cond_to_gate 同判据，见 docs/08 4.3）。
+        def is_progress(c):
+            return (c["runOn"] == 0 and c["cmp"] in (0.0, 1.0)
+                    and c["func"] in GATE_FUNCS)
+
+        def is_gateable(c):
+            t = c["op"]
+            return (t >> 5) == 0 and (t & ~0x01) == 0 and is_progress(c)
 
         self_want1 = any(is_progress(c) and c["p1"] == quest and c["cmp"] == 1.0 for c in conds)
         self_want0 = any(is_progress(c) and c["p1"] == quest and c["cmp"] == 0.0 for c in conds)
@@ -194,29 +217,91 @@ def main() -> int:
         else:
             kind = "中性"
 
-        others = []
+        def resolve_pre(p1: int):
+            """把 p1 解析成 (master 名, 记录号, EDID)；解析不了 ⇒ None。
+
+            ★★ 第 78 轮：① 命中本文件自己的任务集 ⇒ 本 DLC（DLC 里自己的记录是
+              0x01xxxxxx）；② 高字节 0 且低 24 位是基础游戏的任务 ⇒ Starfield.esm；
+              ③ 其余（别的 master / 非任务）⇒ None（保守，不猜）。
+            """
+            if p1 in quests:
+                return a.self_master, p1 & 0xFFFFFF, quest_edid.get(p1, "")
+            if (p1 >> 24) == 0 and (p1 & 0xFFFFFF) in base_locals:
+                return "Starfield.esm", p1 & 0xFFFFFF, base_edid.get(p1 & 0xFFFFFF, "")
+            return None
+
+        # 全量统计（每条条件恰好一次）
         for c in conds:
             func_hist[c["func"]] += 1
-            if not is_progress(c):
-                continue
+            if c["func"] in GATE_FUNCS and c["runOn"] == 0 and c["cmp"] in (0.0, 1.0):
+                prog_hist[(c["op"] >> 5, c["op"] & 0x1F)] += 1
+
+        def note_pending(c, reason):
+            """「进度类 + 外键」但**不能作为门槛** ⇒ 记入仍放行清单（监控/文档用）。"""
             p1 = c["p1"]
-            if p1 == 0 or p1 == quest:
+            if not (is_progress(c) and p1 not in (0, quest)):
+                return
+            rp = resolve_pre(p1)
+            pending.append({
+                "info": info_id, "quest": quest,
+                "questEDID": quest_edid.get(quest, ""),
+                "func": GATE_FUNCS[c["func"]],
+                "op": c["op"] >> 5, "flags": c["op"] & 0x1F,
+                "cmp": c["cmp"], "reason": reason,
+                "pre": rp[1] if rp else (p1 & 0xFFFFFF),
+                "preMaster": rp[0] if rp else "",
+                "preEDID": rp[2] if rp else "",
+                "want": 1 if c["cmp"] == 1.0 else 0,
+                "stage": (c["p2"] & 0xFFFF) if c["func"] == 0x003B else 0,
+                "resolved": bool(rp),
+            })
+
+        # ★ 第 106 轮：按 **OR 组语义**提取「外键进度类」条件（与记录级 build_gates 同款）——
+        #   组 = 从带 OR 位的条件起，到**第一条不带 OR 位的条件（含）**或列表末尾；
+        #   组里只要有一条「不能作为门槛」（非进度类 / 自引用 / 含其它 flags /
+        #   引用解析不了）⇒ **整组放弃**（不倒半组 —— 那样会把 OR 语义算错）。
+        others = []
+        i, ncond = 0, len(conds)
+        while i < ncond:
+            c = conds[i]
+            if not (c["op"] & 0x01):
+                if is_gateable(c) and c["p1"] not in (0, quest):
+                    rp = resolve_pre(c["p1"])
+                    if rp:
+                        others.append((c, *rp))
+                    else:
+                        note_pending(c, "引用解析不了")
+                elif is_progress(c):
+                    note_pending(c, "运算符/flags 不在门槛子集")
+                i += 1
                 continue
-            # ★★ 第 78 轮：把引用解析成「(master 名, 记录号)」——
-            #   ① 命中本文件自己的任务集 ⇒ 本 DLC（DLC 里自己的记录是 0x01xxxxxx）；
-            #   ② 高字节 0 且低 24 位是基础游戏的任务 ⇒ Starfield.esm；
-            #   ③ 其余（别的 master / 非任务）⇒ 跳过（保守，不猜）。
-            if p1 in quests:
-                pre_master = a.self_master
-                pre_local = p1 & 0xFFFFFF
-                pre_edid = quest_edid.get(p1, "")
-            elif (p1 >> 24) == 0 and (p1 & 0xFFFFFF) in base_locals:
-                pre_master = "Starfield.esm"
-                pre_local = p1 & 0xFFFFFF
-                pre_edid = base_edid.get(p1 & 0xFFFFFF, "")
+            j = i
+            while j < ncond and (conds[j]["op"] & 0x01):
+                j += 1
+            if j < ncond:
+                j += 1   # 含关闭组的那个条件
+            group = conds[i:j]
+            tmp = []
+            ok = True
+            for gc in group:
+                if not is_gateable(gc):
+                    ok = False
+                    break
+                if gc["p1"] in (0, quest):
+                    ok = False
+                    break
+                rp = resolve_pre(gc["p1"])
+                if not rp:
+                    ok = False
+                    break
+                tmp.append((gc, *rp))
+            if ok and tmp:
+                others.extend(tmp)
             else:
-                continue
-            others.append((c, pre_master, pre_local, pre_edid))
+                n_drop_group += 1
+                for gc in group:
+                    note_pending(gc, "OR 组放弃")
+            i = j
 
         if others:
             kind_hist[kind] += 1
@@ -232,6 +317,8 @@ def main() -> int:
                     "preEDID": pre_edid,
                     "want": 1 if c["cmp"] == 1.0 else 0,
                     "stage": (c["p2"] & 0xFFFF) if c["func"] == 0x003B else 0,
+                    # ★ 第 106 轮：OR 位（组语义与记录级一致，运行时见 SAQ_QuestCond.cpp）
+                    "orBit": 1 if (c["op"] & 0x01) else 0,
                 }
                 gates.append(g)
                 per_quest[quest].add((g["pre"], g["func"], g["want"], g["stage"]))
@@ -244,6 +331,7 @@ def main() -> int:
                         "preMaster": pre_master,
                         "preEDID": pre_edid,
                         "want": 1 if c["cmp"] == 1.0 else 0,
+                        "orBit": 1 if (c["op"] & 0x01) else 0,
                         "stage": (c["p2"] & 0xFFFF) if c["func"] == 0x003B else 0}
                        for (c, pre_master, pre_local, pre_edid) in others],
         })
@@ -252,6 +340,25 @@ def main() -> int:
     print(f"├─ 带 VMAD 的 INFO：{n_vmad}")
     print(f"├─ 引用「别的任务」的进度条件：{len(gates)} 条")
     print(f"└─ 涉及任务：{len(per_quest)} 条（其中前置去重 {len({(g['pre']) for g in gates})} 个）")
+
+    # ★ 第 106 轮（operator 全量产品化）：operator/flags 盘点 —— 见文件头部/统计变量注释。
+    OPS = {0: "==", 1: "!=", 2: ">", 3: ">=", 4: "<", 5: "<="}
+    print(f"\n--- ★ operator/flags 盘点（第 106 轮） ---")
+    print(f"全部 CTDA {sum(op_hist.values())} 条，按 (运算符, flags) 分布：")
+    for (op, fl), n in sorted(op_hist.items()):
+        print(f"  {OPS.get(op, f'op{op}'):<2} flags=0x{fl:02X}: {n}")
+    print(f"进度类形态（三函数 + Subject + cmp∈{{0,1}}）{sum(prog_hist.values())} 条：")
+    for (op, fl), n in sorted(prog_hist.items()):
+        print(f"  {OPS.get(op, f'op{op}'):<2} flags=0x{fl:02X}: {n}")
+    print(f"OR 组放弃 {n_drop_group} 组（组内有不可门槛/自引用/解析不了的条件）")
+    print(f"外键进度类、但仍放行（不可门槛）{len(pending)} 条：")
+    for g in pending[:80]:
+        extra = f" stage {g['stage']}" if g["func"] == "GetStageDone" else ""
+        pre = (f"{g['preEDID']}(0x{g['pre']:06X})" if g["resolved"]
+               else f"0x{g['pre']:06X}?")
+        print(f"  {g['questEDID']:<38} {g['func']}({pre}{extra}) cmp={g['cmp']} "
+              f"op={OPS.get(g['op'], g['op'])} flags=0x{g['flags']:02X} "
+              f"reason={g['reason']} [info 0x{g['info']:06X}]")
     print(f"\n--- 带前置条件的 INFO 按「自引用」分类 ---")
     for k, n in kind_hist.most_common():
         print(f"  {k}: {n} 条 INFO")
@@ -291,6 +398,20 @@ def main() -> int:
         "infoRecords": info_records,
     }, ensure_ascii=False, indent=1), encoding="utf-8")
     print(f"\nwrote {out_path}")
+
+    # ★ 第 106 轮：operator 盘点产物（待产品化候选清单 + 分布）—— 供后续分析与 verify。
+    #   文件名由 --out 派生（多 master 各扫一份，不能互相覆盖）：
+    #   info_gates.json → info_gates_pending.json /
+    #   info_gates_sfbgs00d.json → info_gates_pending_sfbgs00d.json …
+    pending_path = REF / Path(a.out).name.replace("info_gates", "info_gates_pending", 1)
+    pending_path.write_text(json.dumps({
+        "selfMaster": a.self_master,
+        "dropGroups": n_drop_group,
+        "opHist": {f"{k[0]}/{k[1]}": v for k, v in sorted(op_hist.items())},
+        "progHist": {f"{k[0]}/{k[1]}": v for k, v in sorted(prog_hist.items())},
+        "pending": pending,
+    }, ensure_ascii=False, indent=1), encoding="utf-8")
+    print(f"wrote {pending_path}（operator 盘点：待产品化 {len(pending)} 条）")
     return 0
 
 

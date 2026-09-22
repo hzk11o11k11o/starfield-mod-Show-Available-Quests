@@ -20,7 +20,11 @@ Interface-main.zip
 tools/champollion/
 
 # --- 逆向 / 分析中间产物（都可由 tools 重新生成） ---
-ref/
+# ★ 第 106 轮例外：ref/extra_quests.json 是**手写源数据**（覆盖面复盘的补收名单，
+#   生成器无法重建 —— 见 docs/12）⇒ 必须入库；其余 ref/ 内容照旧不入库。
+#   （用 ref/* 而不是 ref/ —— 否则「父目录被排除 ⇒ 无法 re-include」）
+ref/*
+!ref/extra_quests.json
 
 # --- 打包产物（tools/package-saq.ps1 生成，可随时重打） ---
 dist/

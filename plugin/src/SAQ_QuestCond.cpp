@@ -199,9 +199,14 @@ namespace SAQ
 			return out;
 		}
 
-		// ★ 第 64 轮（大项 K）：逐组求值（**组内短路**：找第一条 kFail 即停；某组没有
-		//   kFail ⇒ 该对话可能可用 ⇒ 后面的组也不必求值了）→ **组间聚合**交给离线层
-		//   纯函数（Decision::DecideInfoGates，有单测）。
+		// ★ 第 64 轮（大项 K）：逐组求值 → **组间聚合**交给离线层纯函数
+		//   （Decision::DecideInfoGates，有单测）。组间短路保留：某组可能可用 ⇒
+		//   后面的组不必求值（与抽取前一致）。
+		// ★ 第 106 轮（operator 全量产品化）：**组内**改用离线层的 OR 组聚合
+		//   （Decision::DecideProgressGates —— 无 OR 位的条件相互 AND、OR 组内
+		//   相互 OR、组作为整体参与 AND；引擎语义见 docs/08 4.3）——
+		//   kInfoConds 第 6 元 = orBit（scan_info_gates.py 的 OR 组提取）。
+		//   不再「找第一条 kFail 即停」：OR 组里某条为假 ≠ 整组为假。
 		std::vector<Decision::InfoGroupEval> evals;
 		evals.reserve(a_groupCount);
 		for (std::size_t i = 0; i < a_groupCount; ++i) {
@@ -210,16 +215,23 @@ namespace SAQ
 				evals.push_back(Decision::InfoGroupEval{ .inRange = false });
 				break;  // 切片越界 ⇒ 整条 kUnknown（后面不用求值了）
 			}
-			Decision::InfoGroupEval ev;
+			std::vector<Decision::CondCheck> checks;
+			std::vector<std::uint8_t> orBits;
+			checks.reserve(grp.condCount);
+			orBits.reserve(grp.condCount);
 			for (std::size_t j = 0; j < grp.condCount; ++j) {
-				const auto r = EvalOneCond(kInfoConds[grp.condBegin + j]);
-				if (r.verdict == CondVerdict::kFail) {
-					ev.hasKnownFalse = true;
-					ev.firstFail = r.detail;
-					break;
-				}
-				// kPass / kUnknown 都继续：unknown 不算「已知为假」（保守 —— 可能可用）。
+				const auto& g = kInfoConds[grp.condBegin + j];
+				checks.push_back(EvalOneCond(g));
+				orBits.push_back(g.orBit);
 			}
+			Decision::InfoGroupEval ev;
+			const auto r = Decision::DecideProgressGates(checks, orBits, 0,
+				static_cast<std::uint8_t>(checks.size()));
+			if (r.verdict == CondVerdict::kFail) {   // 组内「确定假」⇒ 这条对话不可用
+				ev.hasKnownFalse = true;
+				ev.firstFail = r.detail;
+			}
+			// kPass / kUnknown ⇒ 可能可用（unknown 不算「已知为假」，保守）。
 			const bool possible = !ev.hasKnownFalse;
 			evals.push_back(std::move(ev));
 			if (possible) {
@@ -285,6 +297,84 @@ namespace SAQ
 			out += std::format("｜stageDone({})={}", stage, ok ? 1 : 0);
 		}
 		return out;
+	}
+
+	// ★★★ 第 106 轮（operator 全量产品化 · 只读探针 `info.probe`，设计见头文件）：
+	//   列出该任务 INFO 门槛里**含 OR 位的对话组**的求值结果（组内走与产品相同的
+	//   Decision::DecideProgressGates）+ 整任务结论（EvaluateInfoGates）。
+	std::string ProbeInfoGates(std::uint32_t a_localFormID)
+	{
+		const StaticQuestInfo* q = nullptr;
+		for (const auto& row : kQuestTable) {
+			if (row.localFormID == a_localFormID) {
+				q = &row;
+				break;
+			}
+		}
+		if (!q) {
+			return std::format("INFO探针 0x{:06X}：静态表里没有这条记录号", a_localFormID);
+		}
+		if (q->infoGroupCount == 0) {
+			return std::format("INFO探针 0x{:06X}：这条任务没有 INFO 门槛", a_localFormID);
+		}
+		if (q->infoGroupBegin > kInfoGroupCount
+			|| q->infoGroupCount > kInfoGroupCount - q->infoGroupBegin) {
+			return std::format("INFO探针 0x{:06X}：INFO 门槛切片越界", a_localFormID);
+		}
+		std::string groups;
+		int n_or = 0;
+		int n_oob = 0;
+		for (std::size_t gi = 0; gi < q->infoGroupCount; ++gi) {
+			const auto& grp = kInfoGroups[q->infoGroupBegin + gi];
+			if (grp.condBegin > kInfoCondCount
+				|| grp.condCount > kInfoCondCount - grp.condBegin) {
+				++n_oob;
+				continue;
+			}
+			std::vector<Decision::CondCheck> checks;
+			std::vector<std::uint8_t> orBits;
+			checks.reserve(grp.condCount);
+			orBits.reserve(grp.condCount);
+			bool hasOr = false;
+			std::string condStr;
+			for (std::size_t j = 0; j < grp.condCount; ++j) {
+				const auto& g = kInfoConds[grp.condBegin + j];
+				checks.push_back(EvalOneCond(g));
+				orBits.push_back(g.orBit);
+				if (g.orBit) {
+					hasOr = true;
+				}
+				if (!condStr.empty()) {
+					condStr += "+";
+				}
+				// 条件串：StageDone 用 stage 号（s112）；Run/Completed 用被检查任务记录号
+				condStr += (g.check == kCondStageDone)
+					? std::format("s{}", g.stage)
+					: std::format("q0x{:06X}", g.questLocal & 0xFFFFFFu);
+				if (g.orBit) {
+					condStr += "[OR]";
+				}
+			}
+			if (!hasOr) {
+				continue;   // 只报含 OR 位的组（本次改动的作用面）
+			}
+			++n_or;
+			if (n_or > 8) {
+				continue;   // 输出上限（证据够用即可）
+			}
+			const auto r = Decision::DecideProgressGates(checks, orBits, 0,
+				static_cast<std::uint8_t>(checks.size()));
+			const char* res = (r.verdict == CondVerdict::kPass) ? "真"
+				: (r.verdict == CondVerdict::kFail ? "假" : "未知");
+			groups += std::format("｜组[{}]:{}{}", gi, condStr, res);
+		}
+		const auto fin = EvaluateInfoGates(q->infoGroupBegin, q->infoGroupCount);
+		const char* finName = (fin.verdict == CondVerdict::kNoGates) ? "无门槛"
+			: (fin.verdict == CondVerdict::kPass ? "放行"
+				: (fin.verdict == CondVerdict::kFail ? "隐藏" : "未知(放行)"));
+		return std::format("INFO探针 0x{:06X}：门槛对话={}｜含OR组={}{}｜任务={}{}",
+			a_localFormID, q->infoGroupCount, n_or, groups, finName,
+			(n_oob > 0) ? std::format("｜切片越界{}", n_oob) : std::string{});
 	}
 #endif  // SAQ_WITH_HARNESS
 }
