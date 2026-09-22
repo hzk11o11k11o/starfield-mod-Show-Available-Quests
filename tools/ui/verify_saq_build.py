@@ -166,7 +166,18 @@
            （表行尾 faction 值域 -1..9 / 有阵营任务数 74 / 样本「深藏不露」=BlackFleet）。
   第 65 轮注：内嵌回退载荷此前缺「需要靠近」列（第 46 轮加的 C++ 列没同步进
            gen_quest_table.py 的内嵌数据）——本轮补齐并逐列对齐，否则阵营列会被
-           AS3 当成「需要靠近」读（协议纪律：新列只能追加在最后）。
+          AS3 当成「需要靠近」读（协议纪律：新列只能追加在最后）。
+  第 91 轮（不可导航提示更明显 —— 玩家要求「提示更明显」）：没有引导目标的条目
+          （载荷第 5 列 bSaqHasTarget = false）在**列表名前面**加「（不可导航）」——
+          此前「不可导航」只有右侧描述（第 23 轮）+ 点击后的提示（第 28 轮），
+          长列表里看不出来、点了没反应像 bug。名字前缀是纯显示层改动：
+          ① 前缀函数 SaqNotNavigablePrefix（中/英）；
+          ② 原名另存 sSaqBaseName，提示/探针改走 SaqBaseName（「该任务暂无导航目标:…」
+             报原名，不带前缀）；
+          ③ 新探针 `nonav=[<N>|0x<uID>=<显示名>]`（SaqNotNavigableProbe 报 sName =
+             MissionsListEntry.SetEntryText 渲染的字段 —— 前缀真的进显示名的运行期证据）。
+          本脚本检查：SWF 的 ①/②/③ 六条 + stamp=62 + 反向检查（stamp=61 不残留）；
+          用例计划：r75 新增 nonav= 断言 + 提示语仍报原名（两条断言都在）。
 
 用法：python tools/ui/verify_saq_build.py [--release|--dev]
 """
@@ -706,7 +717,10 @@ def main() -> int:
         #     改写（「自动开始 / 不需要找地方接取 / 引导到的是这位同伴的位置」）。
         #   ★★ 第 89 轮（可重复任务）：stamp 61 —— 载荷加第 11 列（可重复标记）
         #     + FilterKnownQuests 对「已完成 + 可重复」放行 + `rptk=` 探针。
-        "构建指纹 stamp=61": b"stamp=61",
+        #   ★★ 第 91 轮（不可导航提示更明显）：stamp 62 —— 不可导航条目的显示名加
+        #     「（不可导航）」前缀（SaqNotNavigablePrefix）+ 提示/探针改报原名
+        #     （SaqBaseName / sSaqBaseName）+ `nonav=` 探针。
+        "构建指纹 stamp=62": b"stamp=62",
         # ★★ 第 80 轮（可重复 NPC 入口）：type 101 的界面链路 ——
         #   ① 常量与合并判据（SaqIsEntryType —— 子项/描述/不可导航提示统一用它）；
         #   ② 子项名与描述文案（中英各一段，证明不是只改了判据没接文案）；
@@ -772,6 +786,22 @@ def main() -> int:
         "可重复保留名单 SaqRepeatKeptList": b"SaqRepeatKeptList",
         "可重复保留探针": b"SaqRepeatKept",
         "报告字段 rptk=[": b" rptk=[",
+        # ★★ 第 91 轮（不可导航提示更明显 —— 玩家要求）：没有引导目标的条目
+        #   （载荷第 5 列 bSaqHasTarget = false）在**列表名前面**加「（不可导航）」，
+        #   不用选中就能看出「这条点了不会导航」（此前只有右侧描述 + 点击后的提示，
+        #   长列表里看不出来，像 bug）。
+        #   ① 前缀函数 + 中/英两条文案（英文带空格分隔）；
+        #   ② 原名字段（sSaqBaseName / SaqBaseName）—— 「该任务暂无导航目标:…」
+        #      提示与探针报**原名**（否则提示里会再带一次前缀）；
+        #   ③ `nonav=` 探针（SaqNotNavigableProbe：报不可导航条目的**显示名** ——
+        #      sName 正是 MissionsListEntry.SetEntryText 渲染的字段，运行期证据）。
+        "不可导航前缀函数": b"SaqNotNavigablePrefix",
+        "不可导航前缀(中)": "（不可导航）".encode(),
+        "不可导航前缀(英)": b"(Not navigable)",
+        "条目原名字段 sSaqBaseName": b"sSaqBaseName",
+        "条目原名取值 SaqBaseName": b"SaqBaseName",
+        "不可导航探针函数": b"SaqNotNavigableProbe",
+        "报告字段 nonav=[": b" nonav=[",
         }
     swf_paths = [
         ROOT / "ui/missionmenu/build/missionmenu.swf",
@@ -795,6 +825,11 @@ def main() -> int:
         #   SWF 里不应再有那条「星图:已请求(代理任务 …)」note。
         gone = "星图:已请求(代理任务".encode() not in blob
         print(("OK  " if gone else "MISS") + f" {p.name} · 已删除原版星图 dispatch(反向检查)")
+        all_ok &= gone
+        # 反向检查：★★ 第 91 轮 —— 旧构建指纹不许残留（同一份 SWF 只该带一个 stamp；
+        #   起因同第 50 轮的教训：部署了但游戏加载的是旧 SWF 时，指纹是唯一判据）。
+        gone = b"stamp=61" not in blob
+        print(("OK  " if gone else "MISS") + f" {p.name} · 旧构建指纹 stamp=61 已替换(反向检查)")
         all_ok &= gone
 
     # ★★ 第 49 轮补丁③（复测复查）：**入口发布清单**检查 —— 新增 root 入口必须挂到 root。
@@ -1471,6 +1506,15 @@ def main() -> int:
                 all_ok &= check("用例计划 · r75 深红舰队不可导航提示",
                                 plan_text.encode(),
                                 "assert.ui guide=\\d+\\|\\d+\\|该任务暂无导航目标:深藏不露".encode())
+                #   ★★ 第 91 轮（不可导航提示更明显）：同一条用例新增一条判据 ——
+                #     `nonav=` 探针里深藏不露的**显示名**带「（不可导航）」前缀
+                #     （SaqNotNavigableProbe 报的是 sName = 列表渲染字段 —— 前缀真的
+                #     进了显示名的运行期证据）；而上面那条提示语断言必须在**不改名**
+                #     的前提下继续过（前缀不该污染「该任务暂无导航目标:…」——
+                #     名字走 SaqBaseName 剥前缀）。两条一起 = 显示名带前缀 + 提示报原名。
+                all_ok &= check("用例计划 · r91 不可导航前缀断言（nonav= 探针）",
+                                plan_text.encode(),
+                                "assert.ui nonav=\\[\\d+\\|.*0x9136=（不可导航）深藏不露".encode())
                 # ★★ 第 77 轮（龙神线后续 · 「RIR 留专项」收口）：A/B 两条 ——
                 #   A：玩家只接了入口任务 ⇒「人生处处有意外」（0x002A8319，玩家报告的那条）
                 #      在「链式没到」名单里（连同其余五条后续）；

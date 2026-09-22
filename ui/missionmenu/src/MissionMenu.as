@@ -836,6 +836,18 @@ package
             : " There is no direct pickup location to navigate to - follow the note above.";
       }
       
+      // ★★ 第 91 轮（不可导航提示更明显 —— 玩家反馈）：没有引导目标的条目
+      //   （载荷第 5 列 bSaqHasTarget = false）在**列表名前面**加这个前缀。
+      //
+      //   为什么需要：此前「不可导航」只体现在右侧描述（第 23 轮）+ 点击后的提示
+      //   （第 28 轮）—— 玩家在长列表里根本看不出来，点了没反应还是像 bug。
+      //   现在名字本身带标记，不用选中就能一眼区分（与「（可重复）」前缀同一手法）。
+      //   语言判定与描述文案同源（SaqUseChinese），中英各一条；英文带一个空格分隔。
+      private function SaqNotNavigablePrefix() : String
+      {
+         return this.SaqUseChinese() ? "（不可导航）" : "(Not navigable) ";
+      }
+      
       // 右侧详情面板里的描述文案（固定内容，告诉玩家这条记录怎么用）。
       // ★ 第 27 轮：第 2 个参数 = 条目类型（100 = 入口任务板）—— 它没有「接取地点」
       //   的概念，描述改成「这是什么、怎么去」。
@@ -1046,6 +1058,51 @@ package
          }
       }
       
+      // ★★ 第 91 轮（不可导航提示更明显）：报告里报出**不可导航条目**的计数 + 前 2 条的
+      //   `<uID>=<显示名>`（例：`nonav=[3|0x994a=（不可导航）伦敦地标任务,…]`）。
+      //
+      //   为什么需要：前缀加在 SaqBuildEntry 的 sName 上，而 sName 正是
+      //   MissionsListEntry.SetEntryText 渲染的那个字段 ——「代码里有前缀」与
+      //   「列表里真的显示前缀」中间隔着载荷解析 + 条目构建两层，只靠读代码保证；
+      //   本探针给出**运行期显示名**，harness 用例据此断言（与 order= / pin= / rep= 同思路）。
+      //   只报 2 条 + 名字截 24 字：报告有长度上限，别把 qdata 那类专业证据挤掉。
+      private function SaqNotNavigableProbe() : String
+      {
+         try
+         {
+            if(this.AvailableQuests == null)
+            {
+               return "";
+            }
+            var _loc1_:int = 0;
+            var _loc2_:Array = new Array();
+            var _loc3_:int = 0;
+            while(_loc3_ < this.AvailableQuests.length)
+            {
+               var _loc4_:Object = this.AvailableQuests[_loc3_];
+               if(_loc4_ != null && _loc4_.bSaqHasTarget != true)
+               {
+                  _loc1_++;
+                  if(_loc2_.length < 2)
+                  {
+                     var _loc5_:String = _loc4_.sName != null ? String(_loc4_.sName) : "";
+                     if(_loc5_.length > 24)
+                     {
+                        _loc5_ = _loc5_.substr(0,24);
+                     }
+                     _loc2_.push("0x" + Number(_loc4_.uID).toString(16) + "=" + _loc5_);
+                  }
+               }
+               _loc3_++;
+            }
+            return _loc1_ + "|" + _loc2_.join(",");
+         }
+         catch(e:Error)
+         {
+            return "(ex)";
+         }
+      }
+      
       private function SaqBuildEntry(param1:Object) : Object
       {
          // ★★ 第 75 轮：势力开头任务的「简要说明」（按语言挑；空串 = 普通任务）。
@@ -1055,6 +1112,17 @@ package
          {
             _loc1_ = "";
          }
+         // ★★ 第 91 轮（不可导航提示更明显）：显示名 = 原名（+ 不可导航前缀）。
+         //   前缀只加在**不可导航**的条目上（载荷第 5 列 bSaqHasTarget = false ⇒
+         //   这条点了不会有导航）—— 见 SaqNotNavigablePrefix。
+         //   原名另存 sSaqBaseName：提示（「该任务暂无导航目标:…」）与日志探针报它，
+         //   否则会出现「该任务暂无导航目标:（不可导航）X」这种废话，也会打乱既有用例。
+         var _loc2_:String = this.SaqUseChinese() ? param1.sNameZh : param1.sNameEn;
+         if(_loc2_ == null)
+         {
+            _loc2_ = "";
+         }
+         var _loc3_:Boolean = param1.bSaqHasTarget == false;
          return {
             "uID":param1.uID,
             "uInstanceID":0,
@@ -1064,7 +1132,9 @@ package
             //   的阵营名 / 彩色图标（MissionInfo → FactionUtils.GetFactionName /
             //   GetQuestColorIcon）都用它，显示效果与原版任务菜单一致。
             "iFaction":SaqSafeFaction(param1.iFaction),
-            "sName":this.SaqUseChinese() ? param1.sNameZh : param1.sNameEn,
+            "sName":_loc3_ ? this.SaqNotNavigablePrefix() + _loc2_ : _loc2_,
+            // ★★ 第 91 轮：不带前缀的原名（提示 / 探针用，见 SaqBaseName）。
+            "sSaqBaseName":_loc2_,
             // ★ 第 27 轮：入口条目（任务板）的描述用专门文案（第 2 个参数）。
             // ★★ 第 74 轮：第 4 个参数 = 「入口」同伴任务（描述里提示好感度要求）。
             // ★★ 第 75 轮：第 5 个参数 = 势力开头任务的「简要说明」（上面取好的 _loc1_）。
@@ -1352,7 +1422,11 @@ package
          //   ★★ 第 89 轮（可重复任务）：stamp 61 —— 载荷加第 11 列（可重复标记，
          //     见 SaqParsePayload）+ FilterKnownQuests 对「已完成 + 可重复」放行
          //     （做完一次后仍显示）+ `rptk=` 探针（放行名单的运行期证据）。
-         _loc8_ += " stamp=61";
+         //   ★★ 第 91 轮（不可导航提示更明显）：stamp 62 —— 不可导航条目
+         //     （bSaqHasTarget = false）的名字加「（不可导航）」前缀
+         //     （SaqNotNavigablePrefix / SaqBuildEntry）+ 提示与探针改用原名
+         //     （SaqBaseName / sSaqBaseName）+ 新增 `nonav=` 探针（显示名证据）。
+         _loc8_ += " stamp=62";
          // ★★ 第 51 轮：入口自检（ep=）—— 见 SaqEntryProbe 的说明。
          //   位置在 stamp 之后、其余字段之前：报告有长度上限，这个字段是当前排查
          //   「测试入口调不到」问题的关键证据，必须优先保下来。
@@ -1388,6 +1462,10 @@ package
          //   用例判据：把一条可重复任务推到完成 stage ⇒ 重开菜单 ⇒ 这里应出现它的 uID
          //   （证明「做完一次后仍显示」在**显示层**真的生效，而不只是 C++ 载荷层）。
          _loc8_ += " rptk=[" + this.SaqRepeatKeptCount + "|" + this.SaqRepeatKeptList + "]";
+         // ★★ 第 91 轮（不可导航提示更明显）：不可导航条目的计数 + 前 2 条的**显示名**
+         //   （`nonav=[<N>|0x<uID>=<显示名>]`）—— 前缀真的进了列表渲染字段（sName）
+         //   的运行期证据（见 SaqNotNavigableProbe）。
+         _loc8_ += " nonav=[" + this.SaqNotNavigableProbe() + "]";
          // 玩家任务日志名单（第 11 轮，诊断用）：QuestData 的「FormID:名字」，最多 12 条。
          // 用途：玩家说「某条可接任务没找到」时，先看它是不是**已经在玩家日志里**
          // （那样它被 C++/AS3 两层过滤中的某一层正当挡掉）—— 在这个名单里一查便知。
@@ -1523,6 +1601,8 @@ package
       
       // 条目的显示名：选中的如果是**子项**（「前往接取地点」），名字取它的父任务名 ——
       // 日志/提示里说「已设为引导:<任务名>」才有意义（子项的名字对玩家没有信息量）。
+      // ★★ 第 91 轮：统一改走 SaqBaseName —— 提示语里要的是**原名**
+      //   （「该任务暂无导航目标:深藏不露」，不是「…:（不可导航）深藏不露」）。
       private function SaqQuestName(param1:Object) : String
       {
          if(param1 == null)
@@ -1531,10 +1611,26 @@ package
          }
          if(MissionsListEntry.IsMission(param1))
          {
-            return param1.sName;
+            return this.SaqBaseName(param1);
          }
          var _loc2_:Object = this.FindQuestEntryByID(this.AvailableQuests, param1.uID);
-         return _loc2_ != null ? _loc2_.sName : param1.sName;
+         return _loc2_ != null ? this.SaqBaseName(_loc2_) : param1.sName;
+      }
+      
+      // ★★ 第 91 轮：条目名去掉「（不可导航）」前缀后的**原名**（提示 / 日志用）。
+      //   我们建的条目带 sSaqBaseName（SaqBuildEntry 填的）⇒ 用它；
+      //   引擎推来的条目 / 子项没这个字段 ⇒ 原样返回 sName（老行为）。
+      private function SaqBaseName(param1:Object) : String
+      {
+         if(param1 == null)
+         {
+            return "?";
+         }
+         if(param1.sSaqBaseName != null && String(param1.sSaqBaseName).length > 0)
+         {
+            return String(param1.sSaqBaseName);
+         }
+         return param1.sName != null ? String(param1.sName) : "?";
       }
       
       // ★ 第 17 轮：被引导的任务一旦进了玩家任务日志（= 玩家已经接到它了），引导自己消失。
