@@ -1400,6 +1400,25 @@ def main() -> int:
                 all_ok &= check("用例计划 · r90 显示层放行断言（rptk= 尾段 2a418）",
                                 plan_text.encode(),
                                 "assert.ui rptk=\\[[1-9][0-9]*\\|[0-9a-f]*2a418 timeout=3000".encode())
+                # ★★ 第 92 轮（2026-09-22 首跑复查）：r89/r90 的**造状态顺序**要写对 ——
+                #   `quest.complete`（Papyrus `CompleteQuest()`）只动完成位，**不会**把
+                #   任务加进玩家日志（QuestData）⇒ 只有先 `quest.start` 才能让
+                #   FilterKnownQuests 走到「在日志里 + 已完成 + 可重复 ⇒ 豁免放行」分支
+                #   （首跑两条用例都因此在 rptk= 断言上 FAIL —— 产品侧全对，是用例假设错）。
+                #   判据：① 段内 `quest.start` 出现在 `quest.complete` 之前；
+                #   ② 段内有一条 `assert.ui qdata` 断言（把「是否进日志」与
+                #   「bComplete 是否随 CompleteQuest 变真」两步分开定性）。
+                for cid, uid in (("r89_repeatable", "0x00224FE8"),
+                                 ("r90_dlc_repeatable", "~0x0002A418")):
+                    i = plan_text.find(f"[case:{cid}]")
+                    i_end = plan_text.find("[case:", i + 1) if i >= 0 else -1
+                    sec = plan_text[i:i_end if i_end > i else len(plan_text)] if i >= 0 else ""
+                    pos_start = sec.find(f"quest.start {uid}")
+                    pos_comp = sec.find(f"quest.complete {uid}")
+                    ok92 = (0 <= pos_start < pos_comp) and ("assert.ui qdata" in sec)
+                    print(("OK  " if ok92 else "MISS") +
+                          f" 用例计划 · {cid} 先 start 再 complete + qdata= 中间断言（第 92 轮）")
+                    all_ok &= ok92
                 plan_deployed = MO2_MOD / "SFSE/Plugins/SAQ_TestPlan.txt"
                 if plan_deployed.exists():
                     same = plan_deployed.read_bytes() == plan_src.read_bytes()

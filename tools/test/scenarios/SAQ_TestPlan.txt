@@ -1029,6 +1029,15 @@ step = wait 1500
 ;       C++ 豁免了但 AS3 的「在玩家日志里」没豁免的话，① 会过 ③ 必 FAIL）；
 ;    ④ 它仍可被选中（真的还在「可接任务」列表里 —— ui.select 找不到就 FAIL）。
 ;
+;  ★★ 2026-09-22 首跑实测（第 92 轮复查）：①/② 全过，③ FAIL（`rptk=[0|-]`）——
+;    真因 = 本用例的假设不成立：**Papyrus 的 CompleteQuest() 只动完成位，不会把
+;    任务加进玩家日志（QuestData）** ⇒ FilterKnownQuests 走的是「不在日志里 ⇒
+;    保留」那条路（不计探针），没走到「在日志里 + 已完成 + 可重复 ⇒ 豁免放行」。
+;    ⇒ 修法（本用例已改）：complete 之前先 `quest.start`（任务真的进日志，
+;    与「玩家接过这条任务」同态）；中间加一条 `qdata=…224fe8` 断言，把
+;    「Start 是否进日志」与「bComplete 是否随 CompleteQuest 变真」两步分开定性
+;    （若 qdata 过而 rptk 仍 0 ⇒ 病灶在引擎日志条目的 bComplete，另议产品侧）。
+;
 ;  ★ 本用例会改 FFCydoniaR02（推到完成 stage 1000 ⇒ 计数器 +1）—— 收尾 reset
 ;    （任务本身；计数器 GLOB 是只读统计，留着无副作用）。
 ;  ★ 只开任务菜单，不传送、不开星图、不读档。
@@ -1039,6 +1048,9 @@ step = note === 准备：把「翻新商品」（可重复任务）推到完成 
 step = ping
 step = quest.reset 0x00224FE8
 step = wait 1500
+step = note === ★ 先 Start：CompleteQuest 不会把任务加进玩家日志（豁免分支测不到）===
+step = quest.start 0x00224FE8
+step = wait 2000
 step = quest.complete 0x00224FE8
 step = wait 2500
 step = note === 打开菜单：C++ 豁免（已完成保留）+ AS3 放行（rptk=）===
@@ -1046,6 +1058,7 @@ step = menu.open
 step = assert.log 推送成功 scope=prev timeout=12000
 step = assert.log 可重复任务=\d+\(已完成保留[1-9] scope=case timeout=3000
 step = assert.log 可重复保留: .*翻新商品\[0x00224FE8 scope=case timeout=3000
+step = assert.ui qdata\[[0-9]+\]=\[[^\]]*224fe8 timeout=3000
 step = assert.ui rptk=\[1\|224fe8 timeout=3000
 step = ui.select 0x00224FE8
 step = menu.close
@@ -1071,8 +1084,11 @@ step = wait 1500
 ;
 ;  ★ DLC 任务在两个 op 家族里都用 `~0x…`（记录号）：`quest.*` 与 `ui.select` 都支持
 ;    （见文件头的写法说明）—— 「职业杀手」记录号 = 0x0002A418。
-;  ★ 与 r89 同构：只用「reset → complete → 开菜单」造状态，不传送、不开星图、不读档；
-;    收尾 reset 该任务（CompleteQuest 只动完成位，用例自清场）。
+;  ★ 与 r89 同构：只在菜单外造状态，不传送、不开星图、不读档；收尾 reset 该任务。
+;
+;  ★★ 2026-09-22 首跑实测（第 92 轮复查）：与 r89 同因 FAIL（`rptk=[0|-]`）——
+;    **CompleteQuest() 不会把任务加进玩家日志** ⇒ 已改为「reset → start → complete」，
+;    并加 `qdata=…2a418` 中间断言（详见 r89 注释头的同款注记）。
 ; ----------------------------------------------------------------------------
 [case:r90_dlc_repeatable]
 desc = 第 90 轮：DLC 可重复任务（职业杀手）做完一次后仍显示（C++ 豁免 + 显示层放行）
@@ -1080,6 +1096,9 @@ step = note === 准备：把「职业杀手」（DLC 可重复任务）推到完
 step = ping
 step = quest.reset ~0x0002A418
 step = wait 1500
+step = note === ★ 先 Start：CompleteQuest 不会把任务加进玩家日志（豁免分支测不到）===
+step = quest.start ~0x0002A418
+step = wait 2000
 step = quest.complete ~0x0002A418
 step = wait 2500
 step = note === 打开菜单：C++ 豁免（已完成保留）+ AS3 放行（rptk=）===
@@ -1087,6 +1106,7 @@ step = menu.open
 step = assert.log 推送成功 scope=prev timeout=12000
 step = assert.log 可重复任务=\d+\(已完成保留[1-9] scope=case timeout=3000
 step = assert.log 可重复保留: .*职业杀手\[0x[0-9A-F]+2A418 scope=case timeout=3000
+step = assert.ui qdata\[[0-9]+\]=\[[^\]]*2a418 timeout=3000
 step = assert.ui rptk=\[[1-9][0-9]*\|[0-9a-f]*2a418 timeout=3000
 step = ui.select ~0x0002A418
 step = menu.close

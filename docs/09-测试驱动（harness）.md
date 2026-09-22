@@ -1245,3 +1245,44 @@ r80 那条；另外 4 条「未命中」是上轮没跑到的步骤（用例早�
   反向：`该任务暂无导航目标:（不可导航）…` 这种「提示语带前缀」的形态**不该**出现。
 * **verify**：SWF 六条（前缀函数 / 中文案 / 英文案 / `sSaqBaseName` / `SaqBaseName` /
   `nonav=[`）+ `stamp=62` + 反向检查（`stamp=61` 不残留）+ 用例计划 r75 的新断言。
+
+## 十四·补二十一、第 92 轮（2026-09-22 首跑复查）：26 条 24 PASS / 2 FAIL —— **两条 FAIL 全在用例侧（一条假设错），产品全对**
+
+### 1. 现场
+
+* 用例：`r89_repeatable` / `r90_dlc_repeatable`（第 89/90 轮新增）；
+* 失败步骤（两条都只有这一步）：`assert.ui rptk=\[1\|224fe8` /
+  `rptk=\[[1-9][0-9]*\|[0-9a-f]*2a418` —— 报告里 `rptk=[0|-]`（探针零计数）；
+* 同一批里两条 `assert.log` **全过**：`可重复任务=20(已完成保留1/2)` +
+  `可重复保留: …翻新商品[0x00224FE8` / `…职业杀手[0x…2A418` —— 即 **C++ 侧豁免链全对**。
+
+### 2. 真因（日志证据链，一次定性）
+
+* 失败报告的界面上报里 `qdata[10]=[0:活动,82d5a:无凭无据,…]` —— **没有** 224fe8 / 2a418；
+* Papyrus 侧：`quest.complete` = `q.CompleteQuest()` —— **只动任务的完成位，不会把任务
+  加进玩家日志（QuestData）**；
+* AS3 的 `FilterKnownQuests`：日志匹配 `_loc10_` 为 null ⇒ 走「不在日志里 ⇒ 保留」
+  分支（不进豁免计数）；`rptk=` 只在「在日志里 + `bComplete` + `bSaqRepeatable`」时计数；
+* ⇒ 玩家可见行为本来就对（任务仍在列表里），失败的是**用例的假设**（第 89 轮落地时
+  写下的「complete 后该任务会进玩家日志且标记完成 —— 未实测」，本次被现场否掉）。
+
+### 3. 处置（用例侧，零产品改动）
+
+* r89/r90 都改成「`quest.reset` → wait → **`quest.start`** → wait → `quest.complete` →
+  wait → `menu.open`」——`Start` 才会把任务真的加进日志（与「玩家接过这条任务」同态）；
+* 新增中间断言 `assert.ui qdata\[[0-9]+\]=\[[^\]]*224fe8`（r90 尾段 `2a418`）——
+  把「Start 是否进日志」与「bComplete 是否随 CompleteQuest 变真」两步分开定性；
+* verify **+2 条**：「r89/r90 先 start 再 complete + 有 `qdata=` 中间断言」（防回退）；
+* 用例文件两副本同步（工作区 == MO2，哈希一致）；verify 全过（0 MISS）。
+
+### 4. 待复跑 · 两种结局的判读
+
+* 复跑判据：`qdata` 断言 PASS + `rptk=[1|224fe8]` / `[1|…2a418]` + `ui.select` 命中；
+* ★ 若 `qdata` 过而 rptk 仍 0 ⇒ 病灶在「引擎任务日志条目的 `bComplete` 不随
+  `CompleteQuest()` 变真」—— 那是**产品侧**问题（真实玩家做完可重复任务后列表里
+  会消失），届时改 AS3 判据（不依赖日志条目 bComplete）；
+* ★ 若 `qdata` 断言也 FAIL ⇒ `Start` 不足以让任务进日志（要用 SetStage / 真实接取），
+  继续改用例；
+* ★ 红线（拟定）：**造「在玩家日志里 + 已完成」的状态，必须 `start` 在 `complete` 之前**
+  —— `CompleteQuest()` 不进日志；只 `complete` 会测出一条既不经过豁免分支、
+  又永远拿不到 `rptk=` 计数的假 FAIL。
