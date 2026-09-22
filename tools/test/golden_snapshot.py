@@ -60,6 +60,10 @@ ITEMS: list[tuple[str, str]] = [
     #   MQ02/MQ_Shell/MQ03/MQ04/MQ05/MQ06；gen_dlc_chain.py，见 docs/06 八节）。
     #   它是 gen_quest_table 的输入之一 ⇒ 内容变了必须在这里报红（防手改/漏跑）。
     ("ref/quest_chain_dlc.json", "DLC 链式启动边（gen_dlc_chain.py）"),
+    # ★★ 第 109 轮（大项 B）：门槛覆盖盘点报告（survey_gate_coverage.py）——
+    #   把「表内任务还剩多少不可门槛的进度类条件 / 有没有可折叠形态」钉住：
+    #   数字变了要么是有意扩充（补收 / 新 DLC），要么是数据管线回归。
+    ("ref/gate_coverage.json", "门槛覆盖盘点（survey_gate_coverage.py）"),
     ("plugin/src/SAQ_QuestTable.h", "静态任务表（gen_quest_table.py，DLL 编译进去）"),
     # ★★ 第 74 轮续：内嵌回退载荷（顺序与 C++ 载荷逐条对齐 —— 同伴任务前置参见 verify）
     ("ui/missionmenu/saqdata/SaqEmbeddedPayload.inc", "内嵌回退载荷（gen_quest_table.py）"),

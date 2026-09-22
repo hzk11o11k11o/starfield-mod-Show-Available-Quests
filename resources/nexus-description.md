@@ -56,7 +56,7 @@ Starfield 从不告诉你去哪接任务，全靠自己撞见。这个 mod 在�
 
 [b]已知限制[/b]
 [list]
-[*] 278 条任务中有 61 条暂无导航目标：条目名会标注「（不可导航）」，界面如实提示，不会假装能引导
+[*] 278 条任务中有 54 条暂无导航目标：条目名会标注「（不可导航）」，界面如实提示，不会假装能引导
 [*] 无限生成任务本身不显示，但其接取入口（12 处任务板 + 8 位提供可重复任务的 NPC）作为独立条目列出；任何位置都能一键导航过去——在远处先给你一个大致方位，等你走到那块任务板所在的区域，蓝点会自动落到任务板上（不会停在几米外；读档或重启游戏后也会自动校正）
 [*] 引导在关闭任务菜单后生效（与原版一致：HUD 蓝点本来就要关菜单才可见）
 [*] 「进度没到就不显示」覆盖**两层条件**：任务记录级条件里「引用别的任务」的那一类（7 条任务 / 11 条条件，含条件组里的「或」逻辑，例如「要先完成 A 才能接到 B」），以及任务对话（INFO）里的同类条件（80 条任务 / 415 条对话 / 501 条条件，含官方 DLC，例如「大器晚成」要「孤立无援」完成）；另有**任务链门槛**（后续任务在前置完成前不显示，含官方 DLC）；位置/遭遇类条件暂未覆盖
@@ -108,7 +108,7 @@ Mission menu (TAB) -> "Available Quests" -> select an entry -> expand the "Go to
 
 [b]Known limitations[/b]
 [list]
-[*] 61 of 278 quests currently have no navigation target; the UI says so honestly
+[*] 54 of 278 quests currently have no navigation target; the UI says so honestly
 [*] Radiant quests themselves are not listed, but their pickup points (12 mission boards + 8 repeatable-job NPCs) are listed as entries; every entry can be navigated to from anywhere — far away you get the approximate direction, and once you reach the board's area the marker automatically snaps onto the board itself (no more stopping a few metres short; it also self-corrects after a save reload or restart)
 [*] Guidance applies after you close the mission menu (same as vanilla: the HUD marker only appears outside menus)
 [*] "Hidden when your progress isn't far enough" covers **two layers**: record-level preconditions that reference another quest (7 quests / 11 conditions, including "or" groups, e.g. "you must finish A before B shows up") and the same kind of conditions inside a quest's dialogues (INFOs: 80 quests / 415 dialogues / 501 conditions, official DLC included), plus a quest-chain gate (a follow-up quest stays hidden until its prerequisite is done, official DLC included); location/encounter based conditions are not covered yet
@@ -126,8 +126,12 @@ Please include SFSE\Plugins\SAQ_ShowAvailableQuests.log, install method (MO2 / m
 
 ## 更新日志（Changelog）
 
+### v0.1.13（2026-09-23）
+- 改进：**7 条补收任务补上了导航目标**（v0.1.12 里它们还标注着「（不可导航）」）—— 巴雷特个人任务「阴阳两隔」会引导到巴雷特本人；新亚特兰蒂斯「搜查与扣押 / 双城传说」引导到 UC 安保办公室的由实中士；阿基拉城「防御措施 / 误报 / 兽群领袖」引导到阿基拉城广场的戴维斯·威尔逊；「登陆不顺」引导到 GalBank 的马尔科·詹森。现在这 7 条点「前往接取地点」和别的任务一样有 HUD 蓝点 / 扫描仪路径线；无可导航任务的条数 61 → 54
+- 其它：内部测试与验证设施更新（不影响游戏内行为；发布包仍不包含任何测试代码）
+
 ### v0.1.12（2026-09-23）
-- 新增：**补收 7 条此前漏掉的任务** —— 巴雷特个人任务「阴阳两隔」、新亚特兰蒂斯「搜查与扣押 / 双城传说」、阿基拉城阿什塔线「防御措施 / 误报 / 群兽领袖 / 登陆不顺」。这些任务没有任务类型标记，此前被过滤掉了；现在正常显示，并带完整的前置条件判定（进度没到不会出现）。这几条暂无可导航的接取点，条目名会标注「（不可导航）」
+- 新增：**补收 7 条此前漏掉的任务** —— 巴雷特个人任务「阴阳两隔」、新亚特兰蒂斯「搜查与扣押 / 双城传说」、阿基拉城阿什塔线「防御措施 / 误报 / 兽群领袖 / 登陆不顺」。这些任务没有任务类型标记，此前被过滤掉了；现在正常显示，并带完整的前置条件判定（进度没到不会出现）。这几条暂无可导航的接取点，条目名会标注「（不可导航）」
 - 改进：「进度没到就不显示」的对话（INFO）条件判定升级 —— 支持条件组里的「或」逻辑（例如「A **或** B 推进到某一步」即可显示，此前组里只要有一条没做过就可能一直隐藏）；同时把一批被误当成「接取前置」的任务推进对话从判定里剔除，个别任务不再被错误隐藏
 - 其它：可接任务总数 271 → 278；内部测试与验证设施更新（不影响游戏内行为；发布包仍不包含任何测试代码）
 

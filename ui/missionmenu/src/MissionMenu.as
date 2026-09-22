@@ -1500,7 +1500,12 @@ package
          //     的显示名加「（可重复）」前缀（SaqRepeatablePrefix / SaqBuildEntry）+
          //     新增 `rq=` 探针（显示名证据）+ `order=` 增加 `|tail=` 段（整组排在
          //     列表末尾的运行期证据，见 MissionsList.SAQ_OrderProbe）。
-         _loc8_ += " stamp=63";
+         //   ★★★ 第 109 轮（大项 A②：7 条补收任务的引导候选）：stamp 64 —— 与
+         //     第 81 轮同款：**AS3 代码本身没改**，改的是内嵌回退载荷
+         //     （第 106 轮补收的 7 条任务此前 `hasTarget=0`，本轮补上引导候选后
+         //     变成 `hasTarget=1` + 候选列 ⇒ 内嵌数据必须与 C++ 载荷重新逐条对齐，
+         //     见 SaqEmbeddedPayload.inc）。
+         _loc8_ += " stamp=64";
          // ★★ 第 51 轮：入口自检（ep=）—— 见 SaqEntryProbe 的说明。
          //   位置在 stamp 之后、其余字段之前：报告有长度上限，这个字段是当前排查
          //   「测试入口调不到」问题的关键证据，必须优先保下来。

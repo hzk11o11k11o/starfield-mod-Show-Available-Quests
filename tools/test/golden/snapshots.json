@@ -13,8 +13,8 @@
     },
     "ref/guide_targets.json": {
       "desc": "引导目标候选池（gen_guide_targets.py）",
-      "sha256": "874c2e779295c899180fef84787a0fa53d20e18370475cdcbe418d74e7bacd75",
-      "summary": "任务 209 / 候选 931"
+      "sha256": "d455bf568979eb4bb6e8e9c7d464ea92bcd64f540f85c7c559883061d519ee08",
+      "summary": "任务 216 / 候选 967"
     },
     "ref/repeatable_givers.json": {
       "desc": "可重复任务 NPC 入口（gen_repeatable_givers.py）",
@@ -56,14 +56,19 @@
       "sha256": "859cf769142f954a97d3d8ce8d2395791a8f68074c391a8753ea0300d6df70e6",
       "summary": "任务 18 / 边 21（宿主 SFBGS001_MQ01/SFBGS001_MQ02/SFBGS001_MQ03/SFBGS001_MQ04/SFBGS001_MQ05/SFBGS001_MQ_Shell/SFFL_DialogueAnchorpoint/SFFL_Z01_SE1/SFTER_MQ01/SFTER_MQ02A/SFTER_MQ02B/SFTER_MQ03/SFTER_MQIntro/SFTER_SE_MQIntro）"
     },
+    "ref/gate_coverage.json": {
+      "desc": "门槛覆盖盘点（survey_gate_coverage.py）",
+      "sha256": "3959305eb3ee85734532a9faa52c85abbf7b191d6894b8c2fb9ff175ea44ca46",
+      "summary": "键 6"
+    },
     "plugin/src/SAQ_QuestTable.h": {
       "desc": "静态任务表（gen_quest_table.py，DLL 编译进去）",
-      "sha256": "f38d79bb53eb1f278309627a8be98bcd4e832fa9188877f04e84dcc181a2b665",
-      "summary": "任务 278 / 候选 960 / 进度门槛 11 / INFO对话 415 / INFO条件 501 / 链式边 89 / 同伴 4 / 势力入口 4 / 地标 10 / 可重复 20"
+      "sha256": "43d9a75fc265deae1482067f2a2a213333bf2667b4d9e5219919bcc23c8c9974",
+      "summary": "任务 278 / 候选 996 / 进度门槛 11 / INFO对话 415 / INFO条件 501 / 链式边 89 / 同伴 4 / 势力入口 4 / 地标 10 / 可重复 20"
     },
     "ui/missionmenu/saqdata/SaqEmbeddedPayload.inc": {
       "desc": "内嵌回退载荷（gen_quest_table.py）",
-      "sha256": "395b3a0ae67de4ef6a5d5ec380181eda46a5c273222026e9ecce8d01fda0ed53",
+      "sha256": "d6abe95376604a61550f511f8b2eadc4365ecadd96b7602f899baa55e204a121",
       "summary": "条目 219 / 第一条 2905089 / 末尾可重复 15"
     },
     "plugin/src/SAQ_EntryTable.h": {

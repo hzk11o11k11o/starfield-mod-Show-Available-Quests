@@ -1169,3 +1169,52 @@ if (line.find("harness：") != std::string::npos) { continue; }
 * ★ 第 106 轮遗留「补收 7 条在列表里的显示 / 点击」仍未单独验证（用例集未覆盖）；
 * 下一轮候选：给 7 条补引导候选（`extra_quests.json` 加 `guides` 字段或
   `gen_guide_targets.py` 支持名单）。
+
+---
+
+## 十四·补三十二、第 109 轮（大项 A②）：7 条补收任务的引导候选 + `r109_extra_quests`（**待实机**）
+
+> 起源：第 106 轮补收的 7 条任务（无 QTYP 但内容完整）当时 `candCount=0`
+> ⇒ 界面按「不可导航」处理（点击只给提示）。本轮把引导候选补上（**待实机验证**）。
+
+### 1. 为什么「重跑一次」就够了（零新工具）
+
+* `gen_guide_targets.py` 的输入是 `ref/quest_table_debug.json`（现 278 条）——
+  这 7 条**第 106 轮已经进表**，只是当时没有重跑候选池（`guide_targets.json` 还是
+  271 条表时代的产物：209 条有目标 / 931 候选）；
+* 它们的别名数据本来就在（ALUA 提供者 / ALFR 落脚点），例如：
+  `COM_Quest_Barrett_Q02 → ALUA Barrett`（巴雷特本人，常驻 ACHR 0x005788）、
+  `FFNewAtlantis05/06 → ALUA SergeantYumi`（由实中士，UC 安保办公室）、
+  `City_Akila_Ashta* → ALUA Davis/Keoni/Bailey`（阿基拉城广场）、
+  `City_Akila_Jansen → ALUA MarkoJensan`（GalBank）；
+* 重跑实测：**新增 7 条 / 消失 0 条 / 既有候选 0 处变化** ⇒ 候选池
+  931 → **967**（候选）/ 209 → **216**（任务）；进表后 **996 条候选 / 224 条任务**。
+
+### 2. 用例 `r109_extra_quests`（判据形状）
+
+* 7 条里 **5 条只有链式边**（`阴阳两隔 ← Com_Companion_Barrett@208`、
+  `搜查与扣押 ← FFNewAtlantis04@100`、`双城传说 ← FFNewAtlantis05@100`、
+  `误报 ← City_Akila_Ashta01@200`、`兽群领袖 ← City_Akila_Ashta02@200`）
+  ⇒ 前置没做时**被链式门槛藏**：断言走「`链式没到:` 名单 + 记录号」
+  （★ 名字可能带前缀，记录号不会动；★ 名单与统计行是同一条「运行时状态」长行 ⇒ `scope=case`）；
+* 另 **2 条没有任何门槛**（`防御措施` / `登陆不顺`）⇒ 直接显示：
+  先 `ui.tab` 再 `ui.select 0x0021625F` / `0x001A8B64`
+  （第 93 轮红线：不切 tab 必然 `notfound`；能选中 = 真的在列表里）；
+* 准备段把 5 条的前置宿主（`Com_Companion_Barrett` / `FFNewAtlantis04` /
+  `FFNewAtlantis05` / `Ashta01` / `Ashta02`）回滚到「没开始」；
+* ★ 反向检查（verify 里）：不对**累积**名单写 `assert.nolog`（第 103 轮教训）。
+
+### 3. verify / 快照 / 离线层（已做）
+
+* 静态表：候选池完整（**996 条 / 224 条有目标** / 切片不越界）+ **7 条补收任务
+  逐条「candCount ≥ 1 + 首候选 = 预期接取点引用」**（0x002FAE→0x005788、
+  0x0008E2D9/0x00089F4E→0x24C4A2、三条阿基拉→0x21619D、0x001A8B64→0x214680）；
+* SWF：内嵌回退载荷跟着变（7 条的 `hasTarget` 0 → 1）⇒ **stamp 64**（第 81 轮同款：
+  AS3 代码没改，只是让内嵌数据与 C++ 载荷重新对齐）+ 反向检查（`stamp=63` 不残留）；
+* 黄金快照：`guide_targets.json`（216/967）、`SAQ_QuestTable.h`（候选 996）、
+  `SaqEmbeddedPayload.inc`（同摘要、内容变）三项有意更新 + 新增
+  `ref/gate_coverage.json`（大项 B 的报告）；
+* 离线一键（`run-all-tests.ps1`）现在三步：单测 + 快照 + **门槛覆盖 tripwire**。
+* ★ **待实测**：重进游戏（`Harness=1`）⇒ 用例集 **33 条**，期望
+  `r109_extra_quests` PASS（5 条在链式名单里 + 2 条能被 `ui.select` 选中），
+  并顺手看眼睛判据（这 7 条点「前往接取地点」有蓝点 —— 尤其巴雷特那条）。

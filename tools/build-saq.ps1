@@ -161,6 +161,14 @@ if (-not $SkipTable) {
     & python (Join-Path $root 'tools\esm\gen_quest_table.py') | Write-Host
     if ($LASTEXITCODE -ne 0) { throw "gen_quest_table.py 失败（exit $LASTEXITCODE）" }
     Ok 'plugin\src\SAQ_QuestTable.h'
+    # ★★★ 第 109 轮（大项 B）：门槛覆盖盘点报告（survey_gate_coverage.py，秒级只读分析）——
+    #   产物 ref\gate_coverage.json 进了黄金快照 ⇒ 必须跟着数据一起重建（否则快照会
+    #   拿旧报告比对，报出一堆假 DIFF）。**不加 --record-scan**（那是一次约 1 分钟的
+    #   ESM 结构扫描，写另一个文件 ref\gate_coverage_record.json，按需手动跑）。
+    #   tripwire（表内出现「可折叠形态」⇒ 报红）在 tools\test\run-all-tests.ps1 第 3 步。
+    Step '1/6' '门槛覆盖盘点（survey_gate_coverage.py → ref\gate_coverage.json）'
+    & python (Join-Path $root 'tools\esm\survey_gate_coverage.py') | Write-Host
+    if ($LASTEXITCODE -ne 0) { throw "survey_gate_coverage.py 失败（exit $LASTEXITCODE）" }
     # ★ 第 30 轮：入口条目表（任务板）移到 ESM 段**之后**生成（见 2.5 步）——
     #   它的「引导目标候选链」依赖 create_board_markers.py 的产物 ref\board_markers.json。
 } else { Step '1/6' '跳过静态表生成' }

@@ -194,6 +194,12 @@
           （MissionsList.SAQ_OrderProbe 末两行的 uID=显示名 —— 整组排末尾的运行期证据）
           + stamp=63 + 反向检查（stamp=62 不残留）；静态表/载荷侧检查 payload_order 的
           组序（可重复任务在最后）+ 用例计划：r96 新增两条断言。
+  第 109 轮（大项 A② · 7 条补收任务的引导候选）：第 106 轮补收的 7 条任务此前
+          `candCount=0`（界面按「不可导航」处理）；本轮重跑候选池后它们都有候选
+          ⇒ 候选池 960 → 996、有目标任务 217 → 224、内嵌载荷同步（stamp 63 → 64）。
+          本脚本检查：候选池完整（224 / 切片不越界）+ 7 条补收任务的「candCount ≥ 1
+          + 首候选 = 预期接取点引用」+ stamp=64（反向检查 stamp=63 不残留）+
+          用例计划：`r109_extra_quests`（5 条隐藏证据走链式名单 / 2 条走 ui.select）。
 
 用法：python tools/ui/verify_saq_build.py [--release|--dev]
 """
@@ -758,7 +764,7 @@ def main() -> int:
         #     （载荷第 11 列 bSaqRepeatable）的显示名加「（可重复）」前缀
         #     （SaqRepeatablePrefix）+ `rq=` 探针（显示名证据）+ `order=` 的
         #     `|tail=` 段（末两行 —— 整组排列表末尾的运行期证据）。
-        "构建指纹 stamp=63": b"stamp=63",
+        "构建指纹 stamp=64": b"stamp=64",
         # ★★ 第 80 轮（可重复 NPC 入口）：type 101 的界面链路 ——
         #   ① 常量与合并判据（SaqIsEntryType —— 子项/描述/不可导航提示统一用它）；
         #   ② 子项名与描述文案（中英各一段，证明不是只改了判据没接文案）；
@@ -878,8 +884,9 @@ def main() -> int:
         all_ok &= gone
         # 反向检查：★★ 第 96 轮 —— 旧构建指纹不许残留（同一份 SWF 只该带一个 stamp；
         #   起因同第 50 轮的教训：部署了但游戏加载的是旧 SWF 时，指纹是唯一判据）。
-        gone = b"stamp=62" not in blob
-        print(("OK  " if gone else "MISS") + f" {p.name} · 旧构建指纹 stamp=62 已替换(反向检查)")
+        #   ★★★ 第 109 轮：stamp 63 → 64（7 条补收任务的引导候选进了内嵌载荷）。
+        gone = b"stamp=63" not in blob
+        print(("OK  " if gone else "MISS") + f" {p.name} · 旧构建指纹 stamp=63 已替换(反向检查)")
         all_ok &= gone
 
     # ★★ 第 49 轮补丁③（复测复查）：**入口发布清单**检查 —— 新增 root 入口必须挂到 root。
@@ -1325,6 +1332,9 @@ def main() -> int:
                             # ★★★ 第 106 轮（operator 全量产品化）：INFO 门槛 OR 组 ——
                             #   A：112/114 都没做 ⇒ 探针报「组[0]=假」；B：推 112 ⇒ 组=真
                             "r106_info_or", "r106_info_or_pass",
+                            # ★★★ 第 109 轮（大项 A）：7 条补收任务 —— 5 条被链式门槛藏
+                            #   （名单钉记录号）+ 2 条直接显示（切 tab + ui.select 命中）
+                            "r109_extra_quests",
                             "r62_reload_observe"):
                     all_ok &= check(f"用例计划 · [case:{cid}]", plan_text.encode(),
                                     f"[case:{cid}]".encode())
@@ -1397,6 +1407,22 @@ def main() -> int:
                 print(("MISS " if bad_info_or_eq else "OK  ") +
                       " 用例计划 · r106 探针断言不再多写等号（反向检查，第 106 轮）")
                 all_ok &= not bad_info_or_eq
+                # ★★★ 第 109 轮（大项 A）：7 条补收任务的用例（`r109_extra_quests`）——
+                #   断言形状：① 5 条的隐藏证据 = 「链式没到」名单里钉**任务自己的记录号**
+                #   （名字可能日后带前缀，「记录号」不会动）；② 2 条的显示证据 = 先 `ui.tab`
+                #   再 `ui.select`（第 93 轮红线：不切 tab 必然 notfound）+ 记录号；
+                #   ③ 反向检查：链式名单是**累积**的 ⇒ 不许对它写 `assert.nolog`（第 103 轮）。
+                i109 = plan_text.find("[case:r109_extra_quests]")
+                blk109 = plan_text[i109:] if i109 >= 0 else ""
+                all_ok &= check("用例计划 · r109 隐藏证据走「链式没到」名单（阴阳两隔 0x00002FAE）",
+                                blk109.encode(),
+                                "assert.log 链式没到: .*阴阳两隔\\[0x00002FAE scope=case".encode())
+                all_ok &= check("用例计划 · r109 显示证据走显示层（ui.select 防御措施 0x0021625F）",
+                                blk109.encode(), "ui.select 0x0021625F".encode())
+                bad_109_nolog = "assert.nolog 链式没到" in blk109
+                print(("MISS " if bad_109_nolog else "OK  ") +
+                      " 用例计划 · r109 不对累积名单写反向断言（反向检查，第 103 轮）")
+                all_ok &= not bad_109_nolog
                 # 反向检查：INFO OR 组不许「见第一条 kFail 即停」的旧写法残留 ——
                 #   DLL 侧特征（`不再「找第一条 kFail 即停」` 的说明字符串不在二进制里）
                 #   由离线单测 + 用例钉死；这里只挡注释文档层面的旧说法。
@@ -2130,10 +2156,58 @@ def main() -> int:
         #   ★★ 第 81 轮（地球地标任务）：候选 924 → **960**、有目标任务 208 → **217**
         #   （+10 条地标任务；其中 9 条各 4 个候选（书/书商 + 3 兜底）= +36 候选，
         #   伦敦那条只给说明 ⇒ 0 候选 —— 所以有目标数是 +9 而不是 +10）。
-        ok = cand_total > 200 and n_with == 217 and n_oob == 0
+        #   ★★★ 第 109 轮（大项 A②）：7 条补收任务（第 106 轮进表时没有引导候选）
+        #   重新生成候选池 ⇒ 候选 960 → **996**、有目标任务 217 → **224**（+7）。
+        ok = cand_total > 200 and n_with == 224 and n_oob == 0
         print(("OK  " if ok else "MISS") +
-              f" 静态表 · 候选池完整（候选 {cand_total} 条 / 有目标任务 {n_with}（第 81 轮起 217）"
+              f" 静态表 · 候选池完整（候选 {cand_total} 条 / 有目标任务 {n_with}（第 109 轮起 224）"
               f" / 切片越界 {n_oob}）")
+        all_ok &= ok
+        def c_rows_of(text: str):
+            """kGuideCandidates[] 的候选行（(refrLocal, refrMaster, flags, reserved)）。"""
+            a0 = text.find("kGuideCandidates[] = {")
+            a1 = text.find("kGuideCandidateCount")
+            region = text[a0:a1] if 0 <= a0 < a1 else ""
+            return re.findall(
+                r"\{\s*0x([0-9A-F]+)u,\s*(\d+)u,\s*0x([0-9A-F]+)u,\s*(\d+)u,", region)
+
+        # ★★★ 第 109 轮（大项 A②）：7 条补收任务**必须有引导候选**（第 106 轮进表时是 0）——
+        #   逐条钉「candCount ≥ 1 + 第一候选 = 预期的接取点引用」，并做反向检查
+        #   （这 7 条不许再退回 candCount == 0：否则界面又会把它们当「不可导航」）。
+        #   （记录号 | 期望首候选 | 说明 —— 期望值来自 ref/guide_targets.json 的实测输出）
+        seven_guides = [
+            (0x00002FAE, 0x005788, "阴阳两隔 ⇒ 巴雷特本人（常驻 ACHR）"),
+            (0x0008E2D9, 0x24C4A2, "搜查与扣押 ⇒ 由实中士（UC 安保办公室）"),
+            (0x00089F4E, 0x24C4A2, "双城传说 ⇒ 由实中士（UC 安保办公室）"),
+            (0x0021625F, 0x21619D, "防御措施 ⇒ 戴维斯·威尔逊（阿基拉城广场）"),
+            (0x00212B4F, 0x21619D, "误报 ⇒ 戴维斯·威尔逊（阿基拉城广场）"),
+            (0x00212B4E, 0x21619D, "兽群领袖 ⇒ 戴维斯·威尔逊（阿基拉城广场）"),
+            (0x001A8B64, 0x214680, "登陆不顺 ⇒ 马尔科·詹森（GalBank）"),
+        ]
+        seven_bad: list[str] = []
+        c_rows7 = c_rows_of(blob)
+        for local, want_first, note in seven_guides:
+            m_row = re.search(
+                r"\{\s*0x%08Xu,\s*\d+u,\s*\d+u,\s*0x[0-9A-F]+u,\s*(\d+)u,\s*(\d+)u,"
+                % local, blob)
+            if not m_row:
+                seven_bad.append(f"0x{local:06X} 行缺失")
+                continue
+            begin, cnt = int(m_row.group(1)), int(m_row.group(2))
+            if cnt < 1:
+                seven_bad.append(f"0x{local:06X} candCount=0（{note}）")
+                continue
+            if not (0 <= begin < len(c_rows7)):
+                seven_bad.append(f"0x{local:06X} 切片越界")
+                continue
+            first = c_rows7[begin]
+            if int(first[0], 16) != want_first:
+                seven_bad.append(f"0x{local:06X} 首候选=0x{int(first[0], 16):06X} "
+                                 f"（期望 0x{want_first:06X}）")
+        ok = not seven_bad
+        print(("OK  " if ok else "MISS") +
+              f" 静态表 · 7 条补收任务的引导候选（第 109 轮；每条 candCount≥1 + 首候选对得上）"
+              + ("" if ok else f" — {seven_bad}"))
         all_ok &= ok
         gone = "guideRefLocal" not in blob and "guideRefMaster" not in blob
         print(("OK  " if gone else "MISS") + " 静态表 · 旧单目标字段已移除(反向检查)")

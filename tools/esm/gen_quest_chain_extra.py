@@ -217,7 +217,7 @@ EDGES: list[tuple[str, str, int, str, int, str]] = [
     ("City_Akila_Ashta02", "City_Akila_Ashta01", 200, "SetStage", 10,
      "误报：防御措施@200 fragment 原文 City_Akila_Ashta02.SetStage(10)"),
     ("City_Akila_Ashta03", "City_Akila_Ashta02", 200, "SetStage", 5,
-     "群兽领袖：误报@200 fragment 原文 City_Akila_Ashta03.SetStage(5)"),
+     "兽群领袖：误报@200 fragment 原文 City_Akila_Ashta03.SetStage(5)"),
 ]
 
 # ============================================================================

@@ -41,7 +41,7 @@
     "local": "0x212B4E",
     "edid": "City_Akila_Ashta03",
     "itype": 3,
-    "note": "群兽领袖（Leader of the Pack）—— 误报的后续：QOBJ=9；由 City_Akila_Ashta02@200 fragment 原文 SetStage(5) 启动（Patch_Update07b 有修复调用）。"
+    "note": "兽群领袖（Leader of the Pack）—— 误报的后续：QOBJ=9；由 City_Akila_Ashta02@200 fragment 原文 SetStage(5) 启动（Patch_Update07b 有修复调用）。"
    },
    {
     "master": "Starfield.esm",

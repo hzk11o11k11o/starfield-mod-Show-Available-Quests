@@ -51,7 +51,7 @@
   内含测试过滤开关（只显示有目标 / 无目标 / DLC / 任务板入口 ……），默认关闭。
 
 六、已知限制
-  · 少量任务（278 条中的 61 条）暂时没有可用的导航目标：条目名会标注
+  · 少量任务（278 条中的 54 条）暂时没有可用的导航目标：条目名会标注
     「（不可导航）」，界面如实提示，不会假装能引导。
   · 无限生成任务本身不显示，但其接取入口（12 处任务板 + 8 位可重复任务 NPC）会作为独立条目列出；
     无论你在哪都能一键导航过去——远处先给大致方位，走到那块板所在的区域后
@@ -139,7 +139,7 @@
   mission boards only…), off by default.
 
 6. Known limitations
-  · 61 of 278 quests currently have no usable navigation target; the UI
+  · 54 of 278 quests currently have no usable navigation target; the UI
     says so honestly instead of pretending.
   · Radiant (infinite) quests themselves are not listed, but their pickup
     points (12 mission boards + 8 repeatable-job NPCs) are listed as
