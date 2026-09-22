@@ -45,8 +45,16 @@ namespace SAQ::Decision
 		return a_flags.completed && a_vtableKnown;
 	}
 
-	RuntimeFilterVerdict DecideRuntimeFilter(const RuntimeFlags& a_flags, bool a_vtableKnown)
+	RuntimeFilterVerdict DecideRuntimeFilter(const RuntimeFlags& a_flags, bool a_vtableKnown,
+											 bool a_repeatable)
 	{
+		// ★★ 第 89 轮（可重复任务）：这类任务**完成一次后继续显示**（豁免「已完成」过滤）——
+		//   它们设计上还能再接：完成时引擎标记 completed，但下次接取会恢复 running
+		//   （数据 ref/repeatable_quests.json / 静态表 StaticQuestInfo::repeatable；
+		//   语义与证据见 docs/11-可重复任务盘点（第89轮）.md）。
+		if (a_repeatable) {
+			return RuntimeFilterVerdict::kKeep;
+		}
 		// 「已开始」不挡 —— 第 11 轮实证：引擎会把玩家仍能接的任务提前置 running。
 		return IsCompletedConfirmed(a_flags, a_vtableKnown) ? RuntimeFilterVerdict::kHideCompleted
 														   : RuntimeFilterVerdict::kKeep;

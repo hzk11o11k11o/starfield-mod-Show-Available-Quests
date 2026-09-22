@@ -203,6 +203,14 @@ namespace SAQ
 			std::size_t factionGateMiss{};    // 其中被门槛判「进度没到」但被放行的条数
 			std::size_t factionOrdered{};     // ★ 前置到列表**最前**的势力条目数（固定顺序）
 			std::string factionSamples;       // 名单（任务名 + 势力 + 是否跳过门槛）
+			// ★★ 第 89 轮（可重复任务）：这一类「做完一次还能再接」（静态表
+			//   StaticQuestInfo::repeatable ≥ 0）⇒ **豁免「已完成」过滤**（完成后继续显示）。
+			//   数据 ref/repeatable_quests.json（gen_repeatable_quests.py）；见 docs/11。
+			//   ★ AS3 侧还有第二道过滤（FilterKnownQuests：在玩家日志里就丢）——
+			//     载荷第 11 列 = 可重复标记，AS3 对「已完成 + 可重复」同样豁免。
+			std::size_t repeatableTotal{};    // 这次列表里的可重复任务数（含未完成的）
+			std::size_t repeatableKept{};     // 其中**已完成但被豁免保留**的条数（核心证据）
+			std::string repeatableSamples;    // 被豁免保留的名单（名字 + FormID + 状态）
 			bool        filterApplied{};      // 这次到底有没有按运行时状态过滤
 			std::string samples;              // 被剔掉的前几条（名字 + 状态）
 			std::string vtableSamples;        // 未识别虚表的样本（诊断）
@@ -920,6 +928,8 @@ namespace SAQ
 			std::size_t companionSampleCount = 0;
 			// ★★ 第 75 轮（四大势力开头任务）：同上（四条，其实永远在上限内）。
 			std::size_t factionSampleCount = 0;
+			// ★★ 第 89 轮（可重复任务）：被豁免保留（已完成）的名单上限。
+			std::size_t repeatableSampleCount = 0;
 
 			// ★ 第 27 轮：模式 5（只显示入口条目）跳过整段任务循环（入口在下面单独追加）。
 			const bool entryOnly = (a_testMode == kEntryOnlyTestMode);
@@ -959,9 +969,24 @@ namespace SAQ
 				//
 				//   分工修正：**「已接取」的判据只认玩家任务日志**（AS3 侧的 FilterKnownQuests，
 				//   用引擎推来的 QuestData 逐个比 uID）—— 那是显示层的权威数据。C++ 这层只挡
-				//   「已完成」：做过的任务不该再出现在「可接」里（可重复任务除外，见下一步计划）。
+				//   「已完成」：做过的任务不该再出现在「可接」里。
 				// ★ 第 64 轮（大项 K）：判据在离线层（Decision::DecideRuntimeFilter，有单测）。
-				if (Decision::DecideRuntimeFilter(ToDecisionFlags(state), state.vtableKnown) ==
+				// ★★ 第 89 轮（可重复任务）：静态表 repeatable ≥ 0 ⇒ **豁免**「已完成 ⇒ 隐藏」
+				//   （这类任务做完一次后继续显示 —— 设计上还能再接；见 docs/11）。
+				const bool repeatable = (info.repeatable >= 0);
+				if (repeatable) {
+					++a_stats.repeatableTotal;
+					if (state.completed && state.vtableKnown) {
+						++a_stats.repeatableKept;   // 核心证据：已完成但被豁免保留
+						if (repeatableSampleCount < kMaxSamples) {
+							++repeatableSampleCount;
+							a_stats.repeatableSamples += std::format("{}[0x{:08X} {}] ",
+								info.nameZh, row.formID, Describe(state));
+						}
+					}
+				}
+				if (Decision::DecideRuntimeFilter(ToDecisionFlags(state), state.vtableKnown,
+												  repeatable) ==
 					Decision::RuntimeFilterVerdict::kHideCompleted) {
 					++hiddenByRuntime;
 					if (sampleCount < kMaxSamples) {
@@ -1222,6 +1247,16 @@ namespace SAQ
 					entry.noteZh = kLandmarkNotesZh[info.landmark];
 					entry.noteEn = kLandmarkNotesEn[info.landmark];
 				}
+				// ★★ 第 89 轮（可重复任务）：说明文本的第三个来源 ——「（可重复）…」
+				//   （做完一次后还能再接；描述第一句）。三类互斥，排在最后只为次序。
+				else if (info.repeatable >= 0 &&
+					static_cast<std::size_t>(info.repeatable) < kRepeatableCount) {
+					entry.noteZh = kRepeatableNotesZh[info.repeatable];
+					entry.noteEn = kRepeatableNotesEn[info.repeatable];
+				}
+				// ★★ 第 89 轮（可重复任务）：可重复标记（载荷第 11 列，见 SAQ_UI.cpp 的协议说明）
+				//   —— AS3 侧 FilterKnownQuests 据此豁免「在玩家日志里」的丢弃。
+				entry.repeatable = (info.repeatable >= 0);
 				// ★ 第 65 轮（任务专属图标）：type 推真实任务类型（此前推 6「可接任务」
 				//   统一值）—— 界面按它 + faction 选图标，与原版任务菜单一致。
 				entry.type = info.type;
@@ -1430,6 +1465,16 @@ namespace SAQ
 			if (!a_stats.entryUnavailable.empty()) {
 				// ★ 第 29 轮：入口引用取不到 = 常驻化 override 没生效（正常应恒为空）
 				out += " 入口不可导航: " + a_stats.entryUnavailable;
+			}
+			// ★★ 第 89 轮（可重复任务）：统计与「已完成但保留」名单 ——
+			//   `已完成保留` = 本该被「只挡已完成」剔掉、因可重复豁免**留在列表里**的条数
+			//   （这类任务做完一次还能再接，见 docs/11）。名单供玩家反馈时核对 FormID。
+			if (a_stats.repeatableTotal) {
+				out += std::format(" 可重复任务={}(已完成保留{})",
+					a_stats.repeatableTotal, a_stats.repeatableKept);
+			}
+			if (!a_stats.repeatableSamples.empty()) {
+				out += " 可重复保留: " + a_stats.repeatableSamples;
 			}
 			return out;
 		}

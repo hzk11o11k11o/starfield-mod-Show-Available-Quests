@@ -78,7 +78,13 @@ namespace SAQ::Decision
 	// 虚表不认识 ⇒ 一律 false（宁可不动作，也不能凭错误的对象下判断）。
 	bool IsCompletedConfirmed(const RuntimeFlags& a_flags, bool a_vtableKnown);
 
-	RuntimeFilterVerdict DecideRuntimeFilter(const RuntimeFlags& a_flags, bool a_vtableKnown);
+	// ★★ 第 89 轮（可重复任务）：a_repeatable = 「可重复任务」（静态表
+	//   StaticQuestInfo::repeatable >= 0）—— 这类任务**完成一次后继续显示**
+	//   （设计上还能再接：完成时引擎标记 completed，但下次接取会恢复 running；
+	//   判据见 docs/11-可重复任务盘点（第89轮）.md）。
+	//   默认 false ⇒ 与旧行为逐字一致（既有调用点不需要改）。
+	RuntimeFilterVerdict DecideRuntimeFilter(const RuntimeFlags& a_flags, bool a_vtableKnown,
+											 bool a_repeatable = false);
 
 	// 安全阀：虚表识别率（百分数）≥ 80 ⇒ 过滤生效（否则整层不过滤，只留证据）。
 	inline constexpr unsigned kMinRecognizedPct = 80;

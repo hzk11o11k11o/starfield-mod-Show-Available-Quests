@@ -71,6 +71,12 @@ namespace SAQ
 		//   **只用于列表排序**（玩家要求「固定排在可接任务列表的前四个」）；
 		//   不进载荷 —— 界面看的是下面两列的说明文本。
 		std::int8_t   factionEntry{-1};
+		// ★★ 第 89 轮（可重复任务）：这条任务「做完一次还能再接」
+		//   （静态表 StaticQuestInfo::repeatable ≥ 0；数据 ref/repeatable_quests.json）。
+		//   **载荷第 11 列** —— AS3 侧 FilterKnownQuests 据此豁免「在玩家日志里」的
+		//   丢弃（已完成 + 可重复 ⇒ 保留；进行中照旧隐藏）。
+		//   C++ 侧已先豁免「已完成」过滤（Decision::DecideRuntimeFilter 的 repeatable 参数）。
+		bool          repeatable{};
 		// ★★ 第 75 轮：描述里的「简要说明」（加入方式 / 前置条件）—— 只有这四条非空
 		//   （静态表 kFactionEntryNotesZh/En；数据源 ref/faction_entry_quests.json）。
 		//   界面把它当描述的第一句（替代「这条任务当前可以接取」）——「深红舰队」

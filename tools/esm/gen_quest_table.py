@@ -11,6 +11,8 @@
                                             生成；缺失 ⇒ 不标记 —— 这类任务就不会固定显示）
     ref/faction_entry_quests.json           ★★ 第 75 轮：四大势力开头任务（gen_faction_entry_quests.py
                                             生成；缺失 ⇒ 不标记 —— 也不会固定排前四）
+    ref/repeatable_quests.json              ★★ 第 89 轮：可重复任务（gen_repeatable_quests.py 生成；
+                                            缺失 ⇒ 这 15 条照旧「做完一次就消失」）
 输出：
     plugin/src/SAQ_QuestTable.h             C++ 静态数组（多 master）
     ref/quest_table_debug.json              同样的数据（便于人工核对）
@@ -211,6 +213,9 @@ def build_payload(rows: list[dict], title_zh: str = "可接任务", title_en: st
     ★★ 第 75 轮（四大势力开头任务）：最后两列 = 「简要说明」（中 / 英）——
       界面把它写在描述里（固定显示的那四条：加入方式 / 前置条件）；
       其余任务是空串。旧载荷缺列 ⇒ 空串（走原来的「这条任务当前可以接取」文案）。
+      ★★ 第 89 轮（可重复任务）：说明的来源多一类（kRepeatableNotes*，「（可重复）…」）；
+      **追加第 11 列** = 可重复标记（"1"/"0"）—— AS3 侧 FilterKnownQuests 据此豁免
+      「在玩家日志里」的丢弃（已完成 + 可重复 ⇒ 保留；进行中照旧隐藏）。
     """
     lines = ["SAQ1", f"T\t{title_zh}\t{title_en}"]
     # ★★ 第 74/75 轮：顺序与 C++ 对齐（势力开头任务 → 同伴任务 → 其余，见 payload_order）
@@ -222,13 +227,18 @@ def build_payload(rows: list[dict], title_zh: str = "可接任务", title_en: st
         companion = "1" if int(r.get("companion", -1)) >= 0 else "0"
         # ★★ 第 81 轮：说明文本的来源有两类 —— 势力开头任务（kFactionEntryNotes*）与
         #   地球地标任务（kLandmarkNotes*）；其余任务空串。
-        has_note = int(r.get("faction_entry", -1)) >= 0 or int(r.get("landmark", -1)) >= 0
+        #   ★★ 第 89 轮（可重复任务）：第三类来源 kRepeatableNotes*（「（可重复）…」）。
+        has_note = (int(r.get("faction_entry", -1)) >= 0 or int(r.get("landmark", -1)) >= 0
+                    or int(r.get("repeatable", -1)) >= 0)
         note_zh = sanitize_name(r.get("noteZh", "")) if has_note else ""
         note_en = sanitize_name(r.get("noteEn", "")) if has_note else ""
+        # ★★ 第 89 轮：第 11 列 = 可重复任务标记（"1"/"0"）—— 追加在最后
+        #   （旧载荷 / 旧内嵌数据缺这列 ⇒ AS3 按 false 处理）。
+        repeat = "1" if int(r.get("repeatable", -1)) >= 0 else "0"
         lines.append(
             f'Q\t{fid}\t{r["itype"]}\t{sanitize_name(r["name_zh"])}'
             f'\t{sanitize_name(r["name_en"])}\t{has_target}\t{approach}\t{faction}'
-            f'\t{companion}\t{note_zh}\t{note_en}'
+            f'\t{companion}\t{note_zh}\t{note_en}\t{repeat}'
         )
     return "\n".join(lines) + "\n"
 
@@ -333,6 +343,31 @@ def load_landmark_quests(path: Path) -> list[dict]:
     if not path.exists():
         print(f"（没有 {path} —— 地球地标任务不会被豁免过滤，"
               f"先跑 tools/esm/gen_landmark_quests.py）")
+        return []
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def load_repeatable_quests(path: Path) -> list[dict]:
+    """★★ 第 89 轮（可重复任务）：**做完一次还能再接**的 15 条（gen_repeatable_quests.py 生成）。
+
+    玩家反馈「赛多尼亚的 Denis Averin 也给重复任务，列表里却没有他」→ 全量盘点
+    （tools/esm/survey_repeatable.py，5033 个官方 Papyrus 脚本特征扫描 + ESM/3DM/
+    游侠网三源交叉）⇒ 表内可重复任务 15 条。它们设计上**能被反复完成**（完成后引擎
+    标记 completed，但下次接取会恢复 running），而本 MOD 原来的「只挡已完成」过滤
+    会把它们做完一次后就藏起来 ⇒ 本轮做三件事：
+
+      ① **豁免「已完成」过滤**（C++ 侧：Decision::DecideRuntimeFilter 的 repeatable 参数）
+         —— 完成后继续留在列表里；
+      ② **描述标注**（载荷最后两列，kRepeatableNotes*）：「（可重复）完成一次后还能
+         再次接取 —— 去找谁 / 在哪」；
+      ③ **载荷第 11 列** = 可重复标记 —— AS3 侧 FilterKnownQuests 据此豁免
+         「在玩家日志里」的丢弃（否则 C++ 豁免会被 AS3 再丢一次，见 MissionMenu.as）。
+
+    缺失 ⇒ 不标记（功能退化：这 15 条照旧「做完一次就消失」，不会写错数据）。
+    """
+    if not path.exists():
+        print(f"（没有 {path} —— 可重复任务不会被豁免「已完成」过滤，"
+              f"先跑 tools/esm/gen_repeatable_quests.py）")
         return []
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -475,6 +510,9 @@ def main() -> int:
     ap.add_argument("--landmarks", default="ref/landmark_quests.json",
                     help="★★ 第 81 轮：地球地标任务（gen_landmark_quests.py 产物；"
                          "缺失 ⇒ 这 10 条继续被「地标」规则排除）")
+    ap.add_argument("--repeatables", default="ref/repeatable_quests.json",
+                    help="★★ 第 89 轮：可重复任务（gen_repeatable_quests.py 产物；"
+                         "缺失 ⇒ 这 15 条照旧「做完一次就消失」）")
     ap.add_argument("--out-header", default="plugin/src/SAQ_QuestTable.h")
     ap.add_argument("--out-json", default="ref/quest_table_debug.json")
     ap.add_argument("--out-as3", default="ui/missionmenu/saqdata/SaqEmbeddedPayload.inc")
@@ -524,6 +562,11 @@ def main() -> int:
     #   ② 引导候选来自该书目表；③ 说明文本写进载荷最后两列。见 load_landmark_quests。
     landmarks = load_landmark_quests(Path(a.landmarks))
     lm_by_local = {int(g["quest"]["local"]): i for i, g in enumerate(landmarks)}
+
+    # ★★ 第 89 轮（可重复任务）：做完一次后仍显示（豁免「已完成」过滤）+ 描述标注。
+    #   见 load_repeatable_quests / docs/11-可重复任务盘点（第89轮）.md。
+    repeatables = load_repeatable_quests(Path(a.repeatables))
+    rp_by_local = {int(g["local"]): i for i, g in enumerate(repeatables)}
 
     rows = []
     skipped_no_type = 0
@@ -577,10 +620,15 @@ def main() -> int:
             # ★★ 第 81 轮（地球地标任务）：-1 = 不是；≥0 = kLandmarkNotes* 下标
             #   （同时是说明文本的下标）。豁免「地标」过滤的判据也是它。
             "landmark": -1,
+            # ★★ 第 89 轮（可重复任务）：-1 = 不是；≥0 = kRepeatableNotes* 下标
+            #   （同时是说明文本的下标）。豁免「已完成」过滤的判据也是它。
+            "repeatable": -1,
         }
         row_is_landmark = int(row["local"]) in lm_by_local
         if row_is_landmark:
             row["landmark"] = lm_by_local[int(row["local"])]
+        if int(row["local"]) in rp_by_local:
+            row["repeatable"] = rp_by_local[int(row["local"])]
         if not a.keep_internal:
             reason = filter_reason(row, raw_en, raw_zh, is_landmark=row_is_landmark)
             if reason:
@@ -702,6 +750,27 @@ def main() -> int:
                        if g["guide"] else "只给说明（候选在生成期清空）")
                 print(f"  {i}. {g['quest']['nameZh']} / {g['quest']['nameEn']}"
                       f"（书：{g['book']['nameZh']}）[{tag}]")
+
+    # ★★ 第 89 轮（可重复任务）：说明文本（载荷最后两列）—— 与上面两个说明同一通路，
+    #   数据源换成 kRepeatableNotes*（下标 = repeatable 列）。判据（豁免「已完成」过滤）
+    #   在 C++ 侧由 Decision::DecideRuntimeFilter 的 repeatable 参数消费。
+    n_repeatable = 0
+    for r in rows:
+        idx = int(r.get("repeatable", -1))
+        if idx < 0:
+            continue
+        g = repeatables[idx]
+        r["noteZh"] = g["noteZh"]
+        r["noteEn"] = g["noteEn"]
+        n_repeatable += 1
+    rows_locals = {int(r["local"]) for r in rows}
+    missing_rp = [f"{g['key']}(0x{g['local']:06X})" for g in repeatables
+                  if int(g["local"]) not in rows_locals]
+    if missing_rp:
+        print(f"  !! 可重复任务表里有、但静态表里没有的任务（豁免无从生效）：{missing_rp}")
+    if repeatables:
+        print(f"可重复任务：{n_repeatable}/{len(repeatables)} 条进表"
+              f"（豁免「已完成」过滤；说明 + 第 11 列标记写进载荷）")
 
     # 引导目标（第 10 轮；★ 第 45 轮升级为「候选池」）：每条任务在世界里的
     # 「去哪里接」引用序列（gen_guide_targets.py 按质量排序 —— 有名字的 NPC >
@@ -1013,6 +1082,17 @@ def main() -> int:
     lines.append("\t\t//   数据源：ref/landmark_quests.json（tools/esm/gen_landmark_quests.py；")
     lines.append("\t\t//   核验「书的 VMAD 属性 QuestToSetOrCheck/StageToSet」+ 世界引用 + 兜底常驻）。")
     lines.append("\t\tstd::int8_t   landmark;")
+    lines.append("\t\t// ★★ 第 89 轮（可重复任务）：这条任务「做完一次还能再接」——")
+    lines.append("\t\t//   -1 = 不是；>= 0 = kRepeatableNotesZh/En 的下标（描述里写「（可重复）…」）。")
+    lines.append("\t\t//   语义（玩家 2026-09-22 反馈「Denis Averin 也给重复任务，列表里却没有他」）：")
+    lines.append("\t\t//     * **豁免「已完成」过滤**：这类任务完成一次后**继续留在列表里**")
+    lines.append("\t\t//       （它们设计上还能再接 —— 判据见 Decision::DecideRuntimeFilter 的 repeatable 参数）；")
+    lines.append("\t\t//     * **描述标注**：说明写进载荷最后两列（同势力开头 / 地标任务的通路）；")
+    lines.append("\t\t//     * **载荷第 11 列** = 可重复标记（\"1\"/\"0\"）—— AS3 侧 FilterKnownQuests 据此")
+    lines.append("\t\t//       豁免「在玩家日志里」的丢弃（已完成 + 可重复 ⇒ 保留；进行中照旧隐藏）。")
+    lines.append("\t\t//   数据源：ref/repeatable_quests.json（tools/esm/gen_repeatable_quests.py；")
+    lines.append("\t\t//   人工清单 + 构建期核验 —— 证据见 docs/11-可重复任务盘点（第89轮）.md）。")
+    lines.append("\t\tstd::int8_t   repeatable;")
     lines.append("\t};")
     lines.append("")
     lines.append("\t// 进度门槛（第 35 轮，「游戏进度还不能让玩家接到 ⇒ 不显示」）：")
@@ -1191,6 +1271,23 @@ def main() -> int:
     lines.append("\t};")
     lines.append(f"\tinline constexpr std::size_t kLandmarkCount = {len(landmarks)};")
     lines.append("")
+    lines.append("\t// ★★ 第 89 轮（可重复任务）：「（可重复）…」（下标 = StaticQuestInfo::repeatable）——")
+    lines.append("\t//   与前面两个说明同一通路（载荷最后两列，界面把它当描述第一句）。")
+    lines.append("\t//   数据源：ref/repeatable_quests.json（gen_repeatable_quests.py）。")
+    lines.append("\tinline constexpr const char* kRepeatableNotesZh[] = {")
+    for g in repeatables:
+        lines.append(f'\t\t"{c_escape(g["noteZh"])}",')
+    if not repeatables:
+        lines.append('\t\t"",  // 占位（表为空时 MSVC 不允许零长数组）')
+    lines.append("\t};")
+    lines.append("\tinline constexpr const char* kRepeatableNotesEn[] = {")
+    for g in repeatables:
+        lines.append(f'\t\t"{c_escape(g["noteEn"])}",')
+    if not repeatables:
+        lines.append('\t\t"",  // 占位（表为空时 MSVC 不允许零长数组）')
+    lines.append("\t};")
+    lines.append(f"\tinline constexpr std::size_t kRepeatableCount = {len(repeatables)};")
+    lines.append("")
     lines.append(f"\tinline constexpr StaticQuestInfo kQuestTable[] = {{")
     for r in rows:
         flags = int(r.get("dnam_flags", 0))
@@ -1204,7 +1301,7 @@ def main() -> int:
             f' "{c_escape(r["name_en"])}", "{c_escape(r["name_zh"])}",'
             f' {int(r.get("faction", -1))}, {int(r.get("companion", -1))},'
             f' {int(r.get("companion_pin", 0))}u, {int(r.get("faction_entry", -1))},'
-            f' {int(r.get("landmark", -1))} }},'
+            f' {int(r.get("landmark", -1))}, {int(r.get("repeatable", -1))} }},'
         )
     lines.append("\t};")
     lines.append(f"\tinline constexpr std::size_t kQuestTableSize = {len(rows)};")

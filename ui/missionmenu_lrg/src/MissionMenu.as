@@ -164,8 +164,15 @@ package
 
       // ★ 第 19 轮：最近一次 FilterKnownQuests 过滤掉的「玩家已有」uID 名单（日志诊断用）。
       private var SaqDropList:String = "-";
-
+      
       private var SaqDropCount:int = 0;
+      
+      // ★★ 第 89 轮（可重复任务）：最近一次 FilterKnownQuests 里「已完成但可重复 ⇒
+      //   放行保留」的 uID 名单（日志探针 `rptk=` 用 —— 证明豁免在显示层真的生效：
+      //   这类任务做完一次后**继续显示**在「可接任务」里，还能再接）。
+      private var SaqRepeatKeptList:String = "-";
+      
+      private var SaqRepeatKeptCount:int = 0;
 
       // ---- 引导（第 10 轮）------------------------------------------------
       // 玩家在「可接任务」tab 里选中一条、按 Enter 或 SET COURSE（键盘 R / 手柄 X）时：
@@ -454,13 +461,15 @@ package
          {
             return null;
          }
+         // ★★ 第 89 轮（可重复任务）：索引从「uID -> true」改成「uID -> 日志条目」——
+         //   豁免判据要读条目的 bComplete（已完成 + 可重复 ⇒ 保留）。
          var _loc2_:Object = {};
          if(this.QuestData != null)
          {
             var _loc3_:int = 0;
             while(_loc3_ < this.QuestData.length)
             {
-               _loc2_[this.QuestData[_loc3_].uID] = true;
+               _loc2_[this.QuestData[_loc3_].uID] = this.QuestData[_loc3_];
                _loc3_++;
             }
          }
@@ -471,11 +480,27 @@ package
          //   不用再人肉比对 qdata 名单（第 18 轮实测：raw=260 keep=257 少 3 条，无从确认）。
          var _loc6_:String = "";
          var _loc7_:int = 0;
+         // ★★ 第 89 轮：被豁免保留（已完成 + 可重复）的 uID 名单（最多 6 条，进 rptk=）。
+         var _loc8_:String = "";
+         var _loc9_:int = 0;
          while(_loc5_ < param1.length)
          {
-            if(!_loc2_[param1[_loc5_].uID])
+            var _loc10_:Object = _loc2_[param1[_loc5_].uID];
+            // ★★ 第 89 轮（可重复任务）：这类任务「做完一次还能再接」——
+            //   已完成（bComplete）⇒ **放行**（继续显示在「可接任务」里）；
+            //   进行中的照旧隐藏（正在做，不需要在「可接」里重复出现）。
+            //   bComplete 取不到（旧引擎条目 / 字段缺失）⇒ 不放行（保守 —— 维持老行为）。
+            var _loc11_:Boolean = _loc10_ != null
+               && param1[_loc5_].bSaqRepeatable == true
+               && _loc10_.bComplete == true;
+            if(!_loc10_ || _loc11_)
             {
                _loc4_.push(param1[_loc5_]);
+               if(_loc11_ && _loc9_ < 6)
+               {
+                  _loc9_++;
+                  _loc8_ += (_loc9_ > 1 ? "," : "") + param1[_loc5_].uID.toString(16);
+               }
             }
             else if(_loc7_ < 12)
             {
@@ -486,6 +511,8 @@ package
          }
          this.SaqDropCount = _loc7_;
          this.SaqDropList = _loc7_ > 0 ? _loc6_ : "-";
+         this.SaqRepeatKeptCount = _loc9_;
+         this.SaqRepeatKeptList = _loc9_ > 0 ? _loc8_ : "-";
          return _loc4_;
       }
       
@@ -652,7 +679,12 @@ package
                         //   描述第一句用它（取代「这条任务当前可以接取」）；
                         //   旧载荷 / 旧内嵌数据缺这列 ⇒ 空串（走原来的文案）。
                         "sSaqNoteZh":_loc7_.length >= 9 ? _loc7_[8] : "",
-                        "sSaqNoteEn":_loc7_.length >= 10 ? _loc7_[9] : ""
+                        "sSaqNoteEn":_loc7_.length >= 10 ? _loc7_[9] : "",
+                        // ★★ 第 89 轮（可重复任务）：第 11 列 = 可重复标记（"1"/"0"）——
+                        //   这类任务「做完一次还能再接」：FilterKnownQuests 对「已完成」的
+                        //   条目**放行**（继续显示在「可接任务」里）。
+                        //   旧载荷 / 旧内嵌数据缺这列 ⇒ false（老行为）。
+                        "bSaqRepeatable":_loc7_.length >= 11 ? _loc7_[10] == "1" : false
                      });
                   }
                }
@@ -1044,6 +1076,9 @@ package
             // ★★ 第 75 轮：把说明留在条目上 —— SAQ_Report 的 pin= 探针据此报出
             //   「说明真的进了描述」（数据列对了 ≠ 描述里真的用了它）。
             "sSaqNote":_loc1_,
+            // ★★ 第 89 轮（可重复任务）：可重复标记（载荷第 11 列）—— FilterKnownQuests
+            //   据此豁免「在玩家日志里」的丢弃（已完成 + 可重复 ⇒ 保留；进行中照旧隐藏）。
+            "bSaqRepeatable":param1.bSaqRepeatable == true,
             // 引导中的那条保持「追踪中」的视觉（左侧竖条）—— 列表重建（SaqRefresh）后不丢状态。
             "bActive":this.SaqGuideQuest != 0 && param1.uID == this.SaqGuideQuest,
             "bComplete":false,
@@ -1316,7 +1351,10 @@ package
          //   ★★ 第 82 轮（同伴文案说透）：stamp 60 —— 同伴条目的描述首句 + 尾部落点
          //     文案改写（「自动开始 / 不需要找地方接取 / 引导到的是这位同伴的位置」，
          //     见 SaqCompanionNote 与 SaqDescriptionText 的第 4 参数分支）。
-         _loc8_ += " stamp=60";
+         //   ★★ 第 89 轮（可重复任务）：stamp 61 —— 载荷加第 11 列（可重复标记，
+         //     见 SaqParsePayload）+ FilterKnownQuests 对「已完成 + 可重复」放行
+         //     （做完一次后仍显示）+ `rptk=` 探针（放行名单的运行期证据）。
+         _loc8_ += " stamp=61";
          // ★★ 第 51 轮：入口自检（ep=）—— 见 SaqEntryProbe 的说明。
          //   位置在 stamp 之后、其余字段之前：报告有长度上限，这个字段是当前排查
          //   「测试入口调不到」问题的关键证据，必须优先保下来。
@@ -1347,6 +1385,11 @@ package
          // ★★ 第 80 轮（可重复 NPC 入口）：可重复 NPC 条目计数 + 前 2 条 uID
          //   （见 SaqRepeatNpcProbe；短格式，几乎不占报告长度）。
          _loc8_ += " rep=[" + this.SaqRepeatNpcProbe() + "]";
+         // ★★ 第 89 轮（可重复任务）：「已完成 + 可重复 ⇒ 在显示层被放行保留」的
+         //   条目计数 + uID 名单（最多 6 条，见 FilterKnownQuests 的 SaqRepeatKept*）。
+         //   用例判据：把一条可重复任务推到完成 stage ⇒ 重开菜单 ⇒ 这里应出现它的 uID
+         //   （证明「做完一次后仍显示」在**显示层**真的生效，而不只是 C++ 载荷层）。
+         _loc8_ += " rptk=[" + this.SaqRepeatKeptCount + "|" + this.SaqRepeatKeptList + "]";
          // 玩家任务日志名单（第 11 轮，诊断用）：QuestData 的「FormID:名字」，最多 12 条。
          // 用途：玩家说「某条可接任务没找到」时，先看它是不是**已经在玩家日志里**
          // （那样它被 C++/AS3 两层过滤中的某一层正当挡掉）—— 在这个名单里一查便知。

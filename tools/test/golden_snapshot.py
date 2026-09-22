@@ -53,6 +53,9 @@ ITEMS: list[tuple[str, str]] = [
     ("ref/faction_entry_quests.json", "四大势力开头任务（gen_faction_entry_quests.py）"),
     # ★★ 第 81 轮：地球地标任务（「雪景球」收集线；gen_landmark_quests.py）
     ("ref/landmark_quests.json", "地球地标任务（gen_landmark_quests.py）"),
+    # ★★ 第 89 轮：可重复任务（做完一次后仍显示 —— 豁免「已完成」过滤；
+    #   gen_repeatable_quests.py，见 docs/11）
+    ("ref/repeatable_quests.json", "可重复任务（gen_repeatable_quests.py）"),
     ("plugin/src/SAQ_QuestTable.h", "静态任务表（gen_quest_table.py，DLL 编译进去）"),
     # ★★ 第 74 轮续：内嵌回退载荷（顺序与 C++ 载荷逐条对齐 —— 同伴任务前置参见 verify）
     ("ui/missionmenu/saqdata/SaqEmbeddedPayload.inc", "内嵌回退载荷（gen_quest_table.py）"),
@@ -122,6 +125,10 @@ def summarize(rel: str, path: pathlib.Path) -> str:
                 # ★★ 第 80 轮：可重复任务 NPC —— 条数 + 内景建档数（外景的不建 marker）
                 n_int = sum(1 for g in obj if g.get("interior"))
                 return f"NPC {len(obj)}（内景建档 {n_int} / 外景 {len(obj) - n_int}）"
+            if rel.endswith("repeatable_quests.json") and isinstance(obj, list):
+                # ★★ 第 89 轮：可重复任务 —— 条数 + 有引导候选数（导航能力的第一眼证据）
+                n_cand = sum(1 for g in obj if int(g.get("candCount", 0)) > 0)
+                return f"可重复 {len(obj)}（有引导 {n_cand}）"
             return f"键 {len(obj)}" if isinstance(obj, dict) else f"条目 {len(obj)}"
         if rel.endswith("SaqEmbeddedPayload.inc"):
             # ★★ 第 74 轮续：内嵌载荷 —— 条数 + 第一条 FormID（顺序不变量的第一眼证据）
@@ -140,6 +147,7 @@ def summarize(rel: str, path: pathlib.Path) -> str:
                 "kCompanionCount": "同伴",       # ★★ 第 74 轮：同伴好感度任务
                 "kFactionEntryCount": "势力入口",  # ★★ 第 75 轮：四大势力开头任务
                 "kLandmarkCount": "地标",        # ★★ 第 81 轮：地球地标任务
+                "kRepeatableCount": "可重复",    # ★★ 第 89 轮：可重复任务
                 "kEntryTableSize": "入口",
             }
             parts = []

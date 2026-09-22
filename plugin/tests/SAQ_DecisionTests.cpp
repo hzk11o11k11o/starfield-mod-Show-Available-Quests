@@ -94,6 +94,34 @@ MT_TEST(运行时过滤_只挡已完成且虚表已知)
 	MT_CHECK_EQ(DecideRuntimeFilter(both, true), RuntimeFilterVerdict::kHideCompleted);
 }
 
+MT_TEST(可重复任务_完成后仍显示)
+{
+	// ★★ 第 89 轮（可重复任务）：豁免判据 —— 与「只挡已完成」正交：
+	//   * repeatable=false ⇒ 与旧行为逐字一致（= IsCompletedConfirmed 同源）；
+	//   * repeatable=true ⇒ **恒 kKeep**（完成一次后继续显示 —— 设计上还能再接，
+	//     见 docs/11-可重复任务盘点（第89轮）.md）。
+	RuntimeFlags done{ .started = true, .completed = true };
+	MT_CHECK_EQ(DecideRuntimeFilter(done, true, false), RuntimeFilterVerdict::kHideCompleted);
+	MT_CHECK_EQ(DecideRuntimeFilter(done, true, true), RuntimeFilterVerdict::kKeep);   // 豁免
+	MT_CHECK_EQ(DecideRuntimeFilter(done, false, true), RuntimeFilterVerdict::kKeep);  // 虚表未知也保留
+
+	// 未完成时两种标记都是 kKeep（「已开始」不挡 —— 第 11 轮实证）
+	RuntimeFlags running{ .started = true };
+	MT_CHECK_EQ(DecideRuntimeFilter(running, true, false), RuntimeFilterVerdict::kKeep);
+	MT_CHECK_EQ(DecideRuntimeFilter(running, true, true), RuntimeFilterVerdict::kKeep);
+
+	// 全组合枚举：repeatable=true ⇒ 恒 kKeep；false ⇒ 与 IsCompletedConfirmed 同源
+	for (int completed = 0; completed < 2; ++completed)
+		for (int vtable = 0; vtable < 2; ++vtable) {
+			const RuntimeFlags f{ .completed = completed != 0 };
+			const bool known = vtable != 0;
+			MT_CHECK_EQ(DecideRuntimeFilter(f, known, true), RuntimeFilterVerdict::kKeep);
+			const bool hidden =
+				DecideRuntimeFilter(f, known, false) == RuntimeFilterVerdict::kHideCompleted;
+			MT_CHECK_EQ(hidden, IsCompletedConfirmed(f, known));
+		}
+}
+
 MT_TEST(已完成确认_两个调用点的共同判据)
 {
 	// IsCompletedConfirmed = completed && vtableKnown（四个组合全枚举）
