@@ -251,4 +251,40 @@ namespace SAQ
 		}
 		return Decision::DecideChainGates(edges);
 	}
+
+#if SAQ_WITH_HARNESS
+	// ★★★ 第 101 轮补丁（harness 只读探针 `quest.probe`，声明与设计说明见头文件）：
+	//   一次报出「运行时状态 + 逐个 stage 的 IsStageDone」—— 与链式判定**同源**
+	//   （同一个 StageDoneFnOrNull 特征校验 + 同一个 CallStageDoneChecked 保护调用）。
+	std::string ProbeQuestStages(std::uint32_t a_formID, const std::vector<std::uint16_t>& a_stages)
+	{
+		const auto* form = a_formID
+			? RE::TESForm::LookupByID(static_cast<RE::TESFormID>(a_formID))
+			: nullptr;
+		if (!form) {
+			return std::format("quest.probe 0x{:08X}：表单取不到（master 没加载 / 记录不存在）", a_formID);
+		}
+		const auto st = ReadQuestRuntimeState(form);
+		std::string out = std::format("quest.probe 0x{:08X}：{}", a_formID, Describe(st));
+		if (a_stages.empty()) {
+			out += "｜（没给 stage —— 用法 quest.probe <FormID> [stage...]）";
+			return out;
+		}
+		const auto fn = StageDoneFnOrNull();
+		if (!fn) {
+			out += "｜IsStageDone 不可用（游戏版本特征不符）";
+			return out;
+		}
+		for (const auto stage : a_stages) {
+			bool ok = false;
+			if (!CallStageDoneChecked(reinterpret_cast<void*>(fn),
+					const_cast<RE::TESForm*>(form), stage, ok)) {
+				out += std::format("｜stageDone({})=调用异常", stage);
+				continue;
+			}
+			out += std::format("｜stageDone({})={}", stage, ok ? 1 : 0);
+		}
+		return out;
+	}
+#endif  // SAQ_WITH_HARNESS
 }

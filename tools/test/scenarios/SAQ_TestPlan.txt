@@ -1305,7 +1305,13 @@ step = menu.close
 ;       ⇒ **本条用例的窗口里**名单没有「另一边」（MQIN 的共同启动边被覆盖）。
 ;       ★ 与 r67/r98 同款说明：边一触发即放行 ⇒ 证的是「**不再因链式门槛**被藏」；
 ;         之后是否进列表还要过运行时/显示层（不在此断言）。
-;  自清场：两条都 `quest.reset` 回滚（MQ01 / MQ02A / MQ02B / MQ03 / MQ04 / MQ05 / MQIN）。
+;       ★★ 第 101 轮补丁（2026-09-22 20:41 会话实测 FAIL 后加）：B 段与对照段各带
+;       `quest.probe` 只读探针（直读引擎 IsStageDone，与链式判定**同源**）—— 输出是
+;       「写侧没生效 vs 读侧读不到」的硬证据（同类先例：第 99 轮 MQ01@10000）。
+;    ③ `[case:r101_dlc_chain2_mq05]`（B 对照边）：换 MQIN 的另一条启动边
+;       （「发掘过去」MQ05@1600）做同构判据 —— 放行 ⇒ 4000 那条特有；不放行 ⇒
+;       与第 99 轮同类的「大 stage 推不动」共性。
+;  自清场：三条都 `quest.reset` 回滚（MQ01 / MQ02A / MQ02B / MQ03 / MQ04 / MQ05 / MQIN）。
 ;  ★ 只动这些 DLC 任务的状态；不传送、不开星图、不读档（紧接着就是 r62 读档用例，
 ;    会把世界整体覆盖回存档现场）。
 ; ----------------------------------------------------------------------------
@@ -1341,7 +1347,52 @@ step = quest.start ~0x00030C2B
 step = wait 2000
 step = quest.stage ~0x00030C2B 4000
 step = wait 2500
+; ★★ 第 101 轮补丁（20:41 会话实测 FAIL 的定调探针 —— 只读、直读引擎）：
+;   判读：stageDone(4000)=0 ⇒ **写侧没生效**（引擎里 done 位始终为 0）⇒ 换用例构造；
+;         stageDone(4000)=1 而下面 assert.nolog 仍 FAIL ⇒ 读侧/判定链问题。
+;   连 MQIN 一起读：若 fragment 真执行过（`MQIN.SetStage(10)`），MQIN 的 stageDone(10) 应为 1。
+step = quest.probe ~0x00030C2B 100 3350 4000
+step = quest.probe ~0x0010AAD5 10
 step = note === MQ03@4000 已触发 ⇒「另一边」不再被链式门槛藏（重启/换候选由后续链路负责）===
+step = menu.open
+step = assert.log 推送成功 scope=prev timeout=12000
+step = assert.nolog 链式没到:.*另一边 scope=case timeout=3000
+step = menu.close
+step = wait 1500
+step = note === 收尾：MQ03 / MQ04 / MQ05 / MQIN reset 回去（自清场）===
+step = quest.reset ~0x00030C2B
+step = quest.reset ~0x00035E1A
+step = quest.reset ~0x00035E1C
+step = quest.reset ~0x0010AAD5
+step = wait 2500
+
+; ----------------------------------------------------------------------------
+; ★★ 第 101 轮补丁（2026-09-22 20:41 会话实测 FAIL 的对照用例）：
+;   背景：`r101_dlc_chain2_pass`（推 MQ03@4000）实测「写侧回执成功（Papyrus `=> 4000`）
+;   但链式判定与『已开始』零变化」。本用例换**同目标（MQIN）的另一条启动边**
+;   「发掘过去」（MQ05）@1600 做对照 —— 用来区分两件事：
+;     · 本段放行而 B 段（4000）不放行 ⇒ 单条边 / stage 4000 特有；
+;     · 本段也不放行 ⇒ 与第 99 轮 `MQ01@10000` 同类的「大 stage 推不动」共性。
+;   判据与 B 段同构（assert.nolog 无「另一边」）；`quest.probe` 提供引擎侧硬证据。
+; ----------------------------------------------------------------------------
+[case:r101_dlc_chain2_mq05]
+desc = 第 101 轮补丁：DLC 链式门槛二期（B 对照边）—— 推「发掘过去」（MQ05）到 stage 1600 后，「另一边」不再被链式藏
+step = note === 对照边：MQIN 三条启动边换一条（MQ05@1600，fragment 同款守卫 → MQIN.SetStage(10)）===
+step = ping
+; 先把 MQIN 与另两条边的宿主都回滚（否则残留的边会掩盖本段的判据）。
+step = quest.reset ~0x0010AAD5
+step = quest.reset ~0x00030C2B
+step = quest.reset ~0x00035E1A
+step = quest.reset ~0x00035E1C
+step = wait 1500
+step = quest.start ~0x00035E1C
+step = wait 2000
+step = quest.stage ~0x00035E1C 1600
+step = wait 2500
+; 只读探针：MQ05 的 1600 是否落到引擎 + MQIN 是否被 fragment 启动。
+step = quest.probe ~0x00035E1C 100 1000 1600 2000
+step = quest.probe ~0x0010AAD5 10
+step = note === MQ05@1600 已触发 ⇒「另一边」不再被链式门槛藏 ===
 step = menu.open
 step = assert.log 推送成功 scope=prev timeout=12000
 step = assert.nolog 链式没到:.*另一边 scope=case timeout=3000

@@ -518,6 +518,13 @@ HARNESS_STRINGS = (
     ("harness 命令超时菜单证据", "此刻打开的菜单"),
     ("harness 清场延迟复查文案", "用例收尾复查：星图在清场后才打开"),
     ("传送回执等待窗口文案", "传送等回执最多"),
+    # ★★ 第 101 轮补丁（2026-09-22 20:41 会话实测 FAIL 的定调用）：**只读探针**
+    #   `quest.probe` —— 用与链式 / 进度门槛**同一个**引擎函数直读 IsStageDone，
+    #   区分「写侧没生效」与「读侧读不到」（同类先例：第 99 轮 MQ01@10000）。
+    #   实现只在开发构建里（SAQ_QuestCond.cpp 的 #if SAQ_WITH_HARNESS 内 +
+    #   SAQ_Test.cpp 的 op 名）⇒ 发布 DLL 必须一条都不见（本表反向检查覆盖）。
+    ("harness 引擎直读探针 op 名", "quest.probe"),
+    ("harness 引擎直读探针文案", "quest.probe 0x"),
 )
 
 
@@ -1295,7 +1302,9 @@ def main() -> int:
                             # ★★★ 第 101 轮：DLC 链式门槛**二期**（14 + 1 条新边）——
                             #   A：新目标在「链式没到」名单里；B：推 MQ03@4000 后
                             #   「另一边」不再被链式藏
-                            "r101_dlc_chain2", "r101_dlc_chain2_pass",
+                            #   ★★ 第 101 轮补丁（20:41 会话实测 FAIL）：+ B 对照边
+                            #   （MQ05@1600）与只读探针 `quest.probe`（直读引擎）。
+                            "r101_dlc_chain2", "r101_dlc_chain2_pass", "r101_dlc_chain2_mq05",
                             "r62_reload_observe"):
                     all_ok &= check(f"用例计划 · [case:{cid}]", plan_text.encode(),
                                     f"[case:{cid}]".encode())
@@ -1337,6 +1346,18 @@ def main() -> int:
                 all_ok &= check("用例计划 · r101 DLC 链式二期放行断言（B：assert.nolog 另一边）",
                                 plan_text.encode(),
                                 "assert.nolog 链式没到:.*另一边 scope=case".encode())
+                # ★★ 第 101 轮补丁：FAIL 现场的第一证据 = 只读探针（直读引擎的
+                #   IsStageDone，与链式判定同源）—— B 段（MQ03@4000）与对照段
+                #   （MQ05@1600）都必须带着它跑，否则下一轮实测又只能看「零变化」。
+                all_ok &= check("用例计划 · r101 探针步骤（quest.probe 直读引擎，B 段）",
+                                plan_text.encode(),
+                                "quest.probe ~0x00030C2B 100 3350 4000".encode())
+                all_ok &= check("用例计划 · r101 探针步骤（quest.probe 直读引擎，对照段）",
+                                plan_text.encode(),
+                                "quest.probe ~0x00035E1C 100 1000 1600 2000".encode())
+                all_ok &= check("用例计划 · r101 对照边用例（MQ05@1600）",
+                                plan_text.encode(),
+                                "quest.stage ~0x00035E1C 1600".encode())
                 # 反向检查①：二期用例里同样不许写死运行期 FormID（必须 `~0x…` 记录号）。
                 bad_r101_fid = ("quest.reset 0x0110AAD5" in plan_text
                                 or "quest.stage 0x01030C2B" in plan_text)

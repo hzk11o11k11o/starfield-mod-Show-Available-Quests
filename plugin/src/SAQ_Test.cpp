@@ -15,6 +15,7 @@
 #include "SAQ_EntryTable.h"  // 任务板入口表（`teleport.entry` 要把「板/常驻 marker」解析成引用）
 #include "SAQ_Guide.h"       // Guide::EnsureChannel（入口 marker 的运行期前缀）
 #include "SAQ_Masters.h"     // Masters::MakeFormID（「master + 记录号」→ 运行期 FormID）
+#include "SAQ_QuestCond.h"   // ★ 第 101 轮补丁：ProbeQuestStages（quest.probe 只读探针）
 #include "SAQ_QuestTable.h"  // 静态任务表（`~0x…` = 记录号，按加载顺序解析成运行期 FormID）
 
 #include "RE/T/TESForm.h"
@@ -134,6 +135,7 @@ namespace SAQ::Test
 			kNote,
 			kGuideClear,   // 取消引导（DLL 自己的产品路径：Guide::SetGuideTarget(0)）
 			kGuideProbe,   // ★ 第 60 轮：候选可得性探针（只读，见 ProbeGuideCandidates）
+			kQuestProbe,   // ★★ 第 101 轮补丁：quest.probe —— 直读 IsStageDone（只读，见 ProbeQuestStages）
 			kSaveList,     // ★★ 第 62 轮：存档列表诊断（BGSSaveLoadManager，只读）
 			kSaveLoad,     // ★★ 第 62 轮：自动读档（排队 → 等加载走完 → 通道重新就绪）
 		};
@@ -155,6 +157,8 @@ namespace SAQ::Test
 			std::string   text;               // 正则 / 备注文本 / ui 参数 / 菜单名
 			std::uint32_t formId{};
 			std::int32_t  num{};
+			// ★★ 第 101 轮补丁：`quest.probe` 的 stage 列表（只读探针要读哪几个 stage）。
+			std::vector<std::uint16_t> stages;
 			bool          menuOpen{};         // kind == kMenu / kAssertMenu
 			LogScope      logScope{ LogScope::kThis };
 			// ★ 第 54 轮：① `~0x…` = 记录号（踢给静态表解析成运行期 FormID）；
@@ -623,6 +627,27 @@ namespace SAQ::Test
 				} catch (...) {
 					a_error = "stage 不是数字：" + toks[1];
 					return false;
+				}
+			} else if (op == "quest.probe") {
+				// ★★ 第 101 轮补丁：**只读**探针（不进 Papyrus 命令通道、不等回执、菜单开关不影响）——
+				//   用与链式 / 进度门槛**同一个**引擎函数读任意 (quest, stage) 的 IsStageDone，
+				//   把结果写进日志（可被 assert.log 取证，也进步骤结果 JSON）。
+				//   为什么需要：第 101 轮 `r101_dlc_chain2_pass`（推 MQ03@4000）实测
+				//   「写侧回执成功（Papyrus `=> 4000`）但链式判定与『已开始』零变化」——
+				//   必须区分「写侧没生效」与「读侧读不到」；同类先例 = 第 99 轮 MQ01@10000。
+				a_step.kind = Kind::kQuestProbe;
+				const auto toks = SplitWs(rest);
+				if (toks.empty() || !parseFormIDToken(toks[0], a_step.formId)) {
+					a_error = "需要 <FormID> [stage...]（如 quest.probe ~0x00030C2B 100 4000）";
+					return false;
+				}
+				for (std::size_t i = 1; i < toks.size(); ++i) {
+					try {
+						a_step.stages.push_back(static_cast<std::uint16_t>(std::stoul(toks[i])));
+					} catch (...) {
+						a_error = "stage 不是数字：" + toks[i];
+						return false;
+					}
 				}
 			} else if (op == "wait") {
 				a_step.kind = Kind::kWait;
@@ -1226,6 +1251,23 @@ namespace SAQ::Test
 
 			case Kind::kSaveList: {
 				CompleteStep(true, SaveGameListSummary(), {});
+				return true;
+			}
+
+			case Kind::kQuestProbe: {
+				// ★★ 第 101 轮补丁：只读探针 —— 一次性完成（不等回执；菜单开着也能跑）。
+				//   detail 里带 `stageDone(N)=0/1` ⇒ 用例可以 assert.log 取证，
+				//   结果也会原样进 SAQ_testresults.json 的步骤 detail（失败现场的第一证据）。
+				std::uint32_t formID = step.formId;
+				if (step.localFormID) {
+					std::string resolved;
+					if (!ResolveStepFormID(step, formID, resolved)) {
+						CompleteStep(false, "FormID 解析失败：" + resolved, {});
+						return true;
+					}
+					REX::INFO("harness：  参数解析 {}", resolved);
+				}
+				CompleteStep(true, ProbeQuestStages(formID, step.stages), {});
 				return true;
 			}
 

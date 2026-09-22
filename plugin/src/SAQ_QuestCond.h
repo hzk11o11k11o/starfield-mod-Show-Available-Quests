@@ -19,6 +19,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "SAQ_Decision.h"   // ★ 第 64 轮（大项 K）：三态 / 聚合结果类型来自离线层
 
@@ -65,4 +66,21 @@ namespace SAQ
 	//     * 全部边都未完成 ⇒ kFail（进度没到 ⇒ 隐藏 —— 「菜鸟觐见」在「深藏不露」没做之前不显示）；
 	//     * 前置任务取不到 / 求值器不可用 ⇒ kUnknown（放行，保守）。
 	CondEvalResult EvaluateChainGates(std::uint32_t a_edgeBegin, std::uint8_t a_edgeCount);
+
+#if SAQ_WITH_HARNESS
+	// ★★★ 第 101 轮补丁（harness 只读探针 `quest.probe`）：把任意 (quest, stage) 的
+	//   IsStageDone 与运行时状态用**一行文本**报出来 —— 走的是**与链式 / 进度门槛完全相同**
+	//   的函数与调用路径（同一份 9 字节特征校验 + 同一个 CallStageDoneChecked），
+	//   不是另写一套查询。
+	//
+	//   为什么需要它（第 101 轮 `r101_dlc_chain2_pass` 实测 FAIL 的定调用）：
+	//   推 `MQ03@4000` 后链式判定与「已开始」**零变化**（「另一边」仍在「链式没到」名单），
+	//   而 Papyrus 侧日志证明 `SetStage(SFBGS001_MQ03, 4000)` 调用成功（`=> 4000`）。
+	//   现有证据无法区分这两件事 —— 这个探针就是那条判据：
+	//     · stageDone(N)=0 ⇒ **写侧没生效**（引擎里 done 位始终为 0）⇒ 换用例构造；
+	//     · stageDone(N)=1 而链式仍藏 ⇒ **读侧**没读到 ⇒ 查 IsStageDone 通道与判定链。
+	//   同类先例：第 99 轮 `MQ01@10000`（「回执全成功但统计行逐字段一致」）。
+	//   只读、无副作用、菜单开着也能跑（与 kGuideProbe 同款）。
+	std::string ProbeQuestStages(std::uint32_t a_formID, const std::vector<std::uint16_t>& a_stages);
+#endif  // SAQ_WITH_HARNESS
 }
