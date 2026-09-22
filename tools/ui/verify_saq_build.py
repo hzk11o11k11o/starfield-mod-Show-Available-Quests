@@ -1297,18 +1297,30 @@ def main() -> int:
                                     f"[case:{cid}]".encode())
                 # ★★★ 第 98 轮：两条 DLC 链式用例的断言形状（防被改回「点名一条」
                 #   或写死运行期 FormID —— 六条里任意一条命中即可；ID 用 `[0x` 通配）。
+                #   ★ 第 99 轮：名字修正（「狂热逾界」「发掘过去」—— 旧版手打成了
+                #   「狂热逼界」「发觉过去」，靠断言的「或」语义没暴露）。
                 all_ok &= check("用例计划 · r98 DLC 链式门槛断言（A：六条任一被藏）",
                                 plan_text.encode(),
-                                "assert.log 链式没到: .*(虚妄的得诺者|家族的调和|狂热逼界".encode())
+                                "assert.log 链式没到: .*(虚妄的得诺者|家族的调和|狂热逾界".encode())
+                # ★★★ 第 99 轮（实测复盘修正）：B 段从「推 MQ01@10000」改成
+                #   「推 MQ_Shell@100」—— 原设计实测造不出状态（所有统计行逐字段不变），
+                #   且 MQ01 的收尾 fragment 是 `Self.Stop()` + `AddAchievement(51)`
+                #   （不可观测 + 成就污染风险）；MQ_Shell@100 的三条议会任务边安全可观测。
                 all_ok &= check("用例计划 · r98 DLC 链式门槛放行断言（B：assert.nolog）",
                                 plan_text.encode(),
-                                "assert.nolog 链式没到:.*虚妄的得诺者 scope=case".encode())
-                # 反向检查：DLC 用例里不许把运行期 FormID 写死（必须用 `~0x…` 记录号）。
+                                "assert.nolog 链式没到:.*(狂热逾界|信念之争|发掘过去) scope=case".encode())
+                # 反向检查①：DLC 用例里不许把运行期 FormID 写死（必须用 `~0x…` 记录号）。
                 bad_dlc_fid = ("quest.reset 0x010116C7" in plan_text
-                               or "quest.start 0x010121DB" in plan_text)
+                               or "quest.start 0x01035E1B" in plan_text)
                 print(("MISS " if bad_dlc_fid else "OK  ") +
                       " 用例计划 · r98 DLC 用例用 ~0x 记录号（反向检查）")
                 all_ok &= not bad_dlc_fid
+                # 反向检查②（第 99 轮）：不许再出现「推 MQ01@10000」的不可达写法
+                #   （实测造不出 + fragment 带 Stop/成就，见 docs/09 十四·补二十四）。
+                bad_mq01_push = "quest.stage ~0x000121DB 10000" in plan_text
+                print(("MISS " if bad_mq01_push else "OK  ") +
+                      " 用例计划 · r98 不再推 MQ01@10000（反向检查，第 99 轮）")
+                all_ok &= not bad_mq01_push
                 # ★★ 第 65 轮（任务专属图标）：r65 用例的图标断言必须走**界面报告**
                 #   （assert.ui —— icon= 字段是 SAQ_Report 的实时值，比日志断言更直接）。
                 all_ok &= check("用例计划 · r65 图标断言（assert.ui icon=）",
@@ -2229,9 +2241,9 @@ def main() -> int:
         for label, tgt, host, stage in (
                 ("虚妄的得诺者 ← 残留之物@10000", "000116C7", "000121DB", "10000"),
                 ("家族的调和 ← 虚妄的得诺者@2000", "00035E1B", "000116C7", "2000"),
-                ("狂热逼界 ← 家族的调和@100", "00030C2B", "00035E1B", "100"),
+                ("狂热逾界 ← 家族的调和@100", "00030C2B", "00035E1B", "100"),
                 ("信念之争 ← 家族的调和@100", "00035E1A", "00035E1B", "100"),
-                ("发觉过去 ← 家族的调和@100", "00035E1C", "00035E1B", "100"),
+                ("发掘过去 ← 家族的调和@100", "00035E1C", "00035E1B", "100"),
                 ("栉比堡垒 ← 家族的调和@1100", "0001221C", "00035E1B", "1100"),
         ):
             ok_e = False
