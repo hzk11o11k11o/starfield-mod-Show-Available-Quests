@@ -17,6 +17,16 @@ r"""plan_regex_audit.py —— 用例文件里的断言正则「体检」（第 
 用法：
     python tools/test/plan_regex_audit.py                     # 默认读 MO2 部署目录的日志
     python tools/test/plan_regex_audit.py <日志路径> [用例文件]
+
+★ 第 94 轮：日志有 1MB 上限、超限会**清空全部旧内容**（main.cpp 的 SizeLimitedFileSink）——
+  长会话（26 条用例）跑到后段时，**开头的用例段会被整个清掉**。此前这会被报成
+  「N 条未命中（用例没跑到）」的大片噪声（其实段不存在 = 无从体检，不是缺陷）。
+  现在分两类：① **前缀缺失**（缺的段全部早于最早的在段）= 日志滚动清掉的 ⇒ 只提示；
+  ② 中间 / 末尾缺段 = 真的异常 ⇒ 仍计 bad。日志里一个用例段都没有 ⇒ 退出码 2
+  （无从体检，不再静默假绿）。
+
+退出码：0 = 体检通过（可含「滚动清掉、无从体检」的提示）；1 = 有未命中 / 真的缺段；
+        2 = 无从体检（没有用例段 / 没解析出断言）。
 """
 from __future__ import annotations
 
@@ -75,12 +85,16 @@ def main() -> int:
     plan = plan_path.read_text(encoding="utf-8")
     case = "?"
     checked = 0
+    plan_order: list[str] = []
+    missing: list[str] = []
     bad: list[tuple[str, str, str, str]] = []
     info: list[tuple[str, str, str, str]] = []
     for raw in plan.splitlines():
         s = raw.strip()
         if s.lower().startswith("[case:"):
             case = s[len("[case:"):].rstrip("]").strip()
+            if case not in plan_order:
+                plan_order.append(case)
             continue
         if not s.lower().startswith("step = assert"):
             continue
@@ -99,7 +113,8 @@ def main() -> int:
         checked += 1
         seg = cases.get(case)
         if seg is None:
-            bad.append((case, op, rest, "这次日志里根本没有这个用例（没跑到 / 中途中止）"))
+            if case not in missing:
+                missing.append(case)
             continue
         pool = seg
         if op == "assert.ui":
@@ -111,7 +126,33 @@ def main() -> int:
         elif not hit:
             bad.append((case, op, rest, "本用例段里一次都没命中"))
 
+    if not cases:
+        print(f"日志里没有任何用例段（{log_path.name}）—— 无从体检。")
+        print("（日志被滚动清空 / 这不是这次会话的日志 / 用例根本没跑。"
+              "先确认 harness 跑过，再看这份日志。）")
+        return 2
+    if checked == 0:
+        print(f"用例文件里没解析出可体检的断言（{plan_path.name}）—— 无从体检。")
+        return 2
+    # ★ 第 94 轮：缺段分两类 —— 前缀缺失（全部早于最早的在段）= 日志滚动清掉的（正常）；
+    #   其余（中间 / 末尾有洞）= 真的异常，仍计 bad。
+    rolled: list[str] = []
+    holes = missing
+    if missing:
+        idx = {cid: i for i, cid in enumerate(plan_order)}
+        present = [idx[c] for c in cases if c in idx]
+        if present and max(idx[c] for c in missing) < min(present):
+            rolled, holes = missing, []
+    for cid in holes:
+        bad.append((cid, "（整个用例）", "—",
+                    "这次日志里根本没有这个用例（没跑到 / 中途中止）"))
+
     print(f"检查 {checked} 条断言（日志 {log_path.name}｜用例段 {len(cases)} 个）")
+    if rolled:
+        print(f"（提示）{len(rolled)} 个用例段不在日志里、**无从体检**："
+              f"{', '.join(rolled)}")
+        print("      —— 全部集中在最早的段之前 = 日志滚动清掉了开头"
+              "（1MB 上限的正常现象，不是缺陷）。")
     if bad:
         print(f"有 {len(bad)} 条未命中（人工过一眼：写错的正则 / 前置步骤没跑到）：")
         for case_, op, regex, why in bad:
