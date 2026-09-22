@@ -1129,6 +1129,10 @@ def main() -> int:
             #      生效的证据（`已完成保留` = 本该被「只挡已完成」剔掉、因可重复留下的条数）。
             "可重复任务说明数据(翻新商品)": "（可重复）完成一次后还能再次接取",
             "可重复任务说明数据(全数到期)": "盖尔银行",
+            # ★★ 第 90 轮：DLC 的 SFFL 家族两条样本 —— 有接取人（仲裁者）与随机太空遭遇
+            #   （「随机太空遭遇」这个说法只可能来自本轮新加的 DLC 文案）。
+            "可重复任务说明数据(职业杀手)": "仲裁者",
+            "可重复任务说明数据(危险材料)": "随机太空遭遇",
             "可重复任务统计（可重复任务=）": "可重复任务=",
             "可重复任务保留名单（可重复保留:）": "可重复保留: ",
         }.items():
@@ -1213,6 +1217,9 @@ def main() -> int:
                             # ★★ 第 89 轮：可重复任务做完一次后仍显示（C++ 豁免 +
                             #   显示层 FilterKnownQuests 放行 —— rptk= 探针为直接判据）
                             "r89_repeatable",
+                            # ★★ 第 90 轮：DLC（SFBGS00D）可重复任务同一条链路 ——
+                            #   目标 = 「职业杀手」（记录号 0x0002A418，`~0x…` 写法）
+                            "r90_dlc_repeatable",
                             "r62_reload_observe"):
                     all_ok &= check(f"用例计划 · [case:{cid}]", plan_text.encode(),
                                     f"[case:{cid}]".encode())
@@ -1344,6 +1351,20 @@ def main() -> int:
                 print(("OK  " if ok87 else "MISS") +
                       " 用例计划 · r87 两条都在 + B 段补做 Z04（complete 0x002149FA）")
                 all_ok &= ok87
+                # ★★ 第 90 轮（DLC 可重复任务）：r90 的三条判据 ——
+                #   ① DLC 任务在**两个 op 家族**里都用 `~0x…` 记录号（`quest.complete` /
+                #      `ui.select`）—— 写成运行期 FormID 会因加载顺序变化指错记录（第 17 轮
+                #      同款坑：本机 SFBGS00D 序号 0x0B，换机器就不是它）；
+                #   ② 豁免名单断言容忍 DLC 加载顺序前缀，只钉 8 位 UID 的尾段（2A418）；
+                #   ③ `rptk=` 同理（AS3 打的是运行期 uID 的 hex —— 前缀随加载顺序变）。
+                all_ok &= check("用例计划 · r90 DLC 任务用记录号（quest.complete ~0x0002A418）",
+                                plan_text.encode(), "quest.complete ~0x0002A418".encode())
+                all_ok &= check("用例计划 · r90 豁免名单断言（职业杀手，容忍 DLC 前缀）",
+                                plan_text.encode(),
+                                "assert.log 可重复保留: .*职业杀手\\[0x[0-9A-F]+2A418 scope=case".encode())
+                all_ok &= check("用例计划 · r90 显示层放行断言（rptk= 尾段 2a418）",
+                                plan_text.encode(),
+                                "assert.ui rptk=\\[[1-9][0-9]*\\|[0-9a-f]*2a418 timeout=3000".encode())
                 plan_deployed = MO2_MOD / "SFSE/Plugins/SAQ_TestPlan.txt"
                 if plan_deployed.exists():
                     same = plan_deployed.read_bytes() == plan_src.read_bytes()
@@ -2247,16 +2268,18 @@ def main() -> int:
             all_ok &= ok_row
 
         # ★★ 第 89 轮（可重复任务）：静态表 repeatable 列 + 说明文本 —— 数据侧完整性：
-        #   ① 表里恰好 15 条 repeatable ≥ 0，下标 = 0..14（与 ref/repeatable_quests.json
+        #   ① 表里恰好 20 条 repeatable ≥ 0，下标 = 0..19（与 ref/repeatable_quests.json
         #      逐项一致）；② 说明文本（kRepeatableNotesZh/En）逐条编进静态表
         #      （描述第一句用它 ——「（可重复）完成一次后还能再次接取 …」）；
         #   ③ 样本：「翻新商品」（0x00224FE8）= 下标 0（Denis Averin 那条，玩家反馈的
         #      起点）；「全数到期」（0x002AD3D5）= 下标 12。
+        #   ★★ 第 90 轮：清单扩到 20 条（DLC 的 SFFL 家族 5 条，追加在末尾 ⇒
+        #      老下标不动）；新增 DLC 样本（职业杀手 15 / 危险材料 18 = 随机太空遭遇）。
         #   （运行期豁免链另有两处检查：C++ 载荷第 11 列 + AS3 FilterKnownQuests，
         #     见本文件后面的「可重复任务豁免链」段。）
         rp_rows = [(l, int(rp)) for (l, _f, _c, _p, _fe, _lm, rp) in fac_rows if int(rp) >= 0]
         rp_json = ROOT / "ref" / "repeatable_quests.json"
-        rp_ok = len(rp_rows) == 15 and sorted(v for _f, v in rp_rows) == list(range(15))
+        rp_ok = len(rp_rows) == 20 and sorted(v for _f, v in rp_rows) == list(range(20))
         if rp_json.exists():
             rpj = json.loads(rp_json.read_text(encoding="utf-8"))
 
@@ -2273,13 +2296,16 @@ def main() -> int:
                     break
             rp_ok = rp_ok and _num_after(blob, "kRepeatableCount = ") == len(rpj)
         print(("OK  " if rp_ok else "MISS") +
-              f" 静态表 · 可重复任务完整（标记 {len(rp_rows)}/15"
+              f" 静态表 · 可重复任务完整（标记 {len(rp_rows)}/20"
               + ("、与 ref 逐项一致" if rp_json.exists() else "（缺 ref/repeatable_quests.json）")
               + "）")
         all_ok &= rp_ok
         for local, want_rp_idx, tag in (
                 ("00224FE8", 0, "翻新商品（Denis Averin，玩家反馈的起点）"),
-                ("002AD3D5", 12, "全数到期（GalBank 兰德里）")):
+                ("002AD3D5", 12, "全数到期（GalBank 兰德里）"),
+                # ★★ 第 90 轮：DLC 的 SFFL 家族 —— 有接取人（15）/ 随机太空遭遇（18）
+                ("0002A418", 15, "职业杀手（锚点星际站的仲裁者）"),
+                ("000296F5", 18, "危险材料（随机太空遭遇，无接取点）")):
             m = re.search(r"\{\s*0x" + local + r"u,\s*\d+u,\s*\d+u,\s*0x[0-9A-F]+u,"
                           r"\s*\d+u,\s*\d+u,.*?,\s*-?\d+\s*,\s*-?\d+\s*,\s*\d+u\s*,\s*-?\d+\s*,"
                           r"\s*-?\d+\s*,\s*(-?\d+)\s*\},", blob)

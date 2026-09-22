@@ -48,13 +48,13 @@
     },
     "ref/repeatable_quests.json": {
       "desc": "可重复任务（gen_repeatable_quests.py）",
-      "sha256": "17d025473d6db58636e0f79616b2f1ca716130c7eb6df748f2c06b3374fb2e61",
-      "summary": "可重复 15（有引导 15）"
+      "sha256": "5509839890cb85c773ee4c9beddcfccc8040078750eb7b2419ca850e0a565ecf",
+      "summary": "可重复 20（有引导 18 / 无接取点 2）"
     },
     "plugin/src/SAQ_QuestTable.h": {
       "desc": "静态任务表（gen_quest_table.py，DLL 编译进去）",
-      "sha256": "09e4082c4864aeedf342b32b3941886e274f2308734b60c2e48871774dfb1a80",
-      "summary": "任务 271 / 候选 960 / 进度门槛 11 / INFO对话 418 / INFO条件 492 / 链式边 63 / 同伴 4 / 势力入口 4 / 地标 10 / 可重复 15"
+      "sha256": "7c14722a4c2242e0524d1314b1f28135381c53baa7bf063f7f80516371eb5ae7",
+      "summary": "任务 271 / 候选 960 / 进度门槛 11 / INFO对话 418 / INFO条件 492 / 链式边 63 / 同伴 4 / 势力入口 4 / 地标 10 / 可重复 20"
     },
     "ui/missionmenu/saqdata/SaqEmbeddedPayload.inc": {
       "desc": "内嵌回退载荷（gen_quest_table.py）",

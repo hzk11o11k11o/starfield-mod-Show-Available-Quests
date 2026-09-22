@@ -127,8 +127,11 @@ def summarize(rel: str, path: pathlib.Path) -> str:
                 return f"NPC {len(obj)}（内景建档 {n_int} / 外景 {len(obj) - n_int}）"
             if rel.endswith("repeatable_quests.json") and isinstance(obj, list):
                 # ★★ 第 89 轮：可重复任务 —— 条数 + 有引导候选数（导航能力的第一眼证据）
+                # ★★ 第 90 轮：+「无固定接取点」（随机太空遭遇）条数 —— 它们的说明文案
+                #   走专用分支（不写「去找谁」），这个数字是那一类规模的直接证据。
                 n_cand = sum(1 for g in obj if int(g.get("candCount", 0)) > 0)
-                return f"可重复 {len(obj)}（有引导 {n_cand}）"
+                n_np = sum(1 for g in obj if g.get("noPickup"))
+                return f"可重复 {len(obj)}（有引导 {n_cand} / 无接取点 {n_np}）"
             return f"键 {len(obj)}" if isinstance(obj, dict) else f"条目 {len(obj)}"
         if rel.endswith("SaqEmbeddedPayload.inc"):
             # ★★ 第 74 轮续：内嵌载荷 —— 条数 + 第一条 FormID（顺序不变量的第一眼证据）

@@ -2261,6 +2261,11 @@ namespace SAQ
 		"（可重复）完成一次后还能再次接取 —— 去新亚特兰蒂斯商业区的盖尔银行（GalBank）找前台兰德里·霍利菲尔德即可。",
 		"（可重复）完成一次后还能再次接取 —— 去找今田雅子（Masako）（龙神大厦（霓虹城））即可。",
 		"（可重复）完成一次后还能再次接取 —— 去找今田雅子（Masako）（龙神大厦（霓虹城））即可。",
+		"（可重复）完成一次后还能再次接取 —— 去锚点星际站（Anchorpoint）找仲裁者即可（约 1.5 个游戏日后可再接）。",
+		"（可重复）完成一次后还能再次接取 —— 去锚点星际站（Anchorpoint）找麦迪·温即可（等待约 2 小时后可再接）。",
+		"（可重复）完成一次后还能再次接取 —— 去锚点星际站（Anchorpoint）找基利安·布莱斯即可（等待约 2 小时后可再接）。",
+		"（可重复）随机太空遭遇 —— 完成后过 1~2 个游戏日在太空中还可能再次遇到（没有固定接取点，不用去接）。",
+		"（可重复）随机太空遭遇 —— 完成后过一段时间在太空中还可能再次遇到（没有固定接取点，不用去接）。",
 	};
 	inline constexpr const char* kRepeatableNotesEn[] = {
 		"(Repeatable) You can take this quest again after finishing it - talk to Denis Averin (Cydonia - the UC Exchange).",
@@ -2278,8 +2283,13 @@ namespace SAQ
 		"(Repeatable) You can take this quest again after finishing it - talk to Landry Hollifeld at the GalBank front desk in New Atlantis.",
 		"(Repeatable) You can take this quest again after finishing it - talk to Masako Imada (the Ryujin Tower (Neon)).",
 		"(Repeatable) You can take this quest again after finishing it - talk to Masako Imada (the Ryujin Tower (Neon)).",
+		"(Repeatable) You can take this quest again after finishing it - talk to The Arbitrator at Anchorpoint Station (available again after about 1.5 game days).",
+		"(Repeatable) You can take this quest again after finishing it - talk to Maddie Wing at Anchorpoint Station (available again after about 2 hours).",
+		"(Repeatable) You can take this quest again after finishing it - talk to Killian Brice at Anchorpoint Station (available again after about 2 hours).",
+		"(Repeatable) A random space encounter - you may run into it again in space about 1-2 game days after finishing it (there is no fixed pickup point).",
+		"(Repeatable) A random space encounter - you may run into it again in space some time after finishing it (there is no fixed pickup point).",
 	};
-	inline constexpr std::size_t kRepeatableCount = 15;
+	inline constexpr std::size_t kRepeatableCount = 20;
 
 	inline constexpr StaticQuestInfo kQuestTable[] = {
 		{ 0x0000351Au, 0u, 3u, 0x00010100u, 0u, 3u, 0u, 0u, 0u, 0u, 0u, 0u, "", "", "Balancing the Books", "平衡账目", -1, -1, 0u, -1, -1, -1 },
@@ -2494,16 +2504,16 @@ namespace SAQ
 		{ 0x00333D04u, 0u, 4u, 0x00010400u, 771u, 0u, 11u, 0u, 290u, 0u, 63u, 0u, "", "", "Planetary Survey", "行球勘探", -1, -1, 0u, -1, -1, -1 },
 		{ 0x0034BAA9u, 0u, 4u, 0x00010400u, 771u, 0u, 11u, 0u, 290u, 0u, 63u, 0u, "", "", "Data Collection", "数据收集", -1, -1, 0u, -1, -1, -1 },
 		{ 0x0038BAACu, 0u, 4u, 0x00010400u, 771u, 0u, 11u, 0u, 290u, 0u, 63u, 0u, "", "", "Return to the Fold", "返回团体", -1, -1, 0u, -1, -1, -1 },
-		{ 0x000296F5u, 1u, 3u, 0x00010400u, 771u, 0u, 11u, 0u, 290u, 0u, 63u, 0u, "", "", "Hazardous Materials", "危险材料", -1, -1, 0u, -1, -1, -1 },
-		{ 0x0002A418u, 1u, 3u, 0x00010011u, 771u, 2u, 11u, 0u, 290u, 0u, 63u, 0u, "", "", "Hired Gun", "职业杀手", -1, -1, 0u, -1, -1, -1 },
+		{ 0x000296F5u, 1u, 3u, 0x00010400u, 771u, 0u, 11u, 0u, 290u, 0u, 63u, 0u, "", "", "Hazardous Materials", "危险材料", -1, -1, 0u, -1, -1, 18 },
+		{ 0x0002A418u, 1u, 3u, 0x00010011u, 771u, 2u, 11u, 0u, 290u, 0u, 63u, 0u, "", "", "Hired Gun", "职业杀手", -1, -1, 0u, -1, -1, 15 },
 		{ 0x0002FC79u, 1u, 0u, 0x00010400u, 773u, 2u, 11u, 0u, 290u, 0u, 63u, 0u, "", "", "A Strange Invitation", "奇怪的邀请", -1, -1, 0u, -1, -1, -1 },
 		{ 0x000325E6u, 1u, 3u, 0x00050100u, 775u, 0u, 11u, 0u, 290u, 0u, 63u, 0u, "", "", "A Missing Beloved", "失踪的爱人", -1, -1, 0u, -1, -1, -1 },
 		{ 0x00033A2Au, 1u, 3u, 0x00010500u, 775u, 2u, 11u, 0u, 290u, 0u, 63u, 0u, "", "", "No Idle Threat", "绝非虚言", -1, -1, 0u, -1, -1, -1 },
 		{ 0x000357F8u, 1u, 3u, 0x00010500u, 777u, 5u, 11u, 0u, 290u, 0u, 63u, 0u, "", "", "House Sitting", "代为看家", -1, -1, 0u, -1, -1, -1 },
-		{ 0x00037148u, 1u, 3u, 0x00010400u, 782u, 2u, 11u, 0u, 290u, 0u, 63u, 0u, "", "", "Spare Parts", "备用零件", -1, -1, 0u, -1, -1, -1 },
-		{ 0x0003D1A7u, 1u, 3u, 0x00000000u, 784u, 0u, 11u, 0u, 290u, 0u, 63u, 0u, "", "", "To the Rescue", "紧急救援", -1, -1, 0u, -1, -1, -1 },
+		{ 0x00037148u, 1u, 3u, 0x00010400u, 782u, 2u, 11u, 0u, 290u, 0u, 63u, 0u, "", "", "Spare Parts", "备用零件", -1, -1, 0u, -1, -1, 16 },
+		{ 0x0003D1A7u, 1u, 3u, 0x00000000u, 784u, 0u, 11u, 0u, 290u, 0u, 63u, 0u, "", "", "To the Rescue", "紧急救援", -1, -1, 0u, -1, -1, 19 },
 		{ 0x0003D1DEu, 1u, 3u, 0x00010500u, 784u, 2u, 11u, 0u, 290u, 2u, 63u, 0u, "", "", "Old Wounds", "旧伤", -1, -1, 0u, -1, -1, -1 },
-		{ 0x00045E55u, 1u, 3u, 0x00010400u, 786u, 2u, 11u, 0u, 292u, 0u, 63u, 0u, "", "", "Reclamation Run", "回收行动", -1, -1, 0u, -1, -1, -1 },
+		{ 0x00045E55u, 1u, 3u, 0x00010400u, 786u, 2u, 11u, 0u, 292u, 0u, 63u, 0u, "", "", "Reclamation Run", "回收行动", -1, -1, 0u, -1, -1, 17 },
 		{ 0x0004E13Au, 1u, 3u, 0x00010111u, 788u, 6u, 11u, 0u, 292u, 0u, 63u, 0u, "", "", "Party in the Stars", "星海派对", -1, -1, 0u, -1, -1, -1 },
 		{ 0x0005455Au, 1u, 3u, 0x00000500u, 794u, 0u, 11u, 0u, 292u, 0u, 63u, 0u, "", "", "Dead In The Void", "困于虚空", -1, -1, 0u, -1, -1, -1 },
 		{ 0x0006AD36u, 1u, 0u, 0x00000000u, 794u, 0u, 11u, 0u, 292u, 2u, 63u, 0u, "", "", "Distress Beacon Trap", "求救信标陷阱", -1, -1, 0u, -1, -1, -1 },

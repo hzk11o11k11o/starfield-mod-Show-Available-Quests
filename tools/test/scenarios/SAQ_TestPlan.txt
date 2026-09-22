@@ -9,7 +9,8 @@
 ;    ④ 启动游戏并**读一个存档**（随便哪个，用例会自己把需要的那几条任务回滚）；
 ;    ⑤ 等日志出现 `harness：全部用例结束`，看 mod 目录里的 SAQ_testresults.json。
 ;       （判定游戏加载的 SWF 版本：看日志 SAQ_Report 输出有没有 `stamp=` 字段；
-;        ★ 每改一次 SWF 就会 +1 —— 当前 = `stamp=60`（第 82 轮），
+;        ★ 每改一次 SWF 就会 +1 —— 当前 = `stamp=61`（第 89 轮：载荷第 11 列 +
+;        可重复任务豁免 + `rptk=` 探针；第 90 轮**没动 SWF**，故仍是 61），
 ;        与 tools\ui\verify_saq_build.py 的「构建指纹」检查同源。）
 ;
 ;  语法：`[case:名字]` 开一个用例；`desc = 说明`；`step = <操作> [参数]`。
@@ -1042,6 +1043,47 @@ step = ui.select 0x00224FE8
 step = menu.close
 step = note === 收尾：reset（用例自清场）===
 step = quest.reset 0x00224FE8
+step = wait 1500
+
+; ----------------------------------------------------------------------------
+;  用例 8e：第 90 轮 —— DLC 可重复任务（SFFL 家族）「做完一次后仍显示」
+;
+;  起因：第 89 轮把「可重复任务」清单扩到基础游戏 15 条、DLC 列为候选；第 90 轮
+;    确认 DLC（SFBGS00D.esm · 自由航道更新）的 SFFL 家族 5 条**都有官方重启机制**
+;    （计数 / 冷却 / RepeatGlobal + 重复管理器）⇒ 清单 15 → 20 条。本用例用其中
+;    最有代表性的「职业杀手」（SFFL_R02：TimesCompleted + Cooldown 1.5 游戏日）
+;    验证同一整条链路对 **DLC 任务**也成立（静态表 → C++ 豁免 → AS3 放行）。
+;
+;  判据（PASS 线）：
+;    ① C++ 侧统计：`可重复任务=N(已完成保留M)` 里 M ≥ 1（本用例完成的那条被豁免）；
+;    ② 豁免名单：`可重复保留: …职业杀手[0x…]` 出现（DLC 的运行期 FormID 带加载顺序
+;       前缀 ⇒ 只断言 8 位里的「??02A418」尾段，前缀留给运行期）；
+;    ③ 显示层（AS3）：`rptk=[…|…2a418]`（FilterKnownQuests 的豁免也放行了 DLC 条目）；
+;    ④ 它仍可被选中（真的还在「可重复任务」列表里 —— ui.select 找不到就 FAIL）。
+;
+;  ★ DLC 任务在两个 op 家族里都用 `~0x…`（记录号）：`quest.*` 与 `ui.select` 都支持
+;    （见文件头的写法说明）—— 「职业杀手」记录号 = 0x0002A418。
+;  ★ 与 r89 同构：只用「reset → complete → 开菜单」造状态，不传送、不开星图、不读档；
+;    收尾 reset 该任务（CompleteQuest 只动完成位，用例自清场）。
+; ----------------------------------------------------------------------------
+[case:r90_dlc_repeatable]
+desc = 第 90 轮：DLC 可重复任务（职业杀手）做完一次后仍显示（C++ 豁免 + 显示层放行）
+step = note === 准备：把「职业杀手」（DLC 可重复任务）推到完成 ===
+step = ping
+step = quest.reset ~0x0002A418
+step = wait 1500
+step = quest.complete ~0x0002A418
+step = wait 2500
+step = note === 打开菜单：C++ 豁免（已完成保留）+ AS3 放行（rptk=）===
+step = menu.open
+step = assert.log 推送成功 scope=prev timeout=12000
+step = assert.log 可重复任务=\d+\(已完成保留[1-9] scope=case timeout=3000
+step = assert.log 可重复保留: .*职业杀手\[0x[0-9A-F]+2A418 scope=case timeout=3000
+step = assert.ui rptk=\[[1-9][0-9]*\|[0-9a-f]*2a418 timeout=3000
+step = ui.select ~0x0002A418
+step = menu.close
+step = note === 收尾：reset（用例自清场）===
+step = quest.reset ~0x0002A418
 step = wait 1500
 
 ; ----------------------------------------------------------------------------
