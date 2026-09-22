@@ -403,14 +403,27 @@ GetQuestCompleted(自己)` 这种自引用按既有约定**不算门槛**（`doc
 | 离线层 | 18 用例 / 929 断言 + 15 件快照全绿（快照有意更新两处：`quest_chain_dlc.json` 6→21 边、`SAQ_QuestTable.h` 链式边 69→84）|
 | 重编 | 内嵌回退载荷**逐字节不变**（DLC 条目不在里面）⇒ **不用重编 SWF**；Papyrus / ESM 也不动 ⇒ 只重编 DLL |
 
-### 10.6 harness 用例（已写好，待实机）
+### 10.6 harness 用例（A 已落地；B 段第 103 轮并入 r98 B 段）
 
-`[case:r101_dlc_chain2]`（A：reset 新目标与宿主 ⇒ 「链式没到」名单里**至少一条**新目标）+
-`[case:r101_dlc_chain2_pass]`（B：推 `MQ03@4000` ⇒ 名单里没有「另一边」）。设计要点：
+`[case:r101_dlc_chain2]`（A：reset 新目标与宿主 ⇒ 「链式没到」名单里**至少一条**新目标）。
+
+B 段（二期边的**放行**判据）第 103 轮起并入 `[case:r98_dlc_chain_pass]` —— 原因：
+**`MQ_Shell` 一个会话只能推一次**（引擎对「已运行过又被 Reset 的任务」拒绝再次 `Start`：
+同会话第二次 `start` 后 `已开始=40` / `链式 过4/藏59` / 探针全无变化；而首次启动 =
+`已开始 34→44` + `链式 过4→7`）。合并后的构造 = **一次预热覆盖两条判据**
+（三条议会任务放行 +「另一边」此刻仍在名单里的负向对照；再 `stage MQ03 4000` ⇒
+`ui.select ~0x0010AAD5` 命中），`stage MQ05 1600` **只记录不放行断言** ——
+`MQIN` 也受「已运行过又被 Reset ⇒ 拒绝二次启动」约束（4000 那条 fragment 已经把它起了）
+⇒「复位后再由 1600 单独放行」的隔离条件在一个会话里复现不了。设计要点：
 
 * 「或」的成员挑**必然能走到链式判定**的（离线预判：深入VOID / 失控 / MQIntro星际遭遇战 /
   失踪的爱人 在 `ref/info_gates_final.json` 里**没有门槛**；另一边 / 互助互赢… 属 want=0 或
   成对条件形态 ⇒ 不会被 INFO 先藏）；
-* B 段推的 `MQ03@4000` fragment = `SetObjectiveCompleted/Displayed` + 守卫 + 关掉几个未死的
-  Actor —— **无 Stop、无成就**（第 99 轮的教训：不推带 `Stop()`/`AddAchievement` 的收尾边）；
-* 名字只写 `[0x`（运行期 FormID 带加载前缀，不写死）；两条都自清场（reset 七条）。
+* 推的 `MQ03@4000` / `MQ05@1600` fragment = `SetObjectiveCompleted/Displayed` + 守卫 +
+  关掉几个未死的 Actor —— **无 Stop、无成就**（第 99 轮的教训：不推带
+  `Stop()`/`AddAchievement` 的收尾边）；
+* 放行证据走**显示层**（`ui.select ~0x0010AAD5` 命中 = 「另一边」进了列表）——
+  `链式没到` 是**累积名单**，合并用例里再用 `assert.nolog` 会命中前面那行「另一边 被藏」
+  ⇒ 必然假 FAIL（verify 有反向检查）；
+* 名字只写 `[0x`（运行期 FormID 带加载前缀，不写死）；用例自清场（reset 五条 + 七条）。
+* 判读与实测复盘：`docs/09` 十四·补二十五 / 补二十六 / 补二十七。

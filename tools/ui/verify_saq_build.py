@@ -1300,11 +1300,15 @@ def main() -> int:
                             #   到收尾 stage 后「虚妄的得诺者」不再被链式藏
                             "r98_dlc_chain", "r98_dlc_chain_pass",
                             # ★★★ 第 101 轮：DLC 链式门槛**二期**（14 + 1 条新边）——
-                            #   A：新目标在「链式没到」名单里；B：推 MQ03@4000 后
-                            #   「另一边」不再被链式藏
-                            #   ★★ 第 101 轮补丁（20:41 会话实测 FAIL）：+ B 对照边
-                            #   （MQ05@1600）与只读探针 `quest.probe`（直读引擎）。
-                            "r101_dlc_chain2", "r101_dlc_chain2_pass", "r101_dlc_chain2_mq05",
+                            #   A：新目标在「链式没到」名单里。
+                            #   ★★ 第 101 轮补丁（20:41 会话实测 FAIL）：+ 只读探针
+                            #   `quest.probe`（直读引擎）。
+                            #   ★★★ 第 103 轮：B 段的放行判据**并入上面那条
+                            #   `r98_dlc_chain_pass`**（MQ_Shell 一个会话只能推一次 ——
+                            #   引擎对「已运行过又被 Reset 的任务」拒绝再次 Start），
+                            #   所以 `r101_dlc_chain2_pass` / `r101_dlc_chain2_mq05`
+                            #   两条用例已删除（不是漏掉，别再"补"回来）。
+                            "r101_dlc_chain2",
                             "r62_reload_observe"):
                     all_ok &= check(f"用例计划 · [case:{cid}]", plan_text.encode(),
                                     f"[case:{cid}]".encode())
@@ -1334,37 +1338,53 @@ def main() -> int:
                 print(("MISS " if bad_mq01_push else "OK  ") +
                       " 用例计划 · r98 不再推 MQ01@10000（反向检查，第 99 轮）")
                 all_ok &= not bad_mq01_push
-                # ★★★ 第 101 轮（B3 · DLC 链式门槛二期）：两条新用例的断言形状 ——
-                #   ① A：新目标**任一**进「链式没到」名单（名字只写 `[0x`，不写死 FormID）；
+                # ★★★ 第 101 轮（B3 · DLC 链式门槛二期）：新用例的断言形状 ——
+                #   A：新目标**任一**进「链式没到」名单（名字只写 `[0x`，不写死 FormID）；
                 #      「或」的成员 = 离线预判里必然能走到链式判定的那几条（深入VOID / 失控 /
                 #      MQIntro星际遭遇战 / 失踪的爱人 在 INFO 数据里没有门槛）。
-                #   ② B：推 MQ03@4000（`If !MQIN.GetStageDone(10)` → MQIN.SetStage(10)，
-                #      无 Stop/无成就）⇒ 名单里没有「另一边」。
-                #   ★★★ 第 102 轮改判（21:26 会话实测两条 B 段 FAIL = 写侧被引擎
-                #      静默忽略）：B 段改为「先 MQ_Shell@100 预热」，断言链多两层
-                #      （见下方第 102 轮新增检查 + 反向检查③）。
+                #   B（★ 第 103 轮并入 r98 B 段，见下方第 103 轮检查）：两条二期边
+                #      （发掘过去@1600 / 狂热逾界@4000）的「产品放行」判据。
                 all_ok &= check("用例计划 · r101 DLC 链式二期断言（A：新目标任一被藏）",
                                 plan_text.encode(),
                                 "assert.log 链式没到: .*(另一边|深入VOID|失控|MQIntro星际遭遇战|失踪的爱人)\\[0x".encode())
-                all_ok &= check("用例计划 · r101 DLC 链式二期放行断言（B：assert.nolog 另一边）",
+                # ★★★ 第 103 轮（2026-09-22 21:52 会话实测判读）：**MQ_Shell 一个会话
+                #   只能推一次** —— 引擎对「已经运行过、又被 Reset 的任务」拒绝再次
+                #   Start（第二次 start 后 `已开始=40` / `链式 过4/藏59` / probe 全无变化；
+                #   而首次启动 = `已开始 34→44` + `链式 过4→7`）。⇒ 二期两条边的放行
+                #   判据**并入 r98 B 段**（同一次预热覆盖三条判据）。verify 要钉住两件事：
+                #     ① 「唯一推 MQ_Shell 的地方」这句说明还在（防又拆成两条用例）；
+                #     ② 放行证据走**显示层**（`ui.select` 命中 = 进了列表 = 玩家可见行为）。
+                all_ok &= check("用例计划 · 第 103 轮「MQ_Shell 只能推一次」说明",
                                 plan_text.encode(),
-                                "assert.nolog 链式没到:.*另一边 scope=case".encode())
+                                "全用例集里唯一推 MQ_Shell 的地方".encode())
+                all_ok &= check("用例计划 · r101 放行判据走显示层（ui.select 另一边）",
+                                plan_text.encode(), "ui.select ~0x0010AAD5".encode())
+                #   反向检查④（第 103 轮）：不许再用 `assert.nolog 链式没到:.*另一边` ——
+                #   「链式没到」是**累积名单**：本用例前面必然打过一行「另一边 被藏」
+                #   （预热后它的三条边都没触发）⇒ 必然假 FAIL（第 103 轮改判的直接产物）。
+                #   ★ 只扫**步骤行**（`step = …`）：注释里解释「为什么不用它」的那句话
+                #     不该把这条反向检查顶红（第 103 轮实现时踩过一次）。
+                bad_nolog_mqin = bool(re.search(
+                    r"(?m)^\s*step\s*=\s*assert\.nolog\s+链式没到:\.\*另一边", plan_text))
+                print(("MISS " if bad_nolog_mqin else "OK  ") +
+                      " 用例计划 · 不再用「链式没到 无 另一边」的反向断言（反向检查，第 103 轮）")
+                all_ok &= not bad_nolog_mqin
                 # ★★ 第 101 轮补丁：FAIL 现场的第一证据 = 只读探针（直读引擎的
-                #   IsStageDone，与链式判定同源）—— B 段（MQ03@4000）与对照段
-                #   （MQ05@1600）都必须带着它跑，否则下一轮实测又只能看「零变化」。
+                #   IsStageDone，与链式判定同源）—— 两条边都必须带着它跑，
+                #   否则下一轮实测又只能看「零变化」。
                 all_ok &= check("用例计划 · r101 探针步骤（quest.probe 直读引擎，B 段）",
                                 plan_text.encode(),
-                                "quest.probe ~0x00030C2B 100 3350 4000".encode())
+                                "quest.probe ~0x00030C2B 100 4000".encode())
                 all_ok &= check("用例计划 · r101 探针步骤（quest.probe 直读引擎，对照段）",
                                 plan_text.encode(),
-                                "quest.probe ~0x00035E1C 100 1000 1600 2000".encode())
+                                "quest.probe ~0x00035E1C 100 1600".encode())
                 all_ok &= check("用例计划 · r101 对照边用例（MQ05@1600）",
                                 plan_text.encode(),
                                 "quest.stage ~0x00035E1C 1600".encode())
-                # ★★★ 第 102 轮（实测 FAIL 的定调 + 改判）：两条 B 段的**构造前提**
-                #   = 先经 MQ_Shell@100 预热把宿主置为运行中（写侧对「没进入运行的
-                #   ShatteredSpace 主线任务」被引擎静默忽略 —— probe 实证），再推目标
-                #   stage；断言链 = stageDone(100)=1 → stageDone(4000/1600)=1 → 放行。
+                # ★★★ 第 102 / 103 轮：二期两条边的**构造前提**（预热）与断言链 ——
+                #   预热步骤（MQ_Shell@100）→ `stageDone(100)=1`（预热成立）→
+                #   `stageDone(1600/4000)=1` + MQIN `stageDone(10)=1`（目标边落到引擎 +
+                #   fragment 顺手把 MQIN 起了）→ `ui.select` 命中（产品放行）。
                 #   这些检查就是「防下次又被改回不可达的写法」。
                 all_ok &= check("用例计划 · r101 预热步骤（MQ_Shell@100，B 段）",
                                 plan_text.encode(),
@@ -1381,12 +1401,17 @@ def main() -> int:
                 all_ok &= check("用例计划 · r101 目标边落到引擎的断言（stageDone(1600)=1）",
                                 plan_text.encode(),
                                 "assert.log quest\\.probe 0x[0-9A-F]{2}035E1C：.*stageDone\\(1600\\)=1".encode())
+                all_ok &= check("用例计划 · r101 fragment 起了 MQIN 的判据（stageDone(10)=1）",
+                                plan_text.encode(),
+                                "assert.log quest\\.probe 0x[0-9A-F]{2}10AAD5：.*stageDone\\(10\\)=1".encode())
                 all_ok &= check("用例计划 · r98 预热段的探针（宿主是否被 fragment 启动）",
                                 plan_text.encode(),
                                 "quest.probe ~0x00030C2B 100".encode())
-                # 反向检查③（第 102 轮）：不许再出现**没有预热**的直接推宿主写法 ——
-                #   实测（21:26 会话）：`Reset+Start+SetStage` 对 MQ03/MQ05 零效果，
-                #   探针 `未开始 + stageDone(…)=0`；留着它只会制造假 FAIL。
+                # 反向检查③（第 102 轮；第 103 轮复核后仍然有效）：不许再出现**没有预热**
+                #   的直接推宿主写法 —— 实测 `Reset+Start+SetStage` 对 MQ03/MQ05 零效果，
+                #   探针 `未开始 + stageDone(…)=0`（第 103 轮定性：这两条主线任务的
+                #   「首次启动」要经 MQ_Shell 的开场 fragment，且同一会话里只会成功一次）；
+                #   留着直接写法只会制造假 FAIL。
                 bad_r101_direct = ("quest.start ~0x00030C2B" in plan_text
                                    or "quest.start ~0x00035E1C" in plan_text)
                 print(("MISS " if bad_r101_direct else "OK  ") +

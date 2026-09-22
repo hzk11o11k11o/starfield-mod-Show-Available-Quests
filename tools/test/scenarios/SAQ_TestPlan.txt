@@ -1196,36 +1196,65 @@ step = menu.close
 ;  ★ 读档后如果通道迟迟不就绪，驱动器会「开一次任务菜单再关掉」唤醒脚本
 ;    （第 26 轮的定时器重挂机制；游戏内读档会重建 VM，定时器可能没恢复）。
 ; ----------------------------------------------------------------------------
-;  用例：第 98 轮 —— DLC 的链式门槛（破碎空间主线；官方 .pex 反编译取证）
+;  用例：第 98 / 101 / 103 轮 —— DLC 的链式门槛（破碎空间主线 6 条边 + 二期 15 条边）
 ;
 ;  背景：DLC 不发 Papyrus 源码 ⇒ 第 78 轮只能按 INFO 门槛「保守放行」，破碎空间主线后续
 ;        （虚妄的得诺者 / 家族的调和 / 狂热逾界 / 信念之争 / 发掘过去 / 栉比堡垒）在
-;        进度没到时也会显示。第 98 轮用 Champollion 反编译 `.pex` 挖出 6 条真实启动边
-;        （`tools/esm/gen_dlc_chain.py` → `ref/quest_chain_dlc.json` → `kChainGates`，
-;        host master = 3 = ShatteredSpace.esm；取证见 `docs/06` 第八节）。
+;        进度没到时也会显示。第 98 轮用 Champollion 反编译 `.pex` 挖出 6 条真实启动边；
+;        第 101 轮把候选清单里证据同样硬的边收进来（`ref/quest_chain_dlc.json` →
+;        **21 条边 / 18 条任务**，`tools/esm/gen_dlc_chain.py`，host master = 3）：
+;          · 破碎空间「另一边」（MQIN）← 狂热逾界@4000 / 信念之争@7000 / 发掘过去@1600；
+;          · 地球舰队链（MQIntro星际遭遇战 → 失踪的华庭号 → 深入VOID → 失控 →
+;            互助互赢/互谅互让/互利互惠 → 隐蔽入侵）+ 自由航道锚点站三条。
+;        **有意不收**（verify 有反向检查，防被误加回来）：MQIntro（线的入口，挂上会
+;          永远被藏）/ DialogueHVDazra@5（调试入口）/ VKaiZ03a·b（结局分支互启环）。
+;        取证见 `docs/06` 第八 / 十节。
 ;
 ;  判据（与第 67 轮的链式门槛用例同构）：
-;    ① `[case:r98_dlc_chain]`（A）：六条任务全部回滚到「没开始」⇒ `链式没到:` 名单里
+;    ① `[case:r98_dlc_chain]`（A）：六条主线任务全部回滚到「没开始」⇒ `链式没到:` 名单里
 ;       **至少有它们中的一条**（= 链式判据真的跑了并把它藏了）。
 ;       ★ 为什么用「或」列六条而不是点名一条：测试存档的 DLC 进度未知，且 INFO 门槛在
 ;         链式门槛**之前**判定 —— 只要有一条没被 INFO 先藏就会进链式名单；本机离线预判
 ;         （`ref/_dlc_info_precheck.py`，空进度近似）六条都还有「可能可用」的对话组。
 ;       ★ 名字那一格带 `[0x…`（运行期 FormID 带加载前缀，**不写死** —— 换机器/换加载
 ;         顺序就不一样，`~0x…` 的教训）。
-;    ② `[case:r98_dlc_chain_pass]`（B）：把「家族调和」（MQ_Shell）推到**开场 stage 100**
-;       （fragment 原文：显示三个 objective + `MQ03/MQ04/MQ05.SetStage(100)` +
-;       `MourningDevice_Control.Start()` + `SetActive` —— **没有 Stop、没有成就**）
-;       ⇒ **本条用例的窗口里**名单没有「狂热逾界 / 信念之争 / 发掘过去」三条
-;       （MQ_Shell@100 是这三条共同的启动边，一次推进覆盖三条）。
-;       ★ 第 99 轮修正（2026-09-22 实测复盘）：原设计推「残留之物」（MQ01）到
-;         stage 10000 —— 实测**造不出来**（推进前后所有统计行逐字段一致：已开始=40 /
-;         已完成=1 / INFO 门槛 / 链式门槛 全无变化），且反编译源码显示那条收尾
-;         fragment 是 `Self.Stop()` + `Game.AddAchievement(51)`（推它既不可观测、
-;         又有污染玩家成就的风险）⇒ 换成同族里**安全且可观测**的开场边。
-;       ★ 与 `r67_chain_pass` 同款说明：边一触发，三条任务的链式判定即放行 ⇒ 证的是
-;         「**不再因链式门槛**被藏」；之后它们是否进列表还要过运行时/显示层（不在此断言）。
-;  自清场：两条都用 `quest.reset` 把 MQ01 与六条后续回滚（同 r67 的收尾写法）。
-;  ★ 只动这 7 条 DLC 任务的状态；不传送、不开星图、不读档。
+;    ② `[case:r101_dlc_chain2]`（A2）：第 101 轮新收的目标同理 —— 「或」列的是离线预判里
+;       必然能走到链式判定的那几条（深入VOID / 失控 / MQIntro星际遭遇战 / 失踪的爱人
+;       在 `ref/info_gates_final.json` 里没有门槛，绝不会被 INFO 先藏）。
+;    ③ `[case:r98_dlc_chain_pass]`（B）：**全用例集里唯一推 MQ_Shell 的地方** ——
+;       一次预热把三条放行判据全跑掉（构造与理由见下方第 103 轮说明）。
+;
+;  ★★★ 第 103 轮（2026-09-22 21:38~21:52 会话实测：32 条 30 PASS / 2 FAIL 的判读）：
+;   两条 FAIL = 第 102 轮那两条「先 MQ_Shell@100 预热、再推目标 stage」的 B 段。
+;   硬证据（同一会话、同一份日志）：r98 B 段的**首次** `start MQ_Shell` + `stage 100`
+;   **完全生效**（`已开始 34→44`、`链式门槛 过4→7`、probe `运行中 + stageDone(100)=1`）；
+;   而那两条 B 段的**第二次 / 第三次** `start MQ_Shell` 零效果（`已开始=40` 不变、
+;   `链式 过4/藏59` 不变、probe 三条宿主全 `未开始 + stageDone=0`）。
+;   ⇒ 真因 = **引擎对「已经运行过、又被 Reset 的任务」拒绝在同一会话里再次 Start**
+;     （Run Once 家族的会话性约束）—— 写侧通路本身完全可用（首次启动就是证据）；
+;     第 102 轮那句「写侧对 ShatteredSpace 主线任务**完全不可用**」是**误判**。
+;   ⇒ 处置：**MQ_Shell 一个会话只能推一次** ⇒ 把二期边的放行判据并入 r98 B 段
+;     （同一次预热覆盖两条判据），删掉那两条 B 段用例。构造链每一步都有 probe 硬判据：
+;       reset 五条 → `start MQ_Shell` → `stage 100` → probe MQ03/MQ05（首次启动有效的现场）
+;       → 判据① 三条议会任务不再被链式藏（`assert.nolog` scope=case）**且**「另一边」此刻
+;         仍在「链式没到」名单里（负向对照：它的三条边都还没触发）
+;       → `stage MQ03 4000` → probe（MQ03 4000=1 + MQIN stageDone(10)=1 = fragment 起了
+;         MQIN）→ 判据② `ui.tab` + `ui.select ~0x0010AAD5` 命中（「另一边」进列表）
+;       → 附带记录 `stage MQ05 1600`（probe 1600=1，只记录不放行断言）→ 收尾 reset 五条。
+;     ★ 「另一边」的放行证据用**显示层**（`ui.select` 命中 = 它真的进了列表 = 玩家可见行为；
+;       与第 93 轮 r89/r90 的定稿判据同款）。
+;       **不用** `assert.nolog 链式没到:.*另一边 scope=case`：那条名单是**累积**的 ——
+;       判据①的窗口里已经打过一行「另一边 被藏」⇒ 必然假 FAIL（verify 有反向检查挡回旧写法）。
+;     ★ 为什么只覆盖**一条**边（4000）：MQIN 也会被「已运行过又被 Reset ⇒ 拒绝二次启动」
+;       约束（判据②里 fragment 的 `MQIN.SetStage(10)` 已经把它起了）⇒「复位后再由 1600
+;       单独放行」的隔离条件在一个会话里复现不了（第 103 轮设计检查时发现）。
+;       边的数据完整性由 verify（与四个数据源逐边对账 84/84）保证；OR 语义的隔离性由
+;       `r71_chain_redtape_pass`（「推进 01 只放行 02；03 继续被藏」）保证。
+;  自清场：三条用例都 `quest.reset` 回滚（MQ01 / MQ02A / MQ02B / MQ03 / MQ04 / MQ05 / MQIN + MQ_Shell）。
+;  ★ 只动这些 DLC 任务的状态；不传送、不开星图、不读档（紧接着就是 r62 读档用例）。
+;  ★ 只读探针 `quest.probe <FormID> [stage…]`（第 101 轮补丁落地）：直读引擎 IsStageDone
+;    （与链式 / 进度门槛**同一个** 9 字节特征校验 + 同一个 `CallStageDoneChecked` 路径），
+;    一行给出「运行时状态 + 逐 stage 的 0/1」—— 是「写侧没生效 vs 读侧读不到」的第一证据。
 ; ----------------------------------------------------------------------------
 [case:r98_dlc_chain]
 desc = 第 98 轮：DLC 链式门槛（A）—— 破碎空间主线后续在「链式没到」名单里（进度没到 ⇒ 藏）
@@ -1248,107 +1277,66 @@ step = assert.log 链式没到: .*(虚妄的得诺者|家族的调和|狂热逾�
 step = menu.close
 
 [case:r98_dlc_chain_pass]
-desc = 第 98 轮：DLC 链式门槛（B）—— 推进「家族调和」到开场 stage 100 后，三条议会任务不再被链式藏
-step = note === 推进「家族调和」（MQ_Shell）到开场 stage 100（fragment：MQ03/MQ04/MQ05 各 SetStage(100)；无 Stop、无成就）===
+desc = 第 98/103 轮：DLC 链式门槛（B）—— 一次 MQ_Shell@100 预热覆盖两条判据：三条议会任务放行 + 狂热逾界@4000 ⇒「另一边」进列表（附带记录发掘过去@1600 也落到引擎）
+step = note === 第 103 轮：本用例是**全用例集里唯一推 MQ_Shell 的地方** —— 引擎对「已经运行过、又被 Reset 的任务」拒绝在同一会话里再次 Start（21:52 会话实测：第二次 start 之后 已开始=40 不变 / 链式 过4/藏59 不变 / probe 三条宿主全 `未开始 + stageDone=0`；而本用例的首次启动 = 已开始 34→44 + 链式 过4→7）===
 step = ping
+step = quest.reset ~0x0010AAD5
+step = quest.reset ~0x00030C2B
+step = quest.reset ~0x00035E1A
+step = quest.reset ~0x00035E1C
 step = quest.reset ~0x00035E1B
 step = wait 1500
 step = quest.start ~0x00035E1B
 step = wait 2000
 step = quest.stage ~0x00035E1B 100
 step = wait 2500
-; ★★ 第 102 轮：这段预热是 r101 B 段的**构造前提**（见下方 r101 注释块）——
-;   顺手用只读探针记下「开场 fragment 的 SetStage(100) 是否真的落到 MQ03/MQ05 的
-;   引擎状态上」：`stageDone(100)=1` + `运行中` ⇒ 宿主真的进入了运行中。
-;   （第 102 轮实测：直接 `Reset+Start+SetStage` 对这两条主线任务零效果；
-;     这条探针就是「换构造」的因果链证据。）
+; 预热成立的硬判据（只读探针，直读引擎 IsStageDone）：开场 fragment 对 MQ03/MQ04/MQ05
+; 各 `SetStage(100)` 必须真的落到引擎（`运行中 + stageDone(100)=1`）；
+; MQIN 此刻只是记录（它的三条启动边都还没触发）。
 step = quest.probe ~0x00030C2B 100
 step = quest.probe ~0x00035E1C 100
-step = note === MQ_Shell@100 已触发 ⇒ 三条议会任务（狂热逾界 / 信念之争 / 发掘过去）不再被链式藏 ===
+step = quest.probe ~0x0010AAD5 10
+step = assert.log quest\.probe 0x[0-9A-F]{2}030C2B：.*stageDone\(100\)=1 scope=case timeout=3000
+step = assert.log quest\.probe 0x[0-9A-F]{2}035E1C：.*stageDone\(100\)=1 scope=case timeout=3000
+step = note === 判据①：MQ_Shell@100 已触发 ⇒ 三条议会任务不再被链式藏；此刻「另一边」的三条启动边都没触发 ⇒ 它必须仍在「链式没到」名单里（负向对照）===
 step = menu.open
 step = assert.log 推送成功 scope=prev timeout=12000
 step = assert.nolog 链式没到:.*(狂热逾界|信念之争|发掘过去) scope=case timeout=3000
+step = assert.log 链式没到:.*另一边 scope=case timeout=3000
 step = menu.close
-step = note === 收尾：MQ_Shell 与六条后续 reset 回去（自清场）===
+step = note === 判据②：推「狂热逾界」（MQ03，此刻运行中）到 stage 4000（fragment：守卫 → MQIN.SetStage(10)；无 Stop、无成就）⇒「另一边」应进列表 ===
+step = quest.stage ~0x00030C2B 4000
+step = wait 2500
+step = quest.probe ~0x00030C2B 100 4000
+step = quest.probe ~0x0010AAD5 10
+; 紧跟探针（scope=prev = 上一步的窗口）：① 目标 stage 落到引擎；② fragment 顺手把 MQIN 起了。
+step = assert.log quest\.probe 0x[0-9A-F]{2}10AAD5：.*stageDone\(10\)=1 scope=prev timeout=3000
+step = assert.log quest\.probe 0x[0-9A-F]{2}030C2B：.*stageDone\(4000\)=1 scope=case timeout=3000
+; 放行证据 = 显示层（`ui.select` 命中 = 「另一边」真的进了列表 = 玩家可见行为）。
+; ★ 不用 `assert.nolog 链式没到:.*另一边`：那条名单是**累积**的 —— 判据①的窗口里已经
+;   打过一行「另一边 被藏」⇒ 必然假 FAIL（verify 有反向检查挡回旧写法）。
+step = menu.open
+step = assert.log 推送成功 scope=prev timeout=12000
+step = ui.tab
+step = ui.select ~0x0010AAD5
+step = menu.close
+; ---- 附带记录：另一条同构边（发掘过去@1600）也能落到引擎 ----
+; ★ 这一步**只记录、不做放行断言**：MQIN 此刻已在运行，而引擎对「已运行过又被 Reset 的
+;   任务」拒绝二次启动 ⇒「复位后再由 1600 单独放行」的隔离条件在本会话里复现不了；
+;   边的数据完整性由 verify（与四个数据源逐边对账）保证。
+step = quest.stage ~0x00035E1C 1600
+step = wait 2500
+step = quest.probe ~0x00035E1C 100 1600
+step = assert.log quest\.probe 0x[0-9A-F]{2}035E1C：.*stageDone\(1600\)=1 scope=case timeout=3000
+step = note === 收尾：宿主与五条 reset 回去（自清场）===
 step = quest.reset ~0x00035E1B
 step = quest.reset ~0x00030C2B
 step = quest.reset ~0x00035E1A
 step = quest.reset ~0x00035E1C
-step = quest.reset ~0x000121DB
-step = quest.reset ~0x000116C7
-step = quest.reset ~0x0001221C
+step = quest.reset ~0x0010AAD5
 step = wait 2500
 step = menu.close
 
-; ----------------------------------------------------------------------------
-;  用例：第 101 轮 —— DLC 的链式门槛**二期**（14 + 1 条新边；官方 .pex 反编译取证）
-;
-;  背景：第 98 轮收了破碎空间主线的 6 条边。第 101 轮把候选清单里证据同样硬的边收进来
-;        （`ref/quest_chain_dlc.json` 6 → **21 条边 / 18 条任务**）：
-;          · 破碎空间「另一边」（MQIN）← 狂热逾界@4000 / 信念之争@7000 / 发掘过去@1600；
-;          · 地球舰队链：MQIntro星际遭遇战 ← 地球舰队侵袭@600 → 失踪的华庭号 ← 遭遇战@200 →
-;            深入VOID ← 失踪的华庭号**完成**（CQ stage 1700，构建期从 ESM 现读核验）→
-;            失控 ← 深入VOID@9999 → 互助互赢/互谅互让/互利互惠 ← 失控@1180/1182/1184 →
-;            隐蔽入侵 ← SFTER_MQ03@1700；
-;          · 自由航道锚点站：失踪的爱人 ← SFFL_Z01_SE1@10/@150、
-;            绝非虚言 ← 锚点站对话@95、旧伤 ← 锚点站对话@90。
-;        **有意不收**（verify 里有反向检查，防以后被误加回来）：
-;          MQIntro（这条线的入口 —— 它自己没有任何脚本启动边，挂上链式会**永远被藏**）、
-;          DialogueHVDazra@5（调试入口：全量反编译里只有 Fragment_Stage_0000 调它，
-;          同函数里还有 MoveTo(调试 marker) + AddPerk）、
-;          VKaiZ03a/VkaiZ03b（结局分支互启环 + 真实入口在数据侧）。
-;
-;  判据（与 r67/r98 的链式用例同构）：
-;    ① `[case:r101_dlc_chain2]`（A）：把新目标与宿主回滚到「没开始」⇒ `链式没到:` 名单里
-;       **至少有它们中的一条**（= 链式判据真的跑了并把它藏了）。
-;       ★ 为什么用「或」而不是点名一条：测试存档的 DLC 进度未知，且 INFO 门槛在链式门槛
-;         **之前**判定 —— 离线预判（第 101 轮）：「深入VOID / 失控 / MQIntro星际遭遇战 /
-;         失踪的爱人」在 `ref/info_gates_final.json` 里**没有门槛**（绝不会被 INFO 先藏），
-;         另有「另一边 / 互助互赢…」属成对条件 / want=0 形态 ⇒ 必然有目标走到链式判定。
-;       ★ 名字那一格带 `[0x`（运行期 FormID 带加载前缀，**不写死** —— `~0x…` 的教训）。
-;    ② `[case:r101_dlc_chain2_pass]`（B）：把「狂热逾界」（MQ03）推到 stage 4000
-;       （fragment 原文：`If !MQIN.GetStageDone(10)` → `MQIN.SetStage(10)` + 两行
-;       SetObjective + 关掉几个未死的 Actor —— **没有 Stop、没有成就**）
-;       ⇒ **本条用例的窗口里**名单没有「另一边」（MQIN 的共同启动边被覆盖）。
-;       ★ 与 r67/r98 同款说明：边一触发即放行 ⇒ 证的是「**不再因链式门槛**被藏」；
-;         之后是否进列表还要过运行时/显示层（不在此断言）。
-;    ③ `[case:r101_dlc_chain2_mq05]`（B 对照边）：换 MQIN 的另一条启动边
-;       （「发掘过去」MQ05@1600）做同构判据（fragment 同款守卫 → `MQIN.SetStage(10)`）。
-;
-;  ★★★ 第 102 轮改判（2026-09-22 21:14~21:27 会话实测：31 条 30 PASS / 2 FAIL）：
-;    两条 B 段都 FAIL，**根因在写侧、不在产品** —— 硬证据（同一会话）：
-;      ① `quest.probe`（只读、与链式判定同源的引擎函数）在 `Reset+Start+SetStage(4000)`
-;         之后报 `0x01030C2B：未开始 flags=0x10100｜stageDone(100)=0｜stageDone(3350)=0｜
-;         stageDone(4000)=0`（MQ05 段同款）⇒ 引擎里 done 位始终为 0；
-;      ② 运行时统计零变化（`已开始=40` / `链式门槛=65(过4/藏59)` 前后逐字段一致）；
-;      ③ Papyrus 日志只有三条 `[SAQ] 测试命令 … 结果=0`（Reset/Start/SetStage 都「成功」），
-;         **没有**任何引擎侧脚本活动；同一会话 r98 B 段推 `MQ_Shell@100` 却是**满屏
-;         fragment 报错 + 已开始 34→44 + 链式 过4→7**（= 写侧通路本身没问题）。
-;    ⇒ 结论：ShatteredSpace 主线任务在**没进入运行**的状态下，`Quest.Start()` 与
-;      `Quest.SetStage()` 被引擎静默忽略（与第 99 轮 `MQ01@10000` 同族）。
-;      第 102 轮补的探针正是为了定死这一点（判读见 `docs/09` 十四·补二十五/二十六）。
-;
-;    **改判后的构造（两条 B 段同款）**：走**游戏自己的路径**先把宿主置为运行中 ——
-;      1) `reset` 五条（MQIN / MQ03 / MQ04 / MQ05 / MQ_Shell）→
-;      2) `start` + `stage MQ_Shell 100`（开场 fragment 对 MQ03/MQ04/MQ05 各
-;         `SetStage(100)` ⇒ 三条一起进入运行；这一段与 r98 B 段**完全同源**、已实测有效）→
-;      3) `quest.probe` 记下 `stageDone(100)=1`（构造成立的硬判据）→
-;      4) 再推目标 stage（`MQ03@4000` / `MQ05@1600`）→
-;      5) `quest.probe` 记下目标 stage，然后才断言「另一边」不再被链式藏。
-;      断言链 = `stageDone(100)=1`（预热成立）→ `stageDone(4000/1600)=1`（目标边落到引擎）
-;      → `assert.nolog 链式没到:.*另一边`（产品放行）。任一步红都能直接对号入座。
-;      ★ 若下次实测 `stageDone(100)=0`（= 连 fragment 的 SetStage 都推不动），
-;        说明这套写入在本机引擎上对 ShatteredSpace 主线任务**完全不可用** ⇒
-;        那时按「记录型用例」改判（把 B 段改成记录限制 + 由 r98 B 段覆盖同类放行机制）。
-;
-;  ★ 只读探针（`quest.probe <FormID> [stage…]`，第 101 轮补丁落地）：
-;    直读引擎 IsStageDone（与链式 / 进度门槛**同一个** 9 字节特征校验 + 同一个
-;    `CallStageDoneChecked` 调用路径），一行给出「运行时状态 + 逐 stage 的 0/1」——
-;    是「写侧没生效 vs 读侧读不到」的第一证据（同类先例：第 99 轮 `MQ01@10000`）。
-;  自清场：三条都 `quest.reset` 回滚（MQ01 / MQ02A / MQ02B / MQ03 / MQ04 / MQ05 / MQIN + MQ_Shell）。
-;  ★ 只动这些 DLC 任务的状态；不传送、不开星图、不读档（紧接着就是 r62 读档用例，
-;    会把世界整体覆盖回存档现场）。
-; ----------------------------------------------------------------------------
 [case:r101_dlc_chain2]
 desc = 第 101 轮：DLC 链式门槛二期（A）—— 新收的 DLC 后续在「链式没到」名单里（进度没到 ⇒ 藏）
 step = note === 准备：新目标与它们的宿主回滚到「没开始」===
@@ -1370,99 +1358,6 @@ step = assert.log 链式门槛=\d+\(过\d+/藏\d+/未知\d+ scope=case timeout=3
 step = assert.log 链式没到: .*(另一边|深入VOID|失控|MQIntro星际遭遇战|失踪的爱人)\[0x scope=case timeout=3000
 step = menu.close
 step = wait 1500
-
-[case:r101_dlc_chain2_pass]
-desc = 第 102 轮改判：DLC 链式门槛二期（B）—— 先经「家族调和」@100 把「狂热逾界」置为运行中，再推 stage 4000 ⇒「另一边」不再被链式藏
-step = note === 第 102 轮复查：直接 Reset+Start+SetStage 对 ShatteredSpace 主线任务零效果（probe 实证）⇒ 改用游戏自己的路径：先跑 MQ_Shell@100 的开场 fragment（它对 MQ03/MQ04/MQ05 各 SetStage(100)）把宿主置为运行中 ===
-step = ping
-step = quest.reset ~0x0010AAD5
-step = quest.reset ~0x00030C2B
-step = quest.reset ~0x00035E1A
-step = quest.reset ~0x00035E1C
-step = quest.reset ~0x00035E1B
-step = wait 1500
-step = quest.start ~0x00035E1B
-step = wait 2000
-step = quest.stage ~0x00035E1B 100
-step = wait 2500
-; 预热是否成立 —— fragment 的 SetStage(100) 必须真的落到引擎（stageDone(100)=1）。
-; 连 MQIN 一起读：它此时应为「未开始」（预热不碰 MQIN）。
-step = quest.probe ~0x00030C2B 100 3350 4000
-step = quest.probe ~0x0010AAD5 10
-step = note === 推进「狂热逾界」（MQ03，此刻应已运行）到 stage 4000（fragment：If !MQIN.GetStageDone(10) → MQIN.SetStage(10)；无 Stop、无成就）===
-step = quest.stage ~0x00030C2B 4000
-step = wait 2500
-; 目标边是否落到引擎 + fragment 是否顺手把 MQIN 启动（MQIN 的 stageDone(10) 应为 1）。
-step = quest.probe ~0x00030C2B 100 4000
-step = quest.probe ~0x0010AAD5 10
-step = note === MQ03@4000 已触发 ⇒「另一边」不再被链式门槛藏（重启/换候选由后续链路负责）===
-step = menu.open
-step = assert.log 推送成功 scope=prev timeout=12000
-; 断言链（全部 `scope=case`：三条都在本用例窗口里）：
-;   ① 预热成立（宿主被 fragment 置到 100）；② 目标边落到引擎（4000=1）；
-;   ③ 产品放行（链式名单里没有「另一边」）。
-step = assert.log quest\.probe 0x[0-9A-F]{2}030C2B：.*stageDone\(100\)=1 scope=case timeout=3000
-step = assert.log quest\.probe 0x[0-9A-F]{2}030C2B：.*stageDone\(4000\)=1 scope=case timeout=3000
-step = assert.nolog 链式没到:.*另一边 scope=case timeout=3000
-step = menu.close
-step = wait 1500
-step = note === 收尾：宿主与目标 reset 回去（自清场）===
-step = quest.reset ~0x00035E1B
-step = quest.reset ~0x00030C2B
-step = quest.reset ~0x00035E1A
-step = quest.reset ~0x00035E1C
-step = quest.reset ~0x0010AAD5
-step = wait 2500
-
-; ----------------------------------------------------------------------------
-; ★★ 第 101 轮补丁（20:41 会话实测 FAIL 的对照用例）→ ★★★ 第 102 轮改判：
-;   背景：`r101_dlc_chain2_pass`（推 MQ03@4000）实测「写侧回执成功（Papyrus `=> 4000`）
-;   但链式判定与『已开始』零变化」。本用例换**同目标（MQIN）的另一条启动边**
-;   「发掘过去」（MQ05）@1600 做同构判据 —— 第 102 轮实测结论：**与 4000 那条同因**
-;   （probe：`未开始 + stageDone(1600)=0`）⇒ 不是 stage 4000 特有，而是
-;   「没进入运行的 ShatteredSpace 主线任务，写侧推不动」。
-;   本段与 B 段同款改判：**先经 MQ_Shell@100 预热**把宿主置为运行中，再推目标 stage；
-;   断言链 = `stageDone(100)=1` → `stageDone(1600)=1` → `assert.nolog 无「另一边」`。
-; ----------------------------------------------------------------------------
-[case:r101_dlc_chain2_mq05]
-desc = 第 102 轮改判：DLC 链式门槛二期（B 对照边）—— 先经「家族调和」@100 预热，再推「发掘过去」（MQ05）到 stage 1600 ⇒「另一边」不再被链式藏
-step = note === 对照边：与 B 段同一预热路径（MQ_Shell@100 ⇒ MQ03/MQ04/MQ05 进入运行），改推 MQ05@1600（fragment 同款守卫 → MQIN.SetStage(10)）===
-step = ping
-; 先把 MQIN 与另两条边的宿主都回滚（否则残留的边会掩盖本段的判据）。
-step = quest.reset ~0x0010AAD5
-step = quest.reset ~0x00030C2B
-step = quest.reset ~0x00035E1A
-step = quest.reset ~0x00035E1C
-step = quest.reset ~0x00035E1B
-step = wait 1500
-step = quest.start ~0x00035E1B
-step = wait 2000
-step = quest.stage ~0x00035E1B 100
-step = wait 2500
-; 预热是否成立：MQ05 的 stageDone(100) 必须为 1（未预热前应该是 0 —— 第 102 轮实测就是）。
-step = quest.probe ~0x00035E1C 100 1000 1600 2000
-step = quest.probe ~0x0010AAD5 10
-step = note === 推进「发掘过去」（MQ05，此刻应已运行）到 stage 1600 ===
-step = quest.stage ~0x00035E1C 1600
-step = wait 2500
-; 只读探针：MQ05 的 1600 是否落到引擎 + MQIN 是否被 fragment 启动。
-step = quest.probe ~0x00035E1C 100 1600
-step = quest.probe ~0x0010AAD5 10
-step = note === MQ05@1600 已触发 ⇒「另一边」不再被链式门槛藏 ===
-step = menu.open
-step = assert.log 推送成功 scope=prev timeout=12000
-step = assert.log quest\.probe 0x[0-9A-F]{2}035E1C：.*stageDone\(100\)=1 scope=case timeout=3000
-step = assert.log quest\.probe 0x[0-9A-F]{2}035E1C：.*stageDone\(1600\)=1 scope=case timeout=3000
-step = assert.nolog 链式没到:.*另一边 scope=case timeout=3000
-step = menu.close
-step = wait 1500
-step = note === 收尾：宿主与目标 reset 回去（自清场）===
-step = quest.reset ~0x00035E1B
-step = quest.reset ~0x00030C2B
-step = quest.reset ~0x00035E1A
-step = quest.reset ~0x00035E1C
-step = quest.reset ~0x0010AAD5
-step = wait 2500
 
 ; ----------------------------------------------------------------------------
 [case:r62_reload_observe]
