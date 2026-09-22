@@ -250,7 +250,12 @@ def build_candidates() -> list[dict]:
                 continue
             seen.add(k)
             items.append(e)
-        out.append({"formid": local, "edid": q["edid"], "master": q["master"], "edges": items})
+        # ★ formid 口径 = **文件里的原始 FormID**（带该文件自己的 master 前缀，如
+        #   ShatteredSpace 的 0x01xxxxxx）—— 与 quest_chain.json / info_gates 等所有
+        #   ref/*.json 一致，也是 gen_quest_table 里 `r["formid"]` 的样子；
+        #   记录号（local）只用在 host_local / kChainGates 的 host 侧。
+        out.append({"formid": int(q["formid"]), "edid": q["edid"], "master": q["master"],
+                    "edges": items})
     return out, dict(stats)
 
 
@@ -311,6 +316,9 @@ def main() -> int:
     ap.add_argument("--list", action="store_true", help="打印全部候选边")
     ap.add_argument("--skip-extract", action="store_true")
     ap.add_argument("--skip-decompile", action="store_true")
+    ap.add_argument("--strict", action="store_true",
+                    help="缺 Champollion / 缺反编译缓存时**失败**（默认：保留现有产物、退出 0"
+                         "—— 与 gen_quest_chain.py 的「源码目录没有就沿用旧产物」同款宽容）")
     a = ap.parse_args()
 
     if not a.skip_extract:
@@ -318,9 +326,13 @@ def main() -> int:
     if not a.skip_decompile:
         decompile(a.force)
     if not PSC_ROOT.exists():
-        print(f"!! 没有反编译产物 {PSC_ROOT} —— 先跑（或补 Champollion）："
-              f"python tools\\esm\\gen_dlc_chain.py")
-        return 2
+        msg = (f"没有反编译产物 {PSC_ROOT} —— 先跑（或补 Champollion：见本文件头）：\n"
+               f"    python tools\\esm\\gen_dlc_chain.py")
+        if a.strict:
+            print("!! " + msg)
+            return 2
+        print(f"（{msg}\n  ⇒ 保留现有 {OUT_JSON.relative_to(ROOT)}，跳过 DLC 链边提取）")
+        return 0
 
     cands, stats = build_candidates()
     CAND_JSON.write_text(json.dumps(cands, ensure_ascii=False, indent=1), encoding="utf-8")

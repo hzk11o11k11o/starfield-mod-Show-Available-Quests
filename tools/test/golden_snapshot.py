@@ -56,6 +56,10 @@ ITEMS: list[tuple[str, str]] = [
     # ★★ 第 89 轮：可重复任务（做完一次后仍显示 —— 豁免「已完成」过滤；
     #   gen_repeatable_quests.py，见 docs/11）
     ("ref/repeatable_quests.json", "可重复任务（gen_repeatable_quests.py）"),
+    # ★★★ 第 98 轮：DLC 的链式启动边（官方 .pex 反编译取证 —— 破碎空间主线
+    #   MQ02/MQ_Shell/MQ03/MQ04/MQ05/MQ06；gen_dlc_chain.py，见 docs/06 八节）。
+    #   它是 gen_quest_table 的输入之一 ⇒ 内容变了必须在这里报红（防手改/漏跑）。
+    ("ref/quest_chain_dlc.json", "DLC 链式启动边（gen_dlc_chain.py）"),
     ("plugin/src/SAQ_QuestTable.h", "静态任务表（gen_quest_table.py，DLL 编译进去）"),
     # ★★ 第 74 轮续：内嵌回退载荷（顺序与 C++ 载荷逐条对齐 —— 同伴任务前置参见 verify）
     ("ui/missionmenu/saqdata/SaqEmbeddedPayload.inc", "内嵌回退载荷（gen_quest_table.py）"),
@@ -132,6 +136,12 @@ def summarize(rel: str, path: pathlib.Path) -> str:
                 n_cand = sum(1 for g in obj if int(g.get("candCount", 0)) > 0)
                 n_np = sum(1 for g in obj if g.get("noPickup"))
                 return f"可重复 {len(obj)}（有引导 {n_cand} / 无接取点 {n_np}）"
+            if rel.endswith("quest_chain_dlc.json") and isinstance(obj, list):
+                # ★★★ 第 98 轮：DLC 链式启动边 —— 任务数 + 边数（含宿主任务名，一眼可判读）
+                edges = [e for t in obj for e in t.get("edges", [])]
+                hosts = sorted({e.get("host_edid", "?") for e in edges})
+                return (f"任务 {len(obj)} / 边 {len(edges)}"
+                        f"（宿主 {'/'.join(hosts) if hosts else '—'}）")
             return f"键 {len(obj)}" if isinstance(obj, dict) else f"条目 {len(obj)}"
         if rel.endswith("SaqEmbeddedPayload.inc"):
             # ★★ 第 74 轮续：内嵌载荷 —— 条数 + 第一条 FormID（顺序不变量的第一眼证据）

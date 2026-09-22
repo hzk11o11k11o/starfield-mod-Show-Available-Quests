@@ -2074,9 +2074,15 @@ def main() -> int:
             "链式门槛结构 StaticChainGate": "struct StaticChainGate",
             "链式门槛数组 kChainGates": "kChainGates[] = {",
             "扩展链式边数据 (ref/quest_chain_extra.json)": "quest_chain_extra",
+            # ★★★ 第 98 轮：DLC 的链式启动边（官方 .pex 反编译取证）——
+            #   数据文件必须在（它是 gen_quest_table 的输入；缺了说明管线跑漏了）。
+            "DLC 链式边数据 (ref/quest_chain_dlc.json)": "quest_chain_dlc",
         }.items():
             if name.startswith("扩展链式边"):
                 p = ROOT / "ref" / "quest_chain_extra.json"
+                ok = p.exists()
+            elif name.startswith("DLC 链式边"):
+                p = ROOT / "ref" / "quest_chain_dlc.json"
                 ok = p.exists()
             else:
                 ok = needle in blob
@@ -2093,33 +2099,48 @@ def main() -> int:
             （quest_chain_extra.json）+ **同伴「后续」任务的启动边**
             （companion_quests.json 的 followUpGate：承诺任务只能由好感度里程碑启动，
             并入链式门槛 ⇒ 前置没到不显示 —— 玩家要求「只显示入口任务」）。
+            ★★★ 第 98 轮：**四个**数据源 —— 再加 DLC 的启动边（quest_chain_dlc.json，
+            官方 .pex 反编译取证）。两处口径与生成器对齐：
+              · 宿主 master 只要在「全部 quest 的 master 集合」里就收（不再限定
+                Starfield.esm）—— DLC 边全是跨 master 的；
+              · 表行里 `formid` 是**文件内 FormID**（DLC 带自己的 master 前缀，
+                如 0x010116C7），而 kChainGates 的对账集合用的是**记录号**
+                （kQuestTable 行的首列）⇒ 期望集合要用 local。
             """
             tbl = json.loads((ROOT / "ref" / "quest_table_debug.json").read_text(encoding="utf-8"))
-            table_set = {int(t["formid"]) for t in tbl}
+            table_formids = {int(t["formid"]) for t in tbl}
+            local_of = {int(t["formid"]): int(t["local"]) & 0xFFFFFF for t in tbl}
+            masters: set[str] = set()
+            qp = ROOT / "ref" / "quests_all.json"
+            if qp.exists():
+                masters = {(q.get("master") or "Starfield.esm")
+                           for q in json.loads(qp.read_text(encoding="utf-8"))}
+            if not masters:
+                masters = {(t.get("master") or "Starfield.esm") for t in tbl}
             merged: dict[int, set[tuple[int, int]]] = {}
-            for fn in ("quest_chain.json", "quest_chain_extra.json"):
+            for fn in ("quest_chain.json", "quest_chain_extra.json", "quest_chain_dlc.json"):
                 p = ROOT / "ref" / fn
                 if not p.exists():
                     continue
                 for t in json.loads(p.read_text(encoding="utf-8")):
-                    if int(t["formid"]) not in table_set:
+                    if int(t["formid"]) not in table_formids:
                         continue
                     for e in t.get("edges", []):
-                        if (e.get("host_master") or "Starfield.esm") != "Starfield.esm":
+                        if (e.get("host_master") or "Starfield.esm") not in masters:
                             continue
-                        merged.setdefault(int(t["formid"]), set()).add(
-                            (int(e["host_local"]), int(e["host_stage"])))
+                        merged.setdefault(local_of[int(t["formid"])], set()).add(
+                            (int(e["host_local"]) & 0xFFFFFF, int(e["host_stage"])))
             cp = ROOT / "ref" / "companion_quests.json"
             if cp.exists():
                 for g in json.loads(cp.read_text(encoding="utf-8")):
                     for q in g.get("quests", []):
                         fg = q.get("followUpGate")
-                        if not fg or int(q["formid"]) not in table_set:
+                        if not fg or int(q["formid"]) not in table_formids:
                             continue
-                        if (fg.get("hostMaster") or "Starfield.esm") != "Starfield.esm":
+                        if (fg.get("hostMaster") or "Starfield.esm") not in masters:
                             continue
-                        merged.setdefault(int(q["formid"]), set()).add(
-                            (int(fg["hostLocal"]), int(fg["hostStage"])))
+                        merged.setdefault(local_of[int(q["formid"])], set()).add(
+                            (int(fg["hostLocal"]) & 0xFFFFFF, int(fg["hostStage"])))
             n_edges = sum(len(v) for v in merged.values())
             return n_edges, len(merged), {(t, h, s) for t, v in merged.items() for (h, s) in v}
 
@@ -2166,6 +2187,50 @@ def main() -> int:
         print(("OK  " if ok_cf02 else "MISS") +
               " 静态表 · 菜鸟觐见链式门槛（CF01 深藏不露 @ stage 1000）")
         all_ok &= ok_cf02
+
+        # ★★★ 第 98 轮（DLC 链式门槛 —— 官方 .pex 反编译取证）：破碎空间主线的四条代表边。
+        #   取证与判据见 docs/06 八节；这里查的是「数据真的进了表且 host/master/stage 都对」：
+        #     MQ02      ← MQ01@10000        （残留之物收尾启动虚妄的得诺者）
+        #     MQ_Shell  ← MQ02@2000
+        #     MQ03/MQ04/MQ05 ← MQ_Shell@100 （三条议会任务一起开）
+        #     MQ06      ← MQ_Shell@1100
+        #   ★ master 下标从表里的 kQuestMasters 现算（不写死 3 —— 将来加 master 也不假红）。
+        m_masters = re.search(r"kQuestMasters\[\]\s*=\s*\{(.*?)\};", blob, re.S)
+        ss_idx = -1
+        if m_masters:
+            names = re.findall(r'"([^"]+)"', m_masters.group(1))
+            for i, nm in enumerate(names):
+                if nm.lower() == "shatteredspace.esm":
+                    ss_idx = i
+        print(("OK  " if ss_idx >= 0 else "MISS") +
+              f" 静态表 · kQuestMasters 含 ShatteredSpace.esm（下标 {ss_idx}）")
+        all_ok &= ss_idx >= 0
+        #   ★ 行首 = 记录号（kQuestTable 用的就是 local，不带 master 前缀）：
+        #     MQ02 = 0x0116C7 / MQ_Shell = 0x035E1B / MQ03 = 0x030C2B /
+        #     MQ04 = 0x035E1A / MQ05 = 0x035E1C / MQ06 = 0x01221C / MQ01 = 0x0121DB。
+        for label, tgt, host, stage in (
+                ("虚妄的得诺者 ← 残留之物@10000", "000116C7", "000121DB", "10000"),
+                ("家族的调和 ← 虚妄的得诺者@2000", "00035E1B", "000116C7", "2000"),
+                ("狂热逼界 ← 家族的调和@100", "00030C2B", "00035E1B", "100"),
+                ("信念之争 ← 家族的调和@100", "00035E1A", "00035E1B", "100"),
+                ("发觉过去 ← 家族的调和@100", "00035E1C", "00035E1B", "100"),
+                ("栉比堡垒 ← 家族的调和@1100", "0001221C", "00035E1B", "1100"),
+        ):
+            ok_e = False
+            m = re.search(r"\{\s*0x" + tgt + r"u,\s*\d+u,\s*\d+u,\s*0x[0-9A-F]+u,"
+                          r"\s*\d+u,\s*\d+u,\s*\d+u,\s*\d+u,\s*\d+u,\s*\d+u,"
+                          r"\s*(\d+)u,\s*(\d+)u,", blob)
+            if m:
+                cb, cc = int(m.group(1)), int(m.group(2))
+                for i in range(cc):
+                    if cb + i >= len(c_rows):
+                        continue
+                    h, mast, st = c_rows[cb + i]
+                    if (h.upper() == host and int(st) == int(stage)
+                            and (ss_idx < 0 or int(mast) == ss_idx)):
+                        ok_e = True
+            print(("OK  " if ok_e else "MISS") + f" 静态表 · DLC 链式边样本（{label}）")
+            all_ok &= ok_e
 
         # ★★ 第 69 轮（扩展链式边 · 同类问题收口）：样本 —— 两条实测过的形态
         #   ① Eleos 静修地线：「幽灵狩猎」（0x0016D4D1）← 「完全停止」（0x0017134F）@1000；

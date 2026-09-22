@@ -260,7 +260,17 @@ GetQuestCompleted(自己)` 这种自引用按既有约定**不算门槛**（`doc
   （MS01/MS04/MS05/VKaiZ01/02/03a/DazraZ01/DazraZ03）—— 像调试入口，但也可能是
   「进城后解锁全城支线」的真实时点，需要对照 `DLC001_DialogueHVDazra` 的 stage 结构再定。
 
-**还没做（下一轮）**：把 `ref/quest_chain_dlc.json` 接进 `gen_quest_table.py`
-（与 `--chain-extra` 同一套合并逻辑）+ `verify_saq_build.py` 的边计数/样本 + 黄金快照 +
-harness 用例（A 段：空进度 ⇒ MQ02~MQ06 进「链式没到」名单；B 段：`quest.setstage` MQ01@10000
-⇒ MQ02 放行）—— 四处齐了才算「DLC 收口」实机验收。
+**落地（离线三步已完成，2026-09-22 同日）**：
+
+| 步骤 | 内容 | 判据 |
+| --- | --- | --- |
+| ① 数据管线 | `gen_quest_table.py` 新增 `--chain-dlc`（四个数据源合并：编号链 + 扩展边 + **DLC** + 同伴后续）；`build-saq.ps1` 加一步跑 `gen_dlc_chain.py`（宽容：没 Champollion 就沿用旧产物） | 静态表 **链式边 63 → 69 条 / 有边任务 66**；`hostMaster = 3`（ShatteredSpace） |
+| ② verify | 期望值改为「**四个**数据源逐边对账」，宿主过滤改成「在表内 master 集合里」（不再限定基础游戏），期望集合改用**记录号**（表行首列）—— DLC 的 `formid` 带 master 前缀，直接用会假红 | `verify` **0 MISS**，含 6 条 DLC 样本（`MQ02 ← MQ01@10000` … `MQ06 ← MQ_Shell@1100`）+ `kQuestMasters` 下标检查 |
+| ③ 黄金快照 | 新增 `ref/quest_chain_dlc.json` 一件 + 表摘要「链式边 69」 | 离线层 **18 用例 / 929 断言 + 15 件快照全绿**；DLL 重建部署（`部署 == 工作区`，内嵌载荷未变 ⇒ 不用重编 SWF） |
+
+★ 顺带修掉一个口径 bug：`gen_dlc_chain.py` 早先把 `formid` 写成了**记录号** ——
+`ref/*.json` 的约定是**文件内 FormID**（带该文件自己的 master 前缀，DLC 即 `0x01xxxxxx`），
+与 `quest_chain.json` / INFO 门槛一致；记录号只用在 `host_local` 一侧。
+
+**还没做（唯一剩下的）**：harness 用例 —— A 段：空进度 ⇒ MQ02~MQ06 进「链式没到」名单；
+B 段：`quest.setstage` MQ01@10000 ⇒ MQ02 放行（需要一次实机；跑完之后 0.1.10 打包）。

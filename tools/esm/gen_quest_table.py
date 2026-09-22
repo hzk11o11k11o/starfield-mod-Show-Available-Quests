@@ -515,6 +515,9 @@ def main() -> int:
     ap.add_argument("--chain-extra", default="ref/quest_chain_extra.json",
                     help="★★ 第 69 轮：链式门槛的扩展边（gen_quest_chain_extra.py 产物；"
                          "人工核实 + 构建期源码核验；缺失 ⇒ 只做编号链）")
+    ap.add_argument("--chain-dlc", default="ref/quest_chain_dlc.json",
+                    help="★★★ 第 98 轮：DLC 的链式启动边（gen_dlc_chain.py 产物 —— "
+                         "官方 .pex 反编译取证；缺失 ⇒ DLC 主线后续照旧只按 INFO 门槛）")
     ap.add_argument("--companions", default="ref/companion_quests.json",
                     help="★★ 第 74 轮：同伴好感度任务（gen_companion_quests.py 产物；"
                          "缺失 ⇒ 不标记，这类任务不会固定显示）")
@@ -914,8 +917,18 @@ def main() -> int:
     #   判据（全部边都没触发 ⇒ 隐藏）：这是玩家要求的「链式关系的后续任务不要显示，
     #   只显示入口任务」在同伴线上的落点（入口 = 个人任务，见上面的 companion_pin）。
     chain_by_fid = merge_chain(
-        merge_chain(load_chain(Path(a.chain)), load_chain(Path(a.chain_extra))),
+        merge_chain(
+            merge_chain(load_chain(Path(a.chain)), load_chain(Path(a.chain_extra))),
+            # ★★★ 第 98 轮：DLC 的启动边（官方 .pex 反编译取证 —— 破碎空间主线
+            #   MQ02/MQ_Shell/MQ03/MQ04/MQ05/MQ06 六条；host 是 DLC 自己的任务，
+            #   运行时按 kChainGates 的 hostMaster 解析，跨 master 已支持）。
+            load_chain(Path(a.chain_dlc))),
         comp_followup)
+    dlc_chain = load_chain(Path(a.chain_dlc))
+    if dlc_chain:
+        n_dlc_edges = sum(len(v) for v in dlc_chain.values())
+        print(f"DLC 链式启动边：{len(dlc_chain)} 条任务 / {n_dlc_edges} 条边"
+              f"（并入链式门槛 —— 官方 .pex 反编译取证，见 docs/06 八节）")
     if comp_followup:
         n_fu = sum(len(v) for v in comp_followup.values())
         print(f"同伴后续任务启动边：{len(comp_followup)} 条任务 / {n_fu} 条边"

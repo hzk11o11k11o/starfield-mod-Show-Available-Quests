@@ -124,6 +124,15 @@ if (-not $SkipTable) {
     Step '1/6' '生成扩展链式边（gen_quest_chain_extra.py → ref\quest_chain_extra.json）'
     & python (Join-Path $root 'tools\esm\gen_quest_chain_extra.py') | Write-Host
     if ($LASTEXITCODE -ne 0) { throw "gen_quest_chain_extra.py 失败（exit $LASTEXITCODE）" }
+    # ★★★ 第 98 轮：**DLC 的链式启动边**（gen_dlc_chain.py）—— DLC 不发 .psc，所以这里
+    #   先把 BA2 里的 .pex 抽出来、用 Champollion（Orvid v1.3.2）反编译成 .psc，
+    #   再按与基础游戏同一套形态抽「宿主 stage fragment 启动下一个任务」的边，
+    #   产物 ref\quest_chain_dlc.json 由 gen_quest_table.py 合并进 kChainGates
+    #   （取证全过程见 docs/06 八节）。宽容策略：没有 Champollion（第三方二进制，
+    #   .gitignore 里）+ 没有反编译缓存 ⇒ 保留现有产物、退出 0（不打断构建）。
+    Step '1/6' '生成 DLC 链式启动边（gen_dlc_chain.py → ref\quest_chain_dlc.json）'
+    & python (Join-Path $root 'tools\esm\gen_dlc_chain.py') | Write-Host
+    if ($LASTEXITCODE -ne 0) { throw "gen_dlc_chain.py 失败（exit $LASTEXITCODE）" }
     # ★★ 第 74 轮：同伴好感度任务（固定显示的「入口」+「后续」的启动边）——
     #   gen_companion_quests.py 扫官方 Papyrus 源码核验「只能由好感度里程碑启动」，
     #   产物 ref\companion_quests.json 由 gen_quest_table.py 消费（标记 + 名字前缀 +
