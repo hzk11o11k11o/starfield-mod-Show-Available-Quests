@@ -1378,14 +1378,25 @@ def main() -> int:
                 # ★★★ 第 106 轮（operator 全量产品化 · INFO 门槛 OR 组）：断言形状 ——
                 #   只读探针 `info.probe` + 组求值结果（A 段假 / B 段真），两条都必须以
                 #   `scope=prev` 取证**探针那一行**（产品日志 `信息探针 INFO探针 …`）。
+                #   ★★ 第 106 轮实测修正：产品探针格式**没有等号**
+                #     （`组[0]:s112[OR]+s114[OR]假`，见 SAQ_QuestCond.cpp 的 `组[{}]:{}{}`）
+                #     —— 首跑两条用例 FAIL 就是断言多写了一个 `=`（正则永不匹配；同批
+                #     探针输出本身全对，与第 83 轮 r80 半角括号同族）。断言必须照抄产品格式。
                 all_ok &= check("用例计划 · r106 INFO OR 组断言（A：组为假）",
                                 plan_text.encode(),
-                                "assert.log 信息探针 .*组\\[0\\]:s112\\[OR\\]\\+s114\\[OR\\]=假 scope=prev".encode())
+                                "assert.log 信息探针 .*组\\[0\\]:s112\\[OR\\]\\+s114\\[OR\\]假 scope=prev".encode())
                 all_ok &= check("用例计划 · r106 INFO OR 组断言（B：组为真）",
                                 plan_text.encode(),
-                                "assert.log 信息探针 .*组\\[0\\]:s112\\[OR\\]\\+s114\\[OR\\]=真 scope=prev".encode())
+                                "assert.log 信息探针 .*组\\[0\\]:s112\\[OR\\]\\+s114\\[OR\\]真 scope=prev".encode())
                 all_ok &= check("用例计划 · r106 info.probe 步骤存在",
                                 plan_text.encode(), "info.probe 0x001C7185".encode())
+                #   反向检查（第 106 轮修正防回退）：步骤行里不许再出现「多一个等号」的
+                #   旧写法（`…[OR]=真/假`）。★ 只扫 `step =` 行（第 103 轮的教训）——
+                #   注释里解释「为什么没有等号」的那几句话不该把这条检查顶红。
+                bad_info_or_eq = bool(re.search(r"(?m)^\s*step\s*=.*OR\\\]=.*$", plan_text))
+                print(("MISS " if bad_info_or_eq else "OK  ") +
+                      " 用例计划 · r106 探针断言不再多写等号（反向检查，第 106 轮）")
+                all_ok &= not bad_info_or_eq
                 # 反向检查：INFO OR 组不许「见第一条 kFail 即停」的旧写法残留 ——
                 #   DLL 侧特征（`不再「找第一条 kFail 即停」` 的说明字符串不在二进制里）
                 #   由离线单测 + 用例钉死；这里只挡注释文档层面的旧说法。

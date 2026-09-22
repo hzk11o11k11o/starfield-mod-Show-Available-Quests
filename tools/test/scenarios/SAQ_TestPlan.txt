@@ -1370,7 +1370,10 @@ step = quest.reset 0x001C7187
 step = wait 2000
 step = note === 探针：巴雷特：承诺（表内记录号 0x001C7185）第 1 条对话 = (112 OR 114) ⇒ 假 ===
 step = info.probe 0x001C7185
-step = assert.log 信息探针 .*组\[0\]:s112\[OR\]\+s114\[OR\]=假 scope=prev timeout=5000
+; ★★ 第 106 轮实测修正：产品探针格式**没有等号**（`组[0]:s112[OR]+s114[OR]假`）——
+;   旧写法多写了一个 `=` ⇒ 正则永不匹配（两条用例假 FAIL，同批探针输出本身全对；
+;   与第 83 轮 r80 的半角括号同族：断言字符串必须照抄产品输出）。
+step = assert.log 信息探针 .*组\[0\]:s112\[OR\]\+s114\[OR\]假 scope=prev timeout=5000
 step = note === 收尾：清场 ===
 step = quest.reset 0x001C7187
 step = wait 1500
@@ -1386,7 +1389,8 @@ step = quest.stage 0x001C7187 112
 step = wait 2500
 step = note === 探针：同一条组 (112 OR 114) 应变「真」（只看 114 会判假 —— 新旧差异点）===
 step = info.probe 0x001C7185
-step = assert.log 信息探针 .*组\[0\]:s112\[OR\]\+s114\[OR\]=真 scope=prev timeout=5000
+; ★★ 第 106 轮实测修正：同 A 段 —— 产品格式无等号（`…s114[OR]真`）。
+step = assert.log 信息探针 .*组\[0\]:s112\[OR\]\+s114\[OR\]真 scope=prev timeout=5000
 step = note === 收尾：清场 ===
 step = quest.reset 0x001C7187
 step = wait 1500
