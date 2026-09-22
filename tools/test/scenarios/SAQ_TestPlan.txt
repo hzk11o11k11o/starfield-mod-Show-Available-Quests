@@ -1192,6 +1192,75 @@ step = menu.close
 ;  ★ 读档后如果通道迟迟不就绪，驱动器会「开一次任务菜单再关掉」唤醒脚本
 ;    （第 26 轮的定时器重挂机制；游戏内读档会重建 VM，定时器可能没恢复）。
 ; ----------------------------------------------------------------------------
+;  用例：第 98 轮 —— DLC 的链式门槛（破碎空间主线；官方 .pex 反编译取证）
+;
+;  背景：DLC 不发 Papyrus 源码 ⇒ 第 78 轮只能按 INFO 门槛「保守放行」，破碎空间主线后续
+;        （虚妄的得诺者 / 家族的调和 / 狂热逼界 / 信念之争 / 发觉过去 / 栉比堡垒）在
+;        进度没到时也会显示。第 98 轮用 Champollion 反编译 `.pex` 挖出 6 条真实启动边
+;        （`tools/esm/gen_dlc_chain.py` → `ref/quest_chain_dlc.json` → `kChainGates`，
+;        host master = 3 = ShatteredSpace.esm；取证见 `docs/06` 第八节）。
+;
+;  判据（与第 67 轮的链式门槛用例同构）：
+;    ① `[case:r98_dlc_chain]`（A）：六条任务全部回滚到「没开始」⇒ `链式没到:` 名单里
+;       **至少有它们中的一条**（= 链式判据真的跑了并把它藏了）。
+;       ★ 为什么用「或」列六条而不是点名一条：测试存档的 DLC 进度未知，且 INFO 门槛在
+;         链式门槛**之前**判定 —— 只要有一条没被 INFO 先藏就会进链式名单；本机离线预判
+;         （`ref/_dlc_info_precheck.py`，空进度近似）六条都还有「可能可用」的对话组。
+;       ★ 名字那一格带 `[0x…`（运行期 FormID 带加载前缀，**不写死** —— 换机器/换加载
+;         顺序就不一样，`~0x…` 的教训）。
+;    ② `[case:r98_dlc_chain_pass]`（B）：把「残留之物」（MQ01）推到收尾 stage 10000
+;       （stage done 即触发边；fragment 还会顺手 `MQ02.SetStage(100)`）⇒ **本条用例的
+;       窗口里**名单没有「虚妄的得诺者」。
+;       ★ 与 `r67_chain_pass` 同款说明：边一触发，MQ02 就被引擎开始（running）⇒ 之后
+;         由运行时状态过滤接手（不在列表里是正常的）；所以 B 段证的是「**不再因链式
+;         门槛**被藏」，不是「出现在列表里」（显示层证据要多一个「链路真跑通」的前提，
+;         不在这里重复）。
+;  自清场：两条都用 `quest.reset` 把 MQ01 与六条后续回滚（同 r67 的收尾写法）。
+;  ★ 只动这 7 条 DLC 任务的状态；不传送、不开星图、不读档。
+; ----------------------------------------------------------------------------
+[case:r98_dlc_chain]
+desc = 第 98 轮：DLC 链式门槛（A）—— 破碎空间主线后续在「链式没到」名单里（进度没到 ⇒ 藏）
+step = note === 准备：破碎空间主线回滚到「没开始」（MQ01 残留之物 + 六条后续）===
+step = ping
+step = quest.reset ~0x000121DB
+step = quest.reset ~0x000116C7
+step = quest.reset ~0x00035E1B
+step = quest.reset ~0x00030C2B
+step = quest.reset ~0x00035E1A
+step = quest.reset ~0x00035E1C
+step = quest.reset ~0x0001221C
+step = wait 2500
+step = note === 进度没到 ⇒ 六条里至少一条必须出现在「链式没到」名单里（= 被藏）===
+step = menu.open
+step = assert.log 推送成功 scope=prev timeout=12000
+; 红线（第 68 轮）：正则只写单反斜杠；统计行与名单在推送前若干毫秒打印 ⇒ scope=case。
+step = assert.log 链式门槛=\d+\(过\d+/藏\d+/未知\d+ scope=case timeout=3000
+step = assert.log 链式没到: .*(虚妄的得诺者|家族的调和|狂热逼界|信念之争|发觉过去|栉比堡垒)\[0x scope=case timeout=3000
+step = menu.close
+
+[case:r98_dlc_chain_pass]
+desc = 第 98 轮：DLC 链式门槛（B）—— 前置推到收尾 stage 后，「虚妄的得诺者」不再被链式藏
+step = note === 推进「残留之物」（MQ01）到收尾 stage 10000（边已触发；fragment 顺手启动 MQ02）===
+step = ping
+step = quest.start ~0x000121DB
+step = quest.stage ~0x000121DB 10000
+step = wait 2500
+step = menu.open
+step = assert.log 推送成功 scope=prev timeout=12000
+step = assert.nolog 链式没到:.*虚妄的得诺者 scope=case timeout=3000
+step = menu.close
+step = note === 收尾：MQ01 与六条后续 reset 回去（自清场）===
+step = quest.reset ~0x000121DB
+step = quest.reset ~0x000116C7
+step = quest.reset ~0x00035E1B
+step = quest.reset ~0x00030C2B
+step = quest.reset ~0x00035E1A
+step = quest.reset ~0x00035E1C
+step = quest.reset ~0x0001221C
+step = wait 2500
+step = menu.close
+
+; ----------------------------------------------------------------------------
 [case:r62_reload_observe]
 desc = 第 62 轮：自动读档（指定存档）→ 读档后链路自检 + 候选可得性记录
 step = note === 读档前：先开一次菜单（预建静态表 + 确认推送链路）===

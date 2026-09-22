@@ -1288,9 +1288,27 @@ def main() -> int:
                             # ★★ 第 96 轮：可重复任务 —— 名字「（可重复）」前缀 +
                             #   整组排在列表末尾（rq= / order= 的 |tail= 段为判据）
                             "r96_repeatable_group",
+                            # ★★★ 第 98 轮：DLC 链式门槛（官方 .pex 反编译取证）——
+                            #   A：破碎空间主线后续在「链式没到」名单里；B：推进 MQ01
+                            #   到收尾 stage 后「虚妄的得诺者」不再被链式藏
+                            "r98_dlc_chain", "r98_dlc_chain_pass",
                             "r62_reload_observe"):
                     all_ok &= check(f"用例计划 · [case:{cid}]", plan_text.encode(),
                                     f"[case:{cid}]".encode())
+                # ★★★ 第 98 轮：两条 DLC 链式用例的断言形状（防被改回「点名一条」
+                #   或写死运行期 FormID —— 六条里任意一条命中即可；ID 用 `[0x` 通配）。
+                all_ok &= check("用例计划 · r98 DLC 链式门槛断言（A：六条任一被藏）",
+                                plan_text.encode(),
+                                "assert.log 链式没到: .*(虚妄的得诺者|家族的调和|狂热逼界".encode())
+                all_ok &= check("用例计划 · r98 DLC 链式门槛放行断言（B：assert.nolog）",
+                                plan_text.encode(),
+                                "assert.nolog 链式没到:.*虚妄的得诺者 scope=case".encode())
+                # 反向检查：DLC 用例里不许把运行期 FormID 写死（必须用 `~0x…` 记录号）。
+                bad_dlc_fid = ("quest.reset 0x010116C7" in plan_text
+                               or "quest.start 0x010121DB" in plan_text)
+                print(("MISS " if bad_dlc_fid else "OK  ") +
+                      " 用例计划 · r98 DLC 用例用 ~0x 记录号（反向检查）")
+                all_ok &= not bad_dlc_fid
                 # ★★ 第 65 轮（任务专属图标）：r65 用例的图标断言必须走**界面报告**
                 #   （assert.ui —— icon= 字段是 SAQ_Report 的实时值，比日志断言更直接）。
                 all_ok &= check("用例计划 · r65 图标断言（assert.ui icon=）",
