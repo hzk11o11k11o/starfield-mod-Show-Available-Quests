@@ -1022,44 +1022,48 @@ step = wait 1500
 ;    任务**完成一次后**被「只挡已完成」过滤藏掉 —— 但它们设计上还能再接
 ;    （故事事件/计数器驱动，下次接取恢复 running）。
 ;
-;  判据（PASS 线）：
+;  判据（PASS 线，★★ 第 93 轮定稿）：
 ;    ① C++ 侧统计：`可重复任务=N(已完成保留M)` 里 M ≥ 1（本用例完成的那条被豁免）；
 ;    ② 豁免名单：`可重复保留: …翻新商品[0x00224FE8 …]` 出现；
-;    ③ 显示层（AS3）：`rptk=[1|224fe8]`（FilterKnownQuests 的豁免真的放行了它 ——
-;       C++ 豁免了但 AS3 的「在玩家日志里」没豁免的话，① 会过 ③ 必 FAIL）；
-;    ④ 它仍可被选中（真的还在「可接任务」列表里 —— ui.select 找不到就 FAIL）。
+;    ③ 显示层证据：切到「可接任务」tab 后**能选中它**（`ui.select` 命中 =
+;       它真的还在列表里 —— 这就是「做完一次后仍显示」的玩家可见行为）。
 ;
-;  ★★ 2026-09-22 首跑实测（第 92 轮复查）：①/② 全过，③ FAIL（`rptk=[0|-]`）——
-;    真因 = 本用例的假设不成立：**Papyrus 的 CompleteQuest() 只动完成位，不会把
-;    任务加进玩家日志（QuestData）** ⇒ FilterKnownQuests 走的是「不在日志里 ⇒
-;    保留」那条路（不计探针），没走到「在日志里 + 已完成 + 可重复 ⇒ 豁免放行」。
-;    ⇒ 修法（本用例已改）：complete 之前先 `quest.start`（任务真的进日志，
-;    与「玩家接过这条任务」同态）；中间加一条 `qdata=…224fe8` 断言，把
-;    「Start 是否进日志」与「bComplete 是否随 CompleteQuest 变真」两步分开定性
-;    （若 qdata 过而 rptk 仍 0 ⇒ 病灶在引擎日志条目的 bComplete，另议产品侧）。
+;  ★★★ 第 93 轮复查（第三次实测）——**为什么不再断言 qdata= / rptk=**：
+;    前两轮的假设（「CompleteQuest 后任务会进玩家日志」「先 Start 就会进日志」）
+;    都被现场否掉：任务推到完成后，玩家任务日志（aQuests / 界面报告的 qdata=）
+;    里**始终没有它**；整份日志里 rptk= 非零值 = 0 次。
+;    证据链（10:53~11:00 会话）：
+;      · `complete` 确实生效 —— C++ `已完成` 计数 2 → 3；
+;      · 引擎行为 = **任务完成即从玩家日志移除**（对照：本存档里早已完成的
+;        「食宿」也不在 qdata；`start + stage` 只让**仍在进行**的任务出现在日志里）；
+;      · ⇒ 「在日志里 + 已完成」这个状态在本引擎**构造不出来**；
+;        AS3 的 rptk 分支（在日志 + bComplete + 可重复 ⇒ 放行）是**防御性代码**
+;        （万一某任务完成后仍留在日志），探针保留、但不再当用例判据。
 ;
-;  ★ 本用例会改 FFCydoniaR02（推到完成 stage 1000 ⇒ 计数器 +1）—— 收尾 reset
+;  ★ 本用例会改 FFCydoniaR02（CompleteQuest ⇒ 完成位 +1）—— 收尾 reset
 ;    （任务本身；计数器 GLOB 是只读统计，留着无副作用）。
 ;  ★ 只开任务菜单，不传送、不开星图、不读档。
 ; ----------------------------------------------------------------------------
 [case:r89_repeatable]
-desc = 第 89 轮：可重复任务做完一次后仍显示（C++ 豁免 + 显示层放行）
+desc = 第 89 轮：可重复任务做完一次后仍显示（C++ 豁免 + 显示层保留）
 step = note === 准备：把「翻新商品」（可重复任务）推到完成 ===
 step = ping
 step = quest.reset 0x00224FE8
 step = wait 1500
-step = note === ★ 先 Start：CompleteQuest 不会把任务加进玩家日志（豁免分支测不到）===
+step = note === ★ 先 Start 再 Complete（与「玩家接过 → 做完」同态；见注释头第 93 轮结论）===
 step = quest.start 0x00224FE8
 step = wait 2000
 step = quest.complete 0x00224FE8
 step = wait 2500
-step = note === 打开菜单：C++ 豁免（已完成保留）+ AS3 放行（rptk=）===
+step = note === 打开菜单：C++ 豁免（已完成保留）+ 显示层（任务仍在列表）===
 step = menu.open
 step = assert.log 推送成功 scope=prev timeout=12000
 step = assert.log 可重复任务=\d+\(已完成保留[1-9] scope=case timeout=3000
 step = assert.log 可重复保留: .*翻新商品\[0x00224FE8 scope=case timeout=3000
-step = assert.ui qdata\[[0-9]+\]=\[[^\]]*224fe8 timeout=3000
-step = assert.ui rptk=\[1\|224fe8 timeout=3000
+step = note === ★ 显示层证据：切 tab 后能选中它（= 真的还在列表里）===
+; ★ 第 47/57 轮红线：切 tab 前必须等 C++ 推送成功（上一步已等）——
+;   否则撞上内嵌回退数据 ⇒ ui.select 报 err|notfound。
+step = ui.tab
 step = ui.select 0x00224FE8
 step = menu.close
 step = note === 收尾：reset（用例自清场）===
@@ -1075,39 +1079,43 @@ step = wait 1500
 ;    最有代表性的「职业杀手」（SFFL_R02：TimesCompleted + Cooldown 1.5 游戏日）
 ;    验证同一整条链路对 **DLC 任务**也成立（静态表 → C++ 豁免 → AS3 放行）。
 ;
-;  判据（PASS 线）：
+;  判据（PASS 线，★★ 第 93 轮定稿）：
 ;    ① C++ 侧统计：`可重复任务=N(已完成保留M)` 里 M ≥ 1（本用例完成的那条被豁免）；
 ;    ② 豁免名单：`可重复保留: …职业杀手[0x…]` 出现（DLC 的运行期 FormID 带加载顺序
 ;       前缀 ⇒ 只断言 8 位里的「??02A418」尾段，前缀留给运行期）；
-;    ③ 显示层（AS3）：`rptk=[…|…2a418]`（FilterKnownQuests 的豁免也放行了 DLC 条目）；
-;    ④ 它仍可被选中（真的还在「可重复任务」列表里 —— ui.select 找不到就 FAIL）。
+;    ③ 显示层证据：切到「可接任务」tab 后**能选中它**（`ui.select ~0x0002A418` 命中 =
+;       它真的还在列表里）。
 ;
 ;  ★ DLC 任务在两个 op 家族里都用 `~0x…`（记录号）：`quest.*` 与 `ui.select` 都支持
 ;    （见文件头的写法说明）—— 「职业杀手」记录号 = 0x0002A418。
 ;  ★ 与 r89 同构：只在菜单外造状态，不传送、不开星图、不读档；收尾 reset 该任务。
 ;
-;  ★★ 2026-09-22 首跑实测（第 92 轮复查）：与 r89 同因 FAIL（`rptk=[0|-]`）——
-;    **CompleteQuest() 不会把任务加进玩家日志** ⇒ 已改为「reset → start → complete」，
-;    并加 `qdata=…2a418` 中间断言（详见 r89 注释头的同款注记）。
+;  ★★★ 第 93 轮复查（与 r89 同款结论）：删除 `qdata=` / `rptk=` 断言 ——
+;    「在玩家日志里 + 已完成」这个状态在本引擎**构造不出来**（任务完成即从玩家
+;    日志移除；两轮实测的假设都被否掉，整份日志 rptk= 非零值 = 0 次）。
+;    显示层证据改走 `ui.tab` + `ui.select`（能选中 = 真的在列表里）。
+;    完整证据链见 r89 注释头（两用例同源，一起更新、一起复跑）。
 ; ----------------------------------------------------------------------------
 [case:r90_dlc_repeatable]
-desc = 第 90 轮：DLC 可重复任务（职业杀手）做完一次后仍显示（C++ 豁免 + 显示层放行）
+desc = 第 90 轮：DLC 可重复任务（职业杀手）做完一次后仍显示（C++ 豁免 + 显示层保留）
 step = note === 准备：把「职业杀手」（DLC 可重复任务）推到完成 ===
 step = ping
 step = quest.reset ~0x0002A418
 step = wait 1500
-step = note === ★ 先 Start：CompleteQuest 不会把任务加进玩家日志（豁免分支测不到）===
+step = note === ★ 先 Start 再 Complete（与「玩家接过 → 做完」同态；见 r89 注释头第 93 轮结论）===
 step = quest.start ~0x0002A418
 step = wait 2000
 step = quest.complete ~0x0002A418
 step = wait 2500
-step = note === 打开菜单：C++ 豁免（已完成保留）+ AS3 放行（rptk=）===
+step = note === 打开菜单：C++ 豁免（已完成保留）+ 显示层（任务仍在列表）===
 step = menu.open
 step = assert.log 推送成功 scope=prev timeout=12000
 step = assert.log 可重复任务=\d+\(已完成保留[1-9] scope=case timeout=3000
 step = assert.log 可重复保留: .*职业杀手\[0x[0-9A-F]+2A418 scope=case timeout=3000
-step = assert.ui qdata\[[0-9]+\]=\[[^\]]*2a418 timeout=3000
-step = assert.ui rptk=\[[1-9][0-9]*\|[0-9a-f]*2a418 timeout=3000
+step = note === ★ 显示层证据：切 tab 后能选中它（= 真的还在列表里）===
+; ★ 第 47/57 轮红线：切 tab 前必须等 C++ 推送成功（上一步已等）——
+;   否则撞上内嵌回退数据（DLC 条目不在其中）⇒ ui.select 报 err|notfound。
+step = ui.tab
 step = ui.select ~0x0002A418
 step = menu.close
 step = note === 收尾：reset（用例自清场）===

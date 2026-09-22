@@ -257,43 +257,27 @@ SWF 常量池里同名常量只有一份 ⇒ 字符串检查**区分不了**「�
 
 ### 4. ★★ 三轮失败的收口（第 50 轮）：产物全对 —— 问题在「游戏进程启动太早」
 
-补丁③（入口挂 root）之后的复测（22:48 会话）**仍然** `ui.tab` 0 ms 失败，失败形态与首测/复测
-一字不差。这一次把「产物正确性」查到了字节码级：
+补丁③（入口挂 root）后的复测（22:48 会话）**仍然** `ui.tab` 0 ms 失败（形态与首测一字不差）
+⇒ 把产物查到字节码级：FFDec 导出 ABC —— 挂载语句（`pushstring "SAQ_TestDriveTab"` +
+`getproperty` + `setproperty`）/ 方法定义 / 类 traits 全在（标准 + lrg 两版）✓；DLL 特征串
+（「SWF 是旧版？」「结束时菜单还开着」「先保持」）全在 ✓；MO2/usvfs 日志证明只有 mod 一份
+SWF 且游戏进程走 MO2 ✓ —— 三个「产物」全对，而界面行为 = **部署前那份旧 SWF**。
+⇒ 真因：**游戏进程在 SWF 部署之前就启动了**（UI 资源在**启动阶段**加载；进程起来之后
+部署的 SWF 不会被已加载的界面采用）。**收口措施（已做）**：① SWF 构建指纹 `stamp=50`
+（以后改 SWF +1 —— 日志里有没有它 = 游戏加载的是新版还是旧版）；② `ui.*` 失败时自动再读
+一次 `SAQ_Report`，把「有没有 `stamp=`」写进失败详情（`｜SWF 指纹=…`）；③ verify +3 条
+（两 SWF 的 `stamp=` + DLL 的「SWF 指纹」「旧版 SWF 判定」文案）；④ 流程写死第七节：
+**先构建部署 → 再启动游戏**。
 
-| 检查 | 方法 | 结论 |
-| --- | --- | --- |
-| SWF 里到底有没有挂载 / 方法 / 类 traits | FFDec `-format script:pcode` 导出 ABC 字节码 | ✅ 挂载语句（`pushstring "SAQ_TestDriveTab"` + `getproperty …"SAQ_TestDriveTab"` + `setproperty`）、方法定义、类 traits 全在（标准 + lrg 两版） |
-| DLL 有没有编进全部补丁 | 二进制特征串 | ✅ 「SWF 是旧版？」「结束时菜单还开着」「先保持」等都在 |
-| MO2 侧有没有第二份 SWF 覆盖 | 搜 `missionmenu*.swf`（mods / overwrite / 真实 Data） | ✅ 只有 mod 目录一份（727082，22:43:58）；overwrite 无、真实 Data 无 |
-| 游戏进程走的哪条路 | MO2 `logs\usvfs-*.log` | ✅ 插件日志映射回 mod 目录 ⇒ 进程走 MO2、SWF 也只有这一份可读 |
+## 九、后续（本轮未做，按需排期）★ 第 93 轮注：①②④ 均已落地
 
-⇒ 三个「产物」全对，而 22:48 会话的界面行为 = **部署前那份旧 SWF**（没有挂载那份）。
-⇒ 真因：**游戏进程在 SWF 部署（22:44:00）之前就启动了**（进程启动 → 加载 UI 资源 →
-22:46:41 才走到 SFSE 插件加载日志那一步）。Starfield 的 UI 在**启动阶段**加载，
-**进程起来之后部署的 SWF 不会被已加载的界面采用**。
-
-**收口措施（已做）：**
-
-1. **SWF 构建指纹**：`SAQ_Report` 输出里加 `stamp=50`（`ui/missionmenu/src/MissionMenu.as`；
-   以后改 SWF 把它 +1）。日志里有没有这个字段 = 游戏加载的是新版还是旧版 SWF；
-2. **DLL 自动判定**：`ui.*` 失败时再读一次 `SAQ_Report`，把「有没有 `stamp=`」的结论写进失败详情
-   （`｜SWF 指纹=…` / `｜…没有 stamp= 字段…`），一眼定性，不用再猜三轮；
-3. **verify 防回归**（+3 条）：两个 SWF 的 `stamp=` 字段 + DLL 的「SWF 指纹」与「旧版 SWF 判定」
-   文案；
-4. **流程写死在本文第七节**：跑测试必须「先构建部署 → 再启动游戏」。
-
-## 九、后续（本轮未做，按需排期）
-
-1. **自动读档**：本轮起不做（读档会让通道序号回退、且 `BGSSaveLoadManager` 的
-   `QueueSaveLoadTask` / `BGSSaveLoadBuilder` 在 commonlibsf 里 `REL::ID = 0` 不可用；
-   `QueueLoadGame(entry)` 是纯内联写字段，但偏移要先按项目通则核验）。
-   现在靠 `Quest.Reset` + `teleport` 回滚，需要「读档」的用例标 SKIP。
-2. **把历史判据搬成用例**：第 44~48 轮的待实测判据（星图 / 候选复算 / INFO 门槛 /
-   任务板 marker / 菜单久停）都可以按第五节的语法逐条落成用例。
-3. **虚拟桌面/独立会话启动**：让游戏在后台跑（不影响前台键鼠）。当前是「你手动启动」。
-4. **离线层（原 L0/L1 方案）**：把过滤/门槛/候选池的决策从引擎依赖里抽成纯函数 +
-   单元测试（毫秒级、零游戏）+ 数据管线黄金快照。harness 覆盖「引擎时序」，
-   离线层覆盖「决策逻辑的组合爆炸」，两者互补。
+1. ~~**自动读档**~~ → ✅ **第 62 轮落地**（`save.list` / `save.load`，零新 RE，
+   `QueueLoadGame` 内联实现；见 `docs/99` 二十二 / `docs/09` 十五）；
+2. ~~**把历史判据搬成用例**~~ → ✅ **第 54~87 轮逐步落地**（现 26 条用例，见 `docs/99`）；
+3. **虚拟桌面/独立会话启动**：让游戏在后台跑（不影响前台键鼠）—— **仍未做**（中期大项，
+   见 `docs/99` 十一「下一步」）；
+4. ~~**离线层（原 L0/L1 方案）**~~ → ✅ **第 64 轮落地**（决策纯函数 + 单测 + 黄金快照，
+   完整说明 `docs/10`）。
 
 ## 十、发布构建：DLL 不含 harness（第 53 轮已落地）
 
@@ -326,91 +310,29 @@ SWF 常量池里同名常量只有一份 ⇒ 字符串检查**区分不了**「�
   `--dev` 强制开发校验。另加一条：**MO2 部署副本与工作区字节一致**（部署未落后 ——
   第 50 轮「游戏加载的是部署时那份」的教训）。
 
-## 十一、第 51 轮：ui.tab 仍未过 —— 诊断增强与判读
+## 十一 / 十二、第 51 / 52 轮：`ui.tab` 的两次定性与真因（复盘已迁 docs/98 的「第 51~52 轮」）
 
-06:34 会话（**SWF 已是最新**，失败详情带 `｜SWF 指纹=50`）`ui.tab` 仍 0 ms 失败 ——
-第 50 轮「游戏进程启动太早」的解释**在这个会话不成立**（那只是 22:48 会话的成立解释）。
-本轮把静态层能查的全查了（部署 SWF 两版的挂载字节码、DLL 产物、0 参调用、SWF 覆盖），
-全部排除 —— 详见 `docs/99` 第 51 轮。
+* 第 51 轮（`stamp=51`）：静态层全排除后加了三组诊断 —— `SAQ_Report` 的 `ep=` 入口自检
+  （`pub=` 挂载结果 + 11 个入口在 root 上的可达性）、5 个 `SAQ_TestDrive*` 入口包
+  try-catch（内部异常以 `err|ex:<消息>` 回传，不再与「路径不存在」同为 0 ms 失败）、
+  `InvokeUiTestDrive` 多写法尝试（裸名 / `_root.` / `_root.root.`）—— 这组诊断成为
+  后续所有「按 R 没反应 / `ui.*` 失败」分诊的底座（判读表见 `docs/98`）。
 
-**新增诊断（stamp=51，已构建部署，待下次启动游戏生效）**：
-
-1. `SAQ_Report` 的 `ep=` 字段（`SaqEntryProbe`）：`pub=…,ep=…`
-   —— `pub` = 挂载函数执行结果（ok / not-run / no-root / ex:…）；
-   `ep=ok` = 11 个入口在 root 上全能取到，`ep=缺:…` = 列出取不到的（名字）；
-2. 5 个 `SAQ_TestDrive*` 入口包 try-catch：内部异常以 `err|ex:<消息>` 回传
-   （此前这种情况与「路径不存在」同为 0 ms 失败，完全不可区分）；
-3. `InvokeUiTestDrive` 多写法尝试（裸名 / `_root.` / `_root.root.`），失败详情带
-   每条写法的结果 + 入口自检；成功走非首选写法时补一行 INFO。
-
-**判读表（下次失败时照此定性）**：
-
-| 失败详情里看到的 | 结论 |
-| --- | --- |
-| 各写法 `=fail` + `ep=pub=ok,ep=ok` | 挂载全好 —— 问题在 Invoke/Scaleform 调用层 |
-| `ep=pub=ok,ep=缺:<名>` | 该入口没挂上（拿名字去 `SaqPublishEntryPoint` 序列里查） |
-| `ep=pub=not-run` | `onAddedToStage` 没执行（SWF 生命周期 / 不是这份 SWF） |
-| `ep=pub=ex:…` | 挂载过程抛异常（消息即真因） |
-| `ui.tab` 步返回 `err|ex:…` | 入口函数内部异常（消息即真因） |
-
-★ 跑测试流程不变：**先构建部署 → 再启动游戏**（SWF 在启动阶段加载）。
-
-## 十二、第 52 轮：`ui.tab` 的真因 —— 向只读属性写入（`Error #1074`）
-
-06:45 会话（`stamp=51`、`ep=pub=ok,ep=ok`）的判读表命中了最后一行：
-
-```
-[W] harness：  [FAIL] ui.tab（0 ms）—— err|ex:Error #1074（SAQ_TestDriveTab）
-```
-
-`Error #1074` = **Illegal write to read-only property**（AS3 运行时错误表）——
-「往只有 getter 的属性赋值」。对照 `Shared/AS3/BSTabbedSelection.as`：
-
-```as
-public function get selectedIndex() : int   // ← 只有 getter，没有 setter
-{
-   return this.iSelectedIndex;
-}
-```
-
-而 `SAQ_TestDriveTab` 当时写的是 `this.TabbedFilterSelection_mc.selectedIndex = idx;`
-⇒ 必抛异常（第 51 轮的 try-catch 把它变成可读的 `err|ex:…`；否则它的外形与
-「路径不存在」的 0 ms 失败**完全一样**）。
-
-### 修法：走原版公开入口
-
-| 旧（错） | 新（对） |
-| --- | --- |
-| `TabbedFilterSelection_mc.selectedIndex = idx`（抛 #1074） | `TabbedFilterSelection_mc.SetSelectedCategoryIndex(idx)` |
-
-`MissionTabbedSelection.SetSelectedCategoryIndex(uint)` 是 public（`MissionTabbedSelection.as`；
-原版 `InitializeLastState` 用它恢复「上次的分类」）⇒ 内部 `SetSelectedIndex` →
-改 `iSelectedIndex` → `dispatchEvent(BSTabbedSelectionEvent)` → `MissionMenu.onFilterChanged`
-（掩码同步 + 切换音 + tab 快照）——**与玩家按肩键切 tab 完全同一条链**。
-因此不再手动调 `onFilterChanged`；只有「本来就在该 tab」时 `SetSelectedIndex` 判定
-「没变化」直接 return、不派发事件，代码里为这种情况补一次。
-
-新增拒绝码 `err|tab-refused|from=…|want=…|now=…`：`SetSelectedIndex` 静默不生效
-（`bDisableInput` / 越界）时**不再装作成功**。
-
-### 同批核对（其余测试入口用到的 AS3 API）
-
-| 入口 | 用到的 API | 结论 |
-| --- | --- | --- |
-| `SAQ_TestDriveSelect` / `Expand` | `MissionsList_mc.selectedIndex = n` | ✅ 可写（`BSScrollingContainer` 有 setter；原版自己也这么写） |
-| `SAQ_TestDriveSelect` | `dispatchEvent(new ScrollingEvent(SELECTION_CHANGE))` | ✅ 常量在 `Shared/AS3/Events/ScrollingEvent.as` |
-| `SAQ_TestDriveKey` | `MissionsList.onEntryPress` / `MissionMenu.ProcessUserEvent` | ✅ public |
-| `SAQ_TestDriveExpand` | `MissionsList.ExpandOrCollapseSelection()` | ✅ public |
-
-### 产物与验证
-
-* `stamp=51 → 52`；
-* `verify_saq_build.py` 新增 `测试入口-切tab拒绝码`（查 `tab-refused`：只在第 52 轮代码里
-  出现 ⇒ 证明新逻辑进了两份 SWF 与 MO2 部署副本）；构建后 verify 全通过。
-
-★ 教训：**AS3 里给属性赋值前先确认对方有 `set x()`** —— BS 组件里「只有 getter」的属性
-（设计上只让组件自己改）赋值必抛 #1074，而且症状会被 Scaleform 的 Invoke 层压成
-「0 ms 失败 / 路径不存在」的假象。
+* 第 52 轮（真因，`stamp=51 → 52`）：`Error #1074` = **Illegal write to read-only
+  property** —— 当时 `SAQ_TestDriveTab` 写 `TabbedFilterSelection_mc.selectedIndex = idx`，
+  而 `BSTabbedSelection.selectedIndex` **只有 getter 没有 setter** ⇒ 必抛异常（第 51 轮的
+  try-catch 把它变成可读的 `err|ex:Error #1074`；否则外形与「路径不存在」的 0 ms 失败
+  **完全一样**）。修法 = 走原版公开入口 `MissionTabbedSelection.SetSelectedCategoryIndex(idx)`
+  （内部 `SetSelectedIndex` → 改 `iSelectedIndex` → 派发事件 → `onFilterChanged` ——
+  与玩家按肩键切 tab 完全同一条链）；「本来就在该 tab」不派发事件的情况代码里补一次；
+  新增拒绝码 `err|tab-refused|from=…|want=…|now=…`；verify 新增 `测试入口-切tab拒绝码`
+  （只在第 52 轮代码里出现 ⇒ 证明新逻辑进了两份 SWF 与 MO2 部署副本）。
+* ★ 教训：**AS3 里给属性赋值前先确认对方有 `set x()`** —— BS 组件里「只有 getter」的
+  属性赋值必抛 #1074，而 Scaleform 的 Invoke 层会把症状压成「0 ms 失败」的假象。
+  流程红线照旧：**改 SWF 必须先构建部署、再启动游戏**（UI 资源在启动阶段加载）。
+* ★ 同批核对结论（仍生效）：`SAQ_TestDriveSelect / Expand` 写 `MissionsList_mc.selectedIndex`
+  可写（`BSScrollingContainer` 有 setter）；`ScrollingEvent.SELECTION_CHANGE` 常量可用；
+  `onEntryPress` / `ProcessUserEvent` / `ExpandOrCollapseSelection` 均 public。
 
 ## 十三、★ 实测：`[case:smoke]` 首次全绿（2026-09-21 06:53 会话）
 
@@ -538,25 +460,17 @@ DLL **924672 B** / 用例文件 17637 B（工作区与 MO2 部署字节一致）
 **待重测**：重进游戏读档 ⇒ 6 条用例全 PASS；smoke 的 `引导请求：` 应 16 ms 级命中；
 星图应为「第 1 次尝试」。
 
-## 十四·补二 / 补三、第 56 / 57 轮（已迁 docs/95）
+## 十四·补二 ~ 补七、第 56 / 57 / 58 / 59 / 60 / 61 轮（已迁 docs/95）
 
-> 2026-09-21 第 79 轮：为控制 100 KB 上限（AGENTS.md 单文件限制），把「第 56 轮：第二次首测
-> （两个驱动器缺陷 —— 产品全对）」「第 57 轮：第三次实测（三条新真因 —— 仍在驱动器/用例侧）」
-> 两节整体挪到 `docs/95-历史轮次记录（第43~60轮）.md`（内容一字未改，只搬家）。
-> 仍然生效的结论：① 断言窗口**按步保留**（清 0 ⇒ `scope=prev` 退化成整段缓冲 = 假 PASS /
-> 假 FAIL —— 红线三）；② 传送回执要等 cell 加载（20 秒窗口）；③ `~0x…` 参数要写回 `formId`；
-> ④ 「按过 R 的用例」结束后开 **4 秒延迟复查窗口**（星图可能晚开）；
-> ⑤ 两条断言命同一批行时，第二条要 `scope=case`（红线四）。
-
-## 十四·补四 ~ 补七、第 58 / 59 / 60 / 61 轮（已迁 docs/95）
-
-> 2026-09-22 第 84 轮：为控制 100 KB 上限（AGENTS.md 的单文件限制），把第 58/59/60/61 轮
-> 的复盘整体挪到 **`docs/95-历史轮次记录（第43~60轮）.md`** 的「第 58~61 轮（harness 复盘，
-> 自 docs/09 迁入）」一节（内容一字未改，只搬家）。仍然生效的关键结论：
-> ① 第 58 轮：传送「落地静默期」（加载画面消失 + 连续静默 + 距回执 ≥3.5 秒）；
-> ② 第 59 轮：静默期与「读到回执那一 Tick」解耦（**每 Tick**推进）；
-> ③ 第 60 轮：`guide.probe` 探针 + r45 尾段改判（走远后不许早降级）+ 驱动器 v60；
-> ④ 第 61 轮：6 条用例全 PASS —— harness 用例集（大项 G）正式收口。
+> 第 56 / 57 轮（第 79 轮迁）、第 58~61 轮（第 84 轮迁）的复盘整体挪到
+> **`docs/95-历史轮次记录（第43~60轮）.md`**（内容一字未改，只搬家）。仍然生效的结论：
+> ① 断言窗口**按步保留**（清 0 ⇒ `scope=prev` 退化成整段缓冲 = 假 PASS / 假 FAIL —— 红线三）；
+> ② 传送回执要等 cell 加载（20 秒窗口）；`~0x…` 参数要写回 `formId`；「按过 R 的用例」
+> 结束后开 **4 秒延迟复查窗口**（星图可能晚开）；两条断言命同一批行时第二条要 `scope=case`
+> （红线四）；③ 第 58 轮：传送「落地静默期」（加载画面消失 + 连续静默 + 距回执 ≥3.5 秒）；
+> ④ 第 59 轮：静默期与「读到回执那一 Tick」解耦（**每 Tick**推进）；
+> ⑤ 第 60 轮：`guide.probe` 探针 + r45 尾段改判（走远后不许早降级）+ 驱动器 v60；
+> ⑥ 第 61 轮：6 条用例全 PASS —— harness 用例集（大项 G）正式收口。
 
 ## 十五、第 62 轮（大项 I）：自动读档 —— `save.list` / `save.load`
 
@@ -1286,3 +1200,70 @@ r80 那条；另外 4 条「未命中」是上轮没跑到的步骤（用例早�
 * ★ 红线（拟定）：**造「在玩家日志里 + 已完成」的状态，必须 `start` 在 `complete` 之前**
   —— `CompleteQuest()` 不进日志；只 `complete` 会测出一条既不经过豁免分支、
   又永远拿不到 `rptk=` 计数的假 FAIL。
+
+> ★★ **本节的「两种结局」与红线已由补二十二（第 93 轮复跑）证伪/更正**：
+> 复跑现场走了「qdata 断言也 FAIL」那条分支（`Start` 也没让任务进日志）——
+> 真实原因是**引擎行为**（任务完成即从玩家日志移除，「在日志 + 已完成」构造不出来），
+> 不是 `Start` 不够；qdata/rptk 断言已删，红线更正为「**不许再对这两个状态写断言**」。
+> 完整证据链与处置见下一节。
+
+## 十四·补二十二、第 93 轮（2026-09-22 复跑复查）：26 条 24 PASS / 2 FAIL —— **两条 FAIL 仍是 r89/r90：真因第二次被证伪（`Start` 也不进日志）；判据定稿、断言删除**
+
+### 1. 现场
+
+* 复跑（10:53~11:00 会话 / 411390 ms / `驱动器 v70`；`[E]` **0** / `[W]` 34（老现象）/
+  日志 684800 B / `check_results.py` 与 `log_hygiene.py` 体检均正常）：**26 条 24 PASS / 2 FAIL**；
+* 两条 FAIL 的失败步骤都是**第 92 轮新加的中间断言**：
+  `assert.ui qdata\[[0-9]+\]=\[[^\]]*224fe8`（r89）/ `…2a418`（r90）——
+  报告里 qdata 名单（12 条上限、当时 10 条）里没有它；
+* 同批里 C++ 两条 `assert.log` **全过**：`可重复任务=20(已完成保留1)` +
+  `可重复保留: …翻新商品[0x00224FE8 …]` / `…职业杀手[0x[0-9A-F]+2A418 …]` ——
+  **产品豁免链仍全对**；`rptk` / `ui.select` 步骤因前一步 FAIL 未执行（驱动器 FAIL 即收尾）。
+
+### 2. 真因（第二次证伪：`Start` 进日志的假设也不成立）
+
+* r90 现场：`quest.start` → `quest.complete` 后 C++ `已完成` 计数 **2 → 3**
+  （10:59:48 运行时状态行）—— `complete` 确实生效（完成位为真）；
+* 但界面的 `qdata`（= 引擎推给 UI 的玩家任务日志 aQuests）**从头到尾没有它**
+  （`menu.open` 后连打 3 次界面状态：10:59:36.255 / 36.987 / 37.242）；
+* **整份日志 `rptk=` 非零值 = 0 次**（全量脚本扫描——豁免分支从未被触达）；
+* 对照证据（同一份日志，一次定性）：
+  * 本存档里早已完成的「食宿」（flags=0x10102）**也不在 qdata**（所有快照）；
+  * `start + stage` 只让**仍在进行**的任务进日志：10:56:26 `82d5a:无凭无据`、
+    10:56:57 `192d2:菜鸟觐见`、10:57:45 `237490/237491`、10:58:28 `2aac9c:挑拨离间`
+    —— 全是「引擎真正启动过」的任务（`已开始` 计数同步 +1/+2）；
+  * `quest.stage` 推到**完成阶段**的任务（如 `229EE7`@500、`09136`@1000）
+    **自己不进日志**，只把后续任务带进日志 ⇒ 完成即移除；
+  * `complete`（裸）从不留痕（r87/r89/r90 多次）。
+* ⇒ **引擎行为：任务完成 = 从玩家日志移除**。「在玩家日志里 + 已完成」这个状态
+  在**本引擎 + harness 全部写侧原语**下构造不出来 ⇒ AS3 的 rptk 分支
+  （在日志 + `bComplete` + 可重复 ⇒ 放行）是**防御性代码**（万一某任务完成后
+  仍留在日志）—— 探针保留（未来现场一旦出现非零值是宝贵证据），但不再当判据。
+
+### 3. 处置（用例侧 + verify；零产品改动）
+
+* r89/r90：删除 `assert.ui qdata` 与 `assert.ui rptk` 两条断言；
+  显示层证据改为 **`ui.tab` + `ui.select <uID>` 命中**（切到「可接任务」tab 后
+  能选中它 = 它真的还在列表里 = 「做完一次后仍显示」的玩家可见行为）；
+  注释头写全「为什么不再断言」（第 93 轮证据链）；
+* ★ 顺带修一个**隐形缺陷**：这两条用例此前 `ui.select` 之前**没有 `ui.tab`** ——
+  不切 tab 会停在原版任务列表（`mask=0xffffffbf tab=0`），`ui.select` 必然
+  `err|notfound`（第 47/57 轮红线：切 tab 前等推送成功；本次已按 smoke/r81 同款补齐）；
+  此前两轮 rptk 断言先 FAIL ⇒ 这个缺陷没来得及暴露，这次一并收口；
+* verify：删「r90 显示层放行断言（rptk= 尾段 2a418）」检查；第 92 轮的
+  「先 start 再 complete + qdata 断言」检查**替换为第 93 轮判据**——段内必须
+  `ui.tab` + `ui.select <uid>`、且**不得**再出现 `assert.ui qdata` / `assert.ui rptk`
+  （防回退：那两条断言的测试目标不可达，写回去就是注定的假 FAIL）；
+* 用例文件两副本同步（工作区 == MO2，verify 全过：新两条检查 `OK`、
+  旧检查退役）；离线层 18 用例 / 920 断言 + 14 件黄金快照全绿。
+
+### 4. 待复跑（26 条）· 判据（第 93 轮定稿）
+
+* `r89_repeatable`（`0x00224FE8`）：① `可重复任务=\d+\(已完成保留[1-9]`；
+  ② `可重复保留: …翻新商品\[0x00224FE8`；③ `ui.select 0x00224FE8` 命中（这三条 = PASS 线）；
+* `r90_dlc_repeatable`（`~0x0002A418`）：同构三条（`ui.select ~0x0002A418`）；
+* ★ **红线（第 93 轮更正版）**：**不许对「在玩家日志里 + 已完成」这个状态写断言**
+  （qdata / rptk）—— 引擎行为决定了构造不出来（两轮实测证伪：`complete` 不进日志、
+  `start` 也不进）；显示层证据一律走「切 tab + 能选中」这条实路径。
+* ★ 后续若要给 rptk 分支找覆盖：只能等**真实玩家现场**（某任务完成后仍留在日志，
+  报告里 `rptk` 非零）——那时再按现场收紧判据，不要在 harness 里再造。

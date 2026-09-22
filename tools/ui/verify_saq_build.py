@@ -1386,39 +1386,41 @@ def main() -> int:
                 print(("OK  " if ok87 else "MISS") +
                       " 用例计划 · r87 两条都在 + B 段补做 Z04（complete 0x002149FA）")
                 all_ok &= ok87
-                # ★★ 第 90 轮（DLC 可重复任务）：r90 的三条判据 ——
+                # ★★ 第 90 轮（DLC 可重复任务）：r90 的两条判据 ——
                 #   ① DLC 任务在**两个 op 家族**里都用 `~0x…` 记录号（`quest.complete` /
                 #      `ui.select`）—— 写成运行期 FormID 会因加载顺序变化指错记录（第 17 轮
                 #      同款坑：本机 SFBGS00D 序号 0x0B，换机器就不是它）；
-                #   ② 豁免名单断言容忍 DLC 加载顺序前缀，只钉 8 位 UID 的尾段（2A418）；
-                #   ③ `rptk=` 同理（AS3 打的是运行期 uID 的 hex —— 前缀随加载顺序变）。
+                #   ② 豁免名单断言容忍 DLC 加载顺序前缀，只钉 8 位 UID 的尾段（2A418）。
                 all_ok &= check("用例计划 · r90 DLC 任务用记录号（quest.complete ~0x0002A418）",
                                 plan_text.encode(), "quest.complete ~0x0002A418".encode())
                 all_ok &= check("用例计划 · r90 豁免名单断言（职业杀手，容忍 DLC 前缀）",
                                 plan_text.encode(),
                                 "assert.log 可重复保留: .*职业杀手\\[0x[0-9A-F]+2A418 scope=case".encode())
-                all_ok &= check("用例计划 · r90 显示层放行断言（rptk= 尾段 2a418）",
-                                plan_text.encode(),
-                                "assert.ui rptk=\\[[1-9][0-9]*\\|[0-9a-f]*2a418 timeout=3000".encode())
-                # ★★ 第 92 轮（2026-09-22 首跑复查）：r89/r90 的**造状态顺序**要写对 ——
-                #   `quest.complete`（Papyrus `CompleteQuest()`）只动完成位，**不会**把
-                #   任务加进玩家日志（QuestData）⇒ 只有先 `quest.start` 才能让
-                #   FilterKnownQuests 走到「在日志里 + 已完成 + 可重复 ⇒ 豁免放行」分支
-                #   （首跑两条用例都因此在 rptk= 断言上 FAIL —— 产品侧全对，是用例假设错）。
-                #   判据：① 段内 `quest.start` 出现在 `quest.complete` 之前；
-                #   ② 段内有一条 `assert.ui qdata` 断言（把「是否进日志」与
-                #   「bComplete 是否随 CompleteQuest 变真」两步分开定性）。
+                # ★★ 第 93 轮（2026-09-22 复跑复查 · 第三次实测）：r89/r90 的判据定稿 ——
+                #   「在玩家日志里 + 已完成」这个状态在本引擎**构造不出来**：任务完成即从
+                #   玩家日志移除（两轮「先 start 再 complete / 加 qdata 断言」的假设都被
+                #   现场否掉；整份日志 rptk= 非零值 = 0 次；C++ 侧 `已完成` 计数 2→3 证明
+                #   complete 生效）。⇒ 删除 `assert.ui qdata` 与 `assert.ui rptk` 断言，
+                #   显示层证据改为 **ui.tab + ui.select 命中**（切到「可接任务」tab 后能
+                #   选中它 = 真的还在列表里）。判据：
+                #   ① 段内有 `ui.tab`（不切 tab 会停在原版任务列表 ⇒ select 必 notfound）；
+                #   ② 段内有 `ui.select <uid>`（记录号 `~0x…` 写法原样保留）；
+                #   ③ 段内**不得**再出现 qdata/rptk 断言（防回退：那两条断言的测试目标
+                #   在本引擎不可达，写回去就是注定的假 FAIL）。
                 for cid, uid in (("r89_repeatable", "0x00224FE8"),
                                  ("r90_dlc_repeatable", "~0x0002A418")):
                     i = plan_text.find(f"[case:{cid}]")
                     i_end = plan_text.find("[case:", i + 1) if i >= 0 else -1
                     sec = plan_text[i:i_end if i_end > i else len(plan_text)] if i >= 0 else ""
-                    pos_start = sec.find(f"quest.start {uid}")
-                    pos_comp = sec.find(f"quest.complete {uid}")
-                    ok92 = (0 <= pos_start < pos_comp) and ("assert.ui qdata" in sec)
-                    print(("OK  " if ok92 else "MISS") +
-                          f" 用例计划 · {cid} 先 start 再 complete + qdata= 中间断言（第 92 轮）")
-                    all_ok &= ok92
+                    steps = [ln.strip() for ln in sec.splitlines()
+                             if ln.strip().startswith("step =")]
+                    ok93 = ("step = ui.tab" in steps
+                            and f"step = ui.select {uid}" in steps
+                            and not any(s.startswith("step = assert.ui qdata") for s in steps)
+                            and not any(s.startswith("step = assert.ui rptk") for s in steps))
+                    print(("OK  " if ok93 else "MISS") +
+                          f" 用例计划 · {cid} ui.tab + ui.select 显示层证据（第 93 轮定稿）")
+                    all_ok &= ok93
                 plan_deployed = MO2_MOD / "SFSE/Plugins/SAQ_TestPlan.txt"
                 if plan_deployed.exists():
                     same = plan_deployed.read_bytes() == plan_src.read_bytes()
