@@ -19,7 +19,10 @@
 > + 3 条 `SAQ-PoC-Item i` ⇒ 判据 + 眼睛双绿，**P2 完全收口**；已按恢复流程还原部署）** +
 > **路线 D 落地（第十节：冲突检测 + 停推降噪 + 玩家 HUD 提示 —— `ProbeChannelIdentity` /
 > `SAQ_UiNotice`（0x80E）/ `ProcessUiChannelNotice`；`verify --dev` 全过 + 离线层 3/3；
-> 待实机：正常态 43 条防误报 + P2 态正向）**。
+> 待实机：正常态 43 条防误报 + P2 态正向）** + **功能迁移评估（第十一节 · 第 129 轮 ·
+> 纯离线：迁移面按「归宿」分组（原版自带 ≈ 60%）+ 原版字段契约/接管点全清单 + 8 项清单
+> 逐项落地设计 + 新增未知点 U5~U9 与探针 v4 设计 + 产品形态三选项（推荐 B 双形态自动切换）
+> + 分期计划 P3/P4/P5 与轮次估算 + 风险自检）**。
 
 ## 一、问题定义与成功判据
 
@@ -539,6 +542,169 @@ P2 实验态结束。
 
 **下一步（大项决策）**：评估功能迁移（七节 8 项清单）与产品形态
 （建议默认仍走 SWF；冲突检测已兜住体验）。
+
+## 十一、功能迁移评估（第七节清单的落地设计 · 第 129 轮 · 纯离线）
+
+> 触发：第七节结尾的「P2 通过之后才评估功能迁移」+ `docs/99` 十一「下一步候选 ⑦」。
+> 本轮**只做评估**（不写产品代码）：① 把 2301 行 AS3 迁移面按「归宿」重新分组；
+> ② 把原版菜单对条目对象的**字段契约 / 接管点**取全（决定哪些由原版自动完成、哪些必须我们补）；
+> ③ 逐项给出替代机制与**新增未知点**；④ 设计探针 v4（U5~U9）；⑤ 给出产品形态选项、
+> 分期计划与轮次估算、风险与自检、决策点。
+> 证据目录 = `_tmp_ffdec_base/scripts/`（原版 FFDec 反编译，行号即该目录内文件行号）；
+> 迁移面统计工具 = `tools/esm/_tmp_r117_diff_patch.py`。
+
+### 11.0 结论摘要
+
+| 问题 | 评估结论 |
+| --- | --- |
+| 技术可行性 | ✅ 三个历史硬点已实机通过（扩 tab / 越界拦截 / 列表注入），**剩余的是「工程化 + 接管面」问题，不是可行性问题** |
+| 迁移量 | AS3 侧 2301 行 ≠ 要重写的量 —— 其中约 **60% 的功能原版自带**（渲染 / 分组 / 展开 / 详情面板 / 按钮条 / 音效 / 状态恢复），真正要重建的 = **数据构造 + 接管 + 自检**（估计 C++ 新增 2000~3100 行，可删 AS3 2301 行 + SWF 构建链） |
+| 关键新发现 | ① 原版 `BSScrollingContainer.GetDataForEntry()` / `selectedEntry` **是 public** ⇒ 引擎任务数据不必靠事件订阅，**直接读列表即可**（原「U6 数据可达性」降级为小问题）；② 按钮回调可**劫持**：`UserEventData.funcCallback` / `sCodeCallback` 都是 public var，`MinimalButton.HandleUserEvent()` 是 public（可在探针里**程序化触发按键路径**验证）；③ 关菜单/回游戏可用 public 的 `MissionMenu.ProcessUserEvent("ReturnToStarMap"/"Missions", false)` |
+| 主要风险 | 依赖原版**内部名与结构**（换游戏版本可能静默失效 ⇒ 必须有「结构指纹自检 + 失败回退 + HUD 提示」）；第三方 SWF 若改了 AS3 **逻辑**（不只是布局），注入可能半失效（与第七节「目标档」一致：只承诺「对方保留原版类结构」时叠加生效） |
+| 产品形态建议 | **双形态 + 身份探测自动切换**（默认仍走 SWF；第 125 轮的 `notOurs` 判定从「停推 + 提示」升级为「可切注入」）。长期（注入形态判据等价 + 过一个游戏版本周期）可考虑**注入为唯一形态**，彻底删掉 SWF 一套 |
+| 下一步 | 实现**探针 v4（`ui.research4`，U5~U9）**，在 P2 态（原版 SWF）跑一次 ⇒ 全绿再做 **P3 产品化 PoC**（真实数据注入，无交互） |
+
+### 11.1 评估前提（已实机成立，不再重复论证）
+
+| 能力 | 证据 |
+| --- | --- |
+| 定位 `_root.Menu_mc` / 读 public 对象与 getter（`numTabs` / `entryCount` / `filterMask`） | 第 118 轮 U0/U2 |
+| 扩 tab：C++ 构造数组 → `TabbedFilterSelection_mc.SetTabsData` → `numTabs` 7→8 | 第 120 轮（P1.5）/ 第 122~124 轮（P2） |
+| 越界拦截：`selectionChange` priority=100 + `stopImmediatePropagation` + 自写 `filterMask`（哨兵存活） | 第 120 轮 / 第 123 轮 |
+| 列表注入：条目带 `aObjectives` ⇒ 原版认它是 mission 条目，`entryCount` 1→3 且**界面可见**（眼睛） | 第 122~124 轮 |
+| 绑定 C++ 回调：`CreateFunction` + `addEventListener(..., priority=100)`，回调真实收到 | 第 118 轮 U3 |
+| 身份探测：桥 OK + `SAQ_Report` 无指纹 ⇒ `notOurs`（第三方/原版界面） | 第 125 轮 |
+
+### 11.2 迁移面盘点（2301 行的「归宿」分组）
+
+统计口径：`ui/missionmenu/src/*` 与我们维护的 patch 源；函数行数 = 该函数体行数（脚本统计）。
+
+| 组 | AS3 内容（函数 · 行数） | 注入形态的归宿 | 说明 |
+| --- | --- | --- | --- |
+| **A 数据 / 载荷 / 文案** ≈ 537 行 | `SaqParsePayload`(99)、`SaqBuildEntry`(77)、`SaqBuildObjective`(36)、`SaqDescriptionText`(109)、`SaqApproachNote`/`SaqCompanionNote`/`SaqNoPickupNote`/`SaqNotNavigablePrefix`/`SaqRepeatablePrefix`/`SaqCourseKeyName`(91)、`SaqSafeType`/`SaqIsEntryType`/`SaqSafeFaction`(37)、`SaqTabTitle`/`SaqApplyTabTitle`(18)、`SaqNameVerdict`/`SaqUseChinese`(60)、`SaqEmbeddedPayload`(10) | **迁到 C++（数据侧）** | 静态表里已有一切原始字段（名字中英 / 说明 / 候选 / 标记）；缺的是「把字段拼成 AS3 条目对象」+ 文案合成。**内嵌回退载荷直接删除**（注入由 DLL 驱动，不再需要 SWF 侧兜底） |
+| **B 列表合并 / 过滤 / 掩码** ≈ 130 行 | `BuildMergedList` + `FilterKnownQuests`(77)、`SaqRefresh`(35)、`SaqSyncListMask`(16) | **迁到 C++**（且更简单） | 「已接取任务」判据 C++ 本来就有（`SAQ_QuestState` + `Decision::DecideRuntimeFilter`，含可重复豁免）；列表归属改为**按 tab 分时注入**（见 11.4-⑤），不需要「合并 + ALL 掩码改写」 |
+| **C 交互 / 引导** ≈ 470 行 | `SaqToggleGuide`(98)、`SAQ_GuideReply`(85)、`SaqAutoCancelIfAccepted`(35)、`SaqQuestNameByID`(35)、`SaqApplyTrackedMarker`(27)、`SAQ_PeekGuide`(23)、`SaqReturnToGameForStarMap`(23)、`SaqNoteStarMapHandoff`(15)、`SaqQuestName`/`SaqBaseName`(38)、`SaqIsOurEntry`/`SaqEntryTag`(27)、`SAQ_SyncGuideState`(18) + 对 `OnPlotCourseEvent` / `onMissionListItemActivated` 的改造 | **迁到 C++（接管层）**，并**协议全部消失** | 引导逻辑本来就在 DLL（`Guide::`）；注入形态下 C++ 直接调用，`PeekGuide`（100ms 轮询）/ `GuideReply`（回写）/ `SyncGuideState`（同步）/ 推送协议（500ms）**四条通道一起退休** |
+| **D 诊断探针** ≈ 430 行 | `SAQ_Report`(165)、`SaqEntryProbe`(40)、`SaqPinNoteProbe`(43)、`SaqRepeatNpcProbe`(56)、`SaqNotNavigableProbe`(47)、`SaqRepeatableQuestProbe`(37)、`SAQ_Probe`(11)、`SaqSnapshotTab`(32) | **改写成 C++ 直读**（约 150~250 行） | 注入形态下「界面状态」全在 C++ 手里（`GetDataForEntry` / `selectedEntry` / `filterMask` / 渲染文本），不必再让 AS3 拼字符串回传 —— 这是**净简化** |
+| **E 测试入口** ≈ 202 行 | `SAQ_TestDriveTab/Select/SelectChild/Expand/Key/State`(172)、`SAQ_ApplyPayload`(30) | **删除**，由 harness 直接驱动 GFx | 原语层（`SAQ_TestOps`）已有 `menu.open` / `ui.*` 基础；注入态改用「C++ 注入原语 + 断言」即可 |
+| **F 通道 / 发布** ≈ 100 行 | `SaqPublishEntryPoint`(76)、`SetAvailableQuests`(22) + `onAddedToStage` 里的挂载 | **删除** | root 上的 `SAQ_*` 入口是「AS3 侧提供服务」形态的产物；注入形态不缺入口 |
+| **G 原版函数改造** ≈ 50~80 行 | `PopulateTabs`（ALL 掩码去 bit6 + 第 8 项）、`onFilterChanged`（快照探针）、`ProcessUserEvent`（事件探针）、`onMissionListItemActivated`（分支）、`OnPlotCourseEvent`（改走引导）、构造函数（tab 标题） | **不需要**（原版逻辑保持原样，我们在外面接管） | 这正是注入形态的**收益**：不再 fork 原版函数 |
+
+### 11.3 原版契约（注入形态「必须提供 / 必须接管」全清单）
+
+来源 = 本轮取证（`_tmp_ffdec_base/scripts/`）：
+
+**A. 条目对象必补字段**（给不对就一定出问题）：
+
+| 字段 | 谁读 | 不给的后果 |
+| --- | --- | --- |
+| `aObjectives`（数组，可空） | `MissionsListEntry.as:42-45`（`IsMission`）、`MissionsList.as:143-156` | 条目**不进列表**（原版树结构只收 mission + divider） |
+| `sName` | `MissionsListEntry.as:162-172` | 行文本为空 |
+| `iRemainingTime`（int，给 `-1`） | `MissionsListEntry.as:178,241-257` | `undefined` 会渲染 `NaN $$HOURS` 垃圾串 |
+| `bComplete`（给 `false`） | `MissionsListEntry.as:178`、`MissionsList.as:52/175/211`、`MissionMenu.as:449/453` | 分组 / 完成 tab / 可追踪判定错乱 |
+| `iType`（给 `6`）+ tab 掩码 `1<<6` | `MissionsList.as:215`、`QuestUtils.as:25-44` | **不给 iType 的条目在所有 tab 都可见**（`null` 分支恒真）⇒ 污染原版列表；给了才受掩码管辖 |
+| `iFaction`（`-1` 或真实阵营） | `MissionsListEntry.as:186`、`MissionInfo.as:177-178` | 图标与详情面板阵营名缺失 |
+| `bActive` | `MissionsListEntry.as:194-208`（左侧竖条）、`MissionMenu.as:600/620/639` | 追踪态不可见（缺省安全 = Inactive） |
+| `sDescription` | `MissionInfo.as:191,205` → `MissionDescriptionScrollList.as:125-131` | 详情正文为空（**描述与说明文案全靠它**） |
+| `uID` / `uInstanceID` / `uOwnerQuestFormID` / `uIndex` | `MissionMenu.as:553/572/630/680/421`、`MissionsList.as:84/125/225-244` | 追踪/展开态/父任务查找的键 |
+| `bCanShowOnMap`（条目自身或 `aObjectives[0]`） | `MissionsListEntry.as:47-59`、`MissionMenu.as:457-458` | SET COURSE / SHOW ON MAP 按钮状态错（**「不可导航 ⇒ 置灰」就靠它**） |
+| `bCanBeRejected`（不给 = false） | `MissionMenu.as:456` | REJECT 按钮误亮 |
+| 分隔项 `{bIsDivider:true}`（可选） | `MissionsList.as:70`、`MissionsListEntry.as:136-141` | 需要分组时加 |
+| `bIsMiscObjective` / `bIsMiscQuest` / `bFailed` / `strFactionIconName`（可选语义） | 见 11.4-③ | 影响点击分发 / 排序 / 图标；**不给更安全** |
+
+> ⚠ 两个「给了反而危险」的字段：`bIsMiscObjective=true` 会让点击走「杂项目标」分支向引擎发
+> 未知 `questID` 的 `MissionMenu_ToggleTrackingQuest`（`MissionMenu.as:610-613`）⇒ 我们的
+> 条目**不要**设它；`iType` 不设则全 tab 可见（见上表）。
+
+**B. 必须接管的点**：
+
+| # | 接管点 | 原版出处 | 注入形态的做法 |
+| --- | --- | --- | --- |
+| 1 | 第 8 个 tab 的 `selectionChange`（原版会 `FilterInfoA[7]` 越界 TypeError） | `MissionMenu.as:343-354`、`169-172` | priority=100 监听 + `stopImmediatePropagation` + 自写 `filterMask`（**已实机**） |
+| 2 | tab 数组（7 → 8 项，含我们 tab 的标题/掩码） | `MissionMenu.as:242-276` | `SetTabsData(8 项)`（**已实机**）；标题 = 字面量（中/英由 C++ 判定） |
+| 3 | 列表内容（我们的 tab 显示我们的条目；其它 tab 保持原版） | `MissionMenu.as:278-303`（每次引擎推送都会 `InitializeEntries` **覆盖**） | **分时注入**：切到我们 tab ⇒ 注入我们的数组；切走 ⇒ 注入「引擎数组快照」；引擎推送用 watchdog 发现后重放（11.4-⑤） |
+| 4 | SET COURSE（PC 的 R）/ SHOW ON MAP（Y）按键回调 | `MissionMenu.as:206-207`、`MinimalButton.as:368-388`（`funcCallback()` + `SendEvent(sCodeCallback)`） | **劫持**：保存原 `funcCallback` → 换成我们的 C++ 函数 → 我们的条目走引导、非我们的条目**委托回原函数**；同时把 `sCodeCallback` 换成惰性名，避免引擎收到不存在的 questID |
+| 5 | 条目激活（Enter / 鼠标点击） | `MissionMenu.as:586-657`、`MissionsList.as:333-338`（`ITEM_ACTIVATED` 冒泡 + cancelable） | priority=100 监听：我们的条目 ⇒ 拦下（展开 / 引导）；非我们的 ⇒ 放行（`stopImmediatePropagation` 只对自家条目） |
+| 6 | 详情面板（选中 → 右侧描述） | `MissionMenu.as:459-466` → `MissionInfo.as:169-216` | **不用接管**：选中我们条目时原版会自动按字段渲染（前提：字段齐全） |
+| 7 | 按钮置灰（不可导航 ⇒ 灰） | `MissionMenu.as:457-458` | **不用接管**：`bCanShowOnMap=false` 即置灰；点击提示走 HUD 通道（`SAQ_UiNotice`，第 125 轮已有） |
+| 8 | 关菜单 / 回游戏 / 星图交接 | `MissionMenu.as:371-390`（`ProcessUserEvent` **public**）、509-532 | `Invoke(Menu_mc,"ProcessUserEvent",["ReturnToStarMap"\|"Missions", false])`（后者 = 回游戏渲染，脚本侧再开星图） |
+| 9 | 引导态同步（竖条 + 取消跟踪） | `MissionsListEntry.as:194-208`（`bActive`）、`MissionMenu.as:1732-1755`（自动取消） | C++ 自己维护「当前引导的 uID」⇒ 改 `bActive` + 就地刷新该行（11.4-⑦）；接到任务 ⇒ 自动取消（C++ 已有玩家日志） |
+| 10 | 上次分类恢复（可能恢复到我们的 tab） | `MissionMenu.as:705-722` | 打开序列必须在「状态恢复事件」之前完成（**时序风险**，见 11.8-④） |
+
+**C. 原版自带（不需要我们做）**：条目 clip 创建/复用/滚动/裁剪、文本截断与 `$` 本地化键、
+名字/图标/时间字符串格式、树形展开折叠与分隔项跳过、分组与 divider 清理、过滤链本身、
+详情面板布局与滚动、按钮条构建/排版/键名/hover 帧、tab 创建与宽度自适应、菜单音效、
+焦点管理、打开/关闭/状态保存。「只显示已追踪」由**引擎**执行（AS3 只发开关事件）。
+
+### 11.4 第七节 8 项清单：逐项落地设计
+
+| # | 第七节原项 | 注入形态的做法（现状 → 结论） | 难度 | 依赖 |
+| --- | --- | --- | --- | --- |
+| ① | 载荷解析 / 合并列表 | 由 C++ 构造 AS3 条目数组（`CreateArray` + `PushBack` + 每项一个 `Object`），**不再有协议字符串**；「合并」改为 tab 分时注入 | 低 | — |
+| ② | 排序（同伴 / 势力 / 可重复 / 入口固定） | 已是 C++ 数据侧（`Decision::PinnedOrderKey`，有离线单测）—— 数组顺序 = 我们的顺序（原版 `MissionsList.InitializeEntries` 对「未完成组」保持输入序） | 低 | — |
+| ③ | 名称前缀（（不可导航）/（可重复）） | 数据侧拼 `sName`（前缀逻辑从 `SaqNotNavigablePrefix` / `SaqRepeatablePrefix` 搬过来） | 低 | — |
+| ④ | 描述文案 / 简要说明 | 数据侧拼 `sDescription`（`SaqDescriptionText` 109 行的等价物 + note 三来源）；**注意**：正文是纯文本（`MissionDescriptionScrollList.as:125`），HTML/换行行为要跟现状对齐 | 低~中 | — |
+| ⑤ | 列表过滤 | 不用 `bSaqAvailable`（那是我们 SWF 的扩展字段，原版没有）—— 改为 `iType=6` + 我们 tab 掩码 `1<<6`；「已接取/已完成」过滤在 C++ 完成（含可重复豁免）。**放弃「合并 + 改 ALL 掩码」**：改用分时注入，ALL tab 行为与原版**逐字一致** | 低 | — |
+| ⑥ | 点击 / 双击 / 引导 / 跟踪 | 接管点 4/5/8/9（按钮劫持 + 激活拦截 + `ProcessUserEvent` 关菜单 + `bActive`） | **中** | **U5**（劫持实机验证） |
+| ⑦ | 「不可导航」点击不闪烁 / SET COURSE 置灰 | `bCanShowOnMap=false` ⇒ 按钮自动置灰（原版逻辑）；点击提示走 HUD 中英文案（`SAQ_UiNotice` 通道已有） | 中（低） | — |
+| ⑧ | 诊断探针 / 测试入口 | 探针改 C++ 直读（`GetDataForEntry` / `selectedEntry` / `filterMask` / 渲染文本字段）；测试入口删掉，harness 直接调注入原语 | 中（净简化） | **U7**（局部刷新）/ **U8**（渲染文本读取） |
+
+### 11.5 新增未知点（U5~U9）与探针 v4 设计
+
+| # | 未知点 | 为什么关键 | 判据（探针汇总行字段） |
+| --- | --- | --- | --- |
+| **U5** | 按钮回调**劫持**：读 `ButtonBar_mc.<Btn>_mc.Data.UserEvents`（public）→ 保存 `funcCallback` → 换成我们的 `CreateFunction` 函数 → 用 **public 的 `MinimalButton.HandleUserEvent("XButton",false,false)`** 程序化触发按键路径 | 决定「R = 设定航线 / 引导」这条主交互能否迁移 | `劫持=ok（回调收到 1 次）` + `还原=ok（还原后再触发，计数不变）` |
+| **U6** | 引擎数据**直接读**：`MissionsList_mc.GetDataForEntry(i)`（public）能拿到引擎条目对象及其字段 | 决定「切走我们 tab 时恢复原版列表」能否实现（不必再靠事件订阅） | `读条目=ok（N 条，首条 uID/sName/字段非空）` |
+| **U7** | 就地刷新：`GetClipByIndex(i).itemIndex` ↔ 我们的下标，`clip.SetEntryText(条目对象)` 改 `bActive` 后**渲染文本**是否更新 | 决定「切换引导态不重建列表」（否则每次按 R 列表会跳回顶部） | `刷新=ok（竖条帧名 N→M）` + `文本=<读回的名字>` |
+| **U8** | 渲染文本读取（`TextField.text`）：用于 ① 验收（描述/名字真的显示）② **语言判定**（读一条原版本地化文本，含 CJK ⇒ 中文） | 语言判定在注入形态下没有 AS3 任务名可看，必须另找通道 | `文本=ok（…非空）` + `语言=zh\|en`（由采样文本判定） |
+| **U9** | 菜单关闭原语可调用性：`Invoke(Menu_mc,"ProcessUserEvent",["SAQ_Research",false])` 返回 `false` 且无副作用（**不真关菜单**，真关留到 P4 用驱动器验证） | 决定「引导后交接星图」的关菜单路径 | `关菜单入口=ok（返回 false，未关闭）` |
+
+**探针形态**（沿用第 117/119/121 轮纪律）：新 op `ui.research4`，**只在 `SAQ_WITH_HARNESS` 构建里存在**，
+只在 P2 态（`build-saq.ps1 -P2`，原版 SWF）跑，结果一行汇总（红线六）+ 产品日志取证；
+判据正则顺序固定，防拆散后漏段。
+
+### 11.6 产品形态：三个选项
+
+| 选项 | 形态 | 收益 | 代价 | 评估 |
+| --- | --- | --- | --- | --- |
+| **A** 维持现状（SWF 覆盖 + 路线 D 检测提示） | 已发布形态 | 零新成本、判据最足 | 文件级冲突仍在（用户二选一），第三方面板 mod 用户只能看提示 | 可接受，但**没解决 docs/15 的目标档** |
+| **B** 双形态 + 身份探测**自动切换**（推荐） | 默认 SWF；`ProbeChannelIdentity ⇒ notOurs` 时按 ini（默认开）切注入 | 冲突场景下**功能照常可用**；不必立刻换默认形态；注入路径与 SWF 路径**共用**同一份数据/引导/决策逻辑 | 过渡期两套展示层要同时维护；注入层需要独立判据（harness 侧） | ★ 推荐过渡态：把第 125 轮的「停推 + 提示」升级为「切换 + 提示」 |
+| **C** 注入为唯一形态（删 SWF） | 净减 2301 行 AS3 + 构建链（FFDec/双份源码/lrg/`stamp=`/内嵌载荷）+ 补丁同步纪律 | 彻底消除文件冲突；诊断/测试入口大幅简化 | 依赖原版内部结构（换版本风险）；**丢掉「与第三方 SWF 完全无关」这一优势**（第三方改 AS3 逻辑时我们受影响）；需要一轮完整的判据等价验证 | 长期目标，触发条件 = 注入形态判据与现 R 判据等价 + 过一个游戏版本周期无回归 |
+
+### 11.7 分期计划与工作量估算
+
+| 期 | 范围 | 主要产物 | 判据 | 轮次 |
+| --- | --- | --- | --- | --- |
+| **探针 v4** | U5~U9（见 11.5） | `ui.research4` + P2 计划 +1 条用例 + verify 特征串 | 判据链全 ok + 产品日志一行 + 离线层全绿 | **1 轮** |
+| **P3 产品化 PoC** | 真实数据注入（tab + 掩码 + 条目构造 + 描述/前缀/排序/置灰 + 分时注入 + watchdog）**不含交互** | 新模块（建议 `SAQ_UiInject.{h,cpp}`，与 `SAQ_UI` 分文件）、`ui.inject` 原语、用例 2~3 条、verify +N | 原版 SWF 上：`entryCount == 期望`、`GetDataForEntry` 字段逐项对账、描述/名字读回一致、切走 tab 后原版列表恢复（条目数回到引擎数） | **2 轮** |
+| **P4 交互接管** | 按钮劫持（X/Y）+ 激活拦截 + 引导态竖条 + 就地刷新 + 自动取消 + 星图交接（关菜单）+ 不可导航提示 + 诊断/测试入口迁移 | 接管层代码 + 用例（引导 A/B、取消、置灰、HUD 提示）+ verify +N | 判据与现「UI 通道」用例等价（引导状态、`bActive`、结果码、星图打开） | **2~3 轮** |
+| **P5 双形态与发布** | 身份探测升级（notOurs ⇒ 切注入）、ini 开关、结构指纹自检 + 失败回退、日志/文档、打包 | 发布形态决策 + 文案 + 0.1.1x 包 | 正常态 43 条等价全绿 + P2 态注入用例全绿 + 眼睛 | **1~2 轮** |
+
+**净代码量估算**（实现期）：注入内核 ≈ 600~900 行；条目构造 + 文案合成 ≈ 400~600 行；
+交互接管 ≈ 300~500 行；自检/降级/日志 ≈ 150~250 行；harness 原语与用例 ≈ 300~500 行；
+verify / 离线层改造 ≈ 200~400 行（并删除一批 SWF 专属检查）。
+**可删**：AS3 2301 行（若走选项 C）、内嵌载荷、`build-saq.ps1` 的 SWF 步骤、`make_lrg_source.py`、双份 patch 同步。
+
+### 11.8 风险与自检（即使注入成立也要处理的）
+
+| # | 风险 | 处置 |
+| --- | --- | --- |
+| ① | 依赖原版**内部名 / 结构**（`Menu_mc`、`TabbedFilterSelection_mc`、`MissionsList_mc`、`Data.UserEvents`、`ProcessUserEvent`…）；换游戏版本若改名 ⇒ 注入**静默失效** | 打开序列做**结构指纹自检**（关键成员逐个 `HasMember` + `numTabs==7` + 按钮 `Data` 可读）——任一失败 ⇒ 不注入 + 一行 WARN + HUD 提示 + 走既有「停推」路径（不闪退、不半残） |
+| ② | 第三方 SWF 改了 AS3 **逻辑**（不是布局） | 与第七节「目标档」一致：只承诺布局/资源类改动下叠加生效；指纹自检能挡住大部分（成员缺失/类型不对） |
+| ③ | 我们的条目被引擎推送**覆盖** | watchdog（菜单开着时低频检查「首条是否我们 + 条数是否期望」）⇒ 重放注入（见 11.4-⑤） |
+| ④ | **时序**：`MissionMenuStateData` 恢复「上次分类」（可能 = 我们的 tab 7）发生在我们的打开序列之前 ⇒ 原版 `FilterInfoA[7]` TypeError | 打开序列尽量早（菜单「由关变开」当拍完成 SetTabsData + 装监听）；必要时提高菜单存在性检查频率；evaluating 期先量化「恢复事件 vs 我们注入」的实际先后（P3 首跑日志） |
+| ⑤ | 语言判定（注入形态没有 AS3 任务名可看） | U8 探针（读一条原版本地化渲染文本判 CJK）+ ini `[UI] Language=auto\|zh\|en` 兜底 |
+| ⑥ | 引导态切换时的列表重建导致滚动/选中丢失 | U7 就地刷新（按 clip ↔ 下标映射 `SetEntryText`）；退化方案 = 重建 + 恢复 `scrollPosition` / `selectedIndex` |
+| ⑦ | 双形态维护期成本 | 把差异**收敛在一层**：数据 / 决策 / 引导 / 提示全部留在现有 C++，只有「展示 + 接管」两套；SWF 侧不再加新功能（功能只进注入层，SWF 侧冻结） |
+
+### 11.9 决策点（建议）
+
+1. **本轮结论**：注入形态**值得推进**（技术可行性已被 P2 证完，剩余为工程化；且顺带带来「协议退休 + 诊断简化 + 可删 SWF 一套」的长期收益）；
+2. **建议下一步 = 探针 v4**（1 轮，低风险、纯只读优先），把 U5/U6/U7/U8/U9 一次问清；
+3. 探针 v4 全绿 ⇒ 进 **P3**（产品化 PoC，先只做数据不做交互，便于单独判定）；
+4. 产品形态按 11.6 **选项 B** 起步（默认 SWF + 检测到冲突自动切注入），**选项 C** 作为长期目标，
+   触发条件写进 `docs/99`；
+5. 若探针 v4 出现红灯：U5 红 ⇒ 交互层退化为「Enter 激活引导 + 其余降级」；U6/U7 红 ⇒ 退化为
+   「重建列表 + 恢复滚动/选中」；都不影响 P3 立项，只影响 P4 的实现路径。
 
 ## 附：复现命令（离线证据）
 
