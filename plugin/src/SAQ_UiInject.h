@@ -75,6 +75,13 @@ namespace SAQ::UiInject
 	void OnMenuClosed();
 
 #if SAQ_WITH_HARNESS
+	// ★★★ 第 138 轮（P2 会话收口）：运行期强制形态（harness `ui.mode` op）——
+	//   ini 的 [UI] UiMode 只在菜单打开时读一次；P2 计划里各用例需要互不干扰的形态
+	//   （探针 research3 / ui.inject 跑 `swf` 干净环境；产品路径用例跑 `auto`）——
+	//   强制值优先于 ini 解析（菜单打开时的 SetMode 被忽略），`ClearForceMode` 恢复。
+	void ForceMode(UiMode a_mode);
+	void ClearForceMode();
+
 	// P3-a PoC（harness 原语 `ui.inject` 驱动）：把 a_quests（= 产品侧「待推送」
 	// 同一份可接任务数据，见 SAQ::PendingQuests()）注入原版 MissionMenu，走完整
 	// 链路并返回一行汇总（调用方打产品日志 —— 红线六）。

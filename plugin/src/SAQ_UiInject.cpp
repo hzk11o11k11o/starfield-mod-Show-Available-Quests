@@ -350,6 +350,9 @@ namespace SAQ::UiInject
 			// ★★ 第 137 轮（P3-b 产品路径）：
 			bool                      menuActive{ false };   // 本菜单已激活注入形态
 			bool                      listening{ false };    // 本菜单已挂过拦截监听（防重复挂）
+			// ★★★ 第 138 轮（P2 会话收口）：走到快照/构造/扩tab/监听任一失败 = 决定性
+			//   失败 ⇒ 本菜单周期不再重试（防 150ms 级重试刷屏 + 每拍全量重建开销）。
+			bool                      activateFailed{ false };
 			std::uint32_t             replayCount{};         // watchdog 重放次数（引擎覆盖后）
 			std::uint64_t             lastWatchdogMs{};      // watchdog 节拍（500ms）
 		};
@@ -809,10 +812,18 @@ namespace SAQ::UiInject
 	// ====================================================================
 
 	UiMode        g_mode{ UiMode::kAuto };   // 默认 auto（ini 未配置时）
+	// ★★★ 第 138 轮（P2 会话收口）：harness `ui.mode` 的运行期强制标记（覆盖 ini 的
+	//   ResolveUiMode —— 菜单打开时 SAQ.cpp 会再调一次 SetMode，强制期间被忽略）。
+	//   目的 = 让 P2 计划的各用例互不干扰：探针（research3 / ui.inject）跑 `swf`
+	//   干净环境（原版 7 tab），产品路径用例跑 `auto`。发布构建里恒 false。
+	bool          g_modeForced{ false };
 	std::uint64_t g_lastActivateTryMs{};
 
 	void SetMode(UiMode a_mode)
 	{
+		if (g_modeForced) {
+			return;   // 强制期间忽略 ini 解析结果（harness `ui.mode reset` 清除）
+		}
 		g_mode = a_mode;
 	}
 
@@ -945,9 +956,17 @@ namespace SAQ::UiInject
 		const bool ok = snapOk && buildOk && tabsOk && ctx.listening;
 		ctx.menuActive = ok;
 		if (!ok) {
-			REX::WARN("界面注入：激活失败（快照={} 构造={} 扩tab={} 监听={}）—— 本次菜单不用注入形态",
+			// ★★★ 第 138 轮（P2 会话收口）：决定性失败 ⇒ 标记本菜单周期不再重试。
+			//   第 137 轮 P2 会话实测：一旦失败（如 tab 数不是原版 7 项 ⇒ SetTabsData
+			//   永远 +0），150 ms 节流的重试会持续刷 WARN（96 条 / 15 秒）且每拍全量
+			//   重建（快照 + 构造 206 条）—— 菜单开着多久就烧多久。失败原因已记录
+			//   （含 tab 数字，便于判读「环境不是原版 7 项」类现场）；下次菜单重开再试。
+			ctx.activateFailed = true;
+			REX::WARN("界面注入：激活失败（快照={} 构造={} 扩tab={} 监听={}；tab {}→{}）"
+					  "—— 本次菜单不再重试（下次菜单重开再试）",
 				snapOk ? "ok" : "fail", buildOk ? "ok" : "fail",
-				tabsOk ? "ok" : "fail", ctx.listening ? "ok" : "fail");
+				tabsOk ? "ok" : "fail", ctx.listening ? "ok" : "fail",
+				NumStr(tabs0), NumStr(tabs1));
 			return false;
 		}
 		REX::INFO("界面注入：已激活（UiMode={}，tab {}→{}，条目 {}，按键名={}，语言={}）",
@@ -972,6 +991,11 @@ namespace SAQ::UiInject
 			return;   // swf 模式 / auto 还没判定 ⇒ 零动作
 		}
 		if (!(g_ctx != nullptr && g_ctx->menuActive)) {
+			// ★★★ 第 138 轮（P2 会话收口）：本菜单已决定性失败 ⇒ 不再重试
+			//   （失败时已打一条 WARN；重试必失败且每次全量重建 —— 纯烧 CPU + 刷日志）。
+			if (g_ctx != nullptr && g_ctx->activateFailed) {
+				return;
+			}
 			// 激活尝试（节流 150 ms —— 菜单刚打开那几拍桥还没通 / 数据还没收集好）。
 			const auto now = NowMs();
 			if (g_lastActivateTryMs != 0 && now - g_lastActivateTryMs < kActivateRetryMs) {
@@ -1032,6 +1056,23 @@ namespace SAQ::UiInject
 	}
 
 #if SAQ_WITH_HARNESS
+	// ====================================================================
+	// 五·附、运行期形态强制（harness `ui.mode` op；第 138 轮 P2 会话收口）
+	//
+	// 为什么放这里：产品段（五）必须保持「无预处理指令」的干净分层（发布构建也
+	// 编译 —— verify 的分层检查按**第一个** `#if SAQ_WITH_HARNESS` 切分源码）。
+	// ====================================================================
+	void ForceMode(UiMode a_mode)
+	{
+		g_modeForced = true;
+		g_mode = a_mode;
+	}
+
+	void ClearForceMode()
+	{
+		g_modeForced = false;
+	}
+
 	// ====================================================================
 	// 六、PoC 主流程（harness 原语 `ui.inject` 的唯一入口）
 	// ====================================================================

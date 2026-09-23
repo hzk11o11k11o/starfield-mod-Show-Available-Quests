@@ -15,6 +15,15 @@
 ;  **C++ 侧原语**（ping / menu.open / wait / menu.close）+ 探针 op
 ;  （`ui.research3` / `ui.research4` / `ui.research4b`）。
 ;
+;  ★★★ 第 138 轮（形态隔离 · P2 会话收口）：第 137 轮起产品路径（UiMode=auto）
+;  会在冲突环境**自动激活注入**（tab 7→8）—— 而 `ui.research3` / `ui.inject`
+;  探针假设「原版 7 tab 干净环境」（第 137 轮 P2 会话实测撞车：产品先扩 tab ⇒
+;  探针 `扩tab=fail（8→8）` / 断言等 `切7` 等到的是 `切8`）。所以各用例显式设置
+;  运行期形态（新 op `ui.mode`，强制值优先于 ini、直到 reset / 进程结束）：
+;    · 探针用例（r120 / r130 / r133）：`ui.mode swf` —— 产品不激活，干净环境；
+;    · 冲突判定 / 产品路径用例（r125 / r137）：`ui.mode auto` —— 产品路径行为。
+;  判读新增一行产品日志：`界面形态覆盖：UiMode=swf（harness 强制；reset 清除）`。
+;
 ;  判读（每条用例一行产品日志）：
 ;    `界面研究探针3 …`：环境=(numTabs 7,…) / 扩tab=ok（7→8）/ 切3=ok（对照）/
 ;      切7=ok（拦截 1 次 + 哨兵 0x20000000 存活）/ 切0=ok（放行）/ 清理=ok /
@@ -39,6 +48,8 @@ desc = 第 120 轮（P2）：原版 SWF 完整 PoC —— 7 → 8 个 tab + 拦�
 ;  的推送在 P2 下必然失败）—— 用固定 1800 ms 留出 Movie/ASMovieRoot 解析时间
 ;  （P1.5 实测：菜单打开后桥在 ~1 秒内就绪）。桥没通 ⇒ 探针行会写「桥没通（…）」
 ;  ⇒ 首条断言 FAIL，能一眼看出是时序而不是能力问题。
+;  ★★★ 第 138 轮：探针要求「原版 7 tab 干净环境」⇒ 强制 swf（关掉产品自动注入）。
+step = ui.mode swf
 step = ping
 step = menu.open
 step = wait 1800
@@ -64,6 +75,8 @@ desc = 第 125 轮（路线 D · 冲突检测）：原版 SWF 下判定「UI 通
 ;  判定发生在第 2 次正式失败后立即停推（旧行为会一路退避重试到预算耗尽）。
 ;  注：判定的两个前提 = 桥解析成功 + `_root.SAQ_Report` 调用失败 —— P2 环境（原版 SWF）正是该形态。
 ;  提示 GLOB（SAQ_UiNotice）不断言：进程内只请求一次，r120 用例窗口里已请求过。
+;  ★★★ 第 138 轮：显式 auto（产品路径行为 —— 冲突判定 + 自动切注入都在 auto 下）。
+step = ui.mode auto
 step = ping
 step = menu.open
 step = wait 3500
@@ -101,6 +114,8 @@ desc = 第 130 轮（功能迁移探针 v4）：U5 按键接管 / U6 引擎条�
 ;       `MissionMenu.ProcessUserEvent` 末尾把返回值**覆盖**为 ButtonBar /
 ;       TabbedFilterSelection 的结果（未知事件返回 true 属正常，且**无副作用**）。
 ;       判据改为「可调用 + 菜单仍在」，返回值只作信息记录。
+;  ★★★ 第 138 轮：探针要求干净环境（产品路径不参与）⇒ 强制 swf。
+step = ui.mode swf
 step = ping
 step = menu.open
 step = wait 1800
@@ -131,6 +146,9 @@ desc = 第 133 轮（P3 产品化 PoC）：真实数据注入 —— 扩 tab + �
 ;    切 tab 要靠它（没有它切到第 8 个 tab 会触发原版越界 TypeError）。
 ;  ★ 眼睛窗口（30 秒）：用例结束时界面停在**第 8 个 tab「可接任务」**，列表 =
 ;    真实的可接任务（真任务名 / 描述 / 置灰）；玩家可切回原版 tab 验证恢复。
+;  ★★★ 第 138 轮：`ui.inject` 探针要求「原版 7 tab 干净环境」（它自己做 7→8 扩 tab）
+;  ⇒ 强制 swf（第 137 轮实测：产品路径先扩到 8 ⇒ 探针 `扩tab=fail（8→8）`）。
+step = ui.mode swf
 step = ping
 step = menu.open
 step = wait 1800
@@ -154,6 +172,9 @@ desc = 第 137 轮（P3-b）：UiMode=auto 产品路径 —— 冲突环境自�
 ;    拦截监听 / 分时注入全部由产品路径完成；HUD「UI 通道不可用」提示也不该出现
 ;    （注入生效 = 功能可用 ⇒ 提示被抑制 —— 见 SAQ.cpp 的「延迟判定」）。
 ;  眼睛窗口（30 秒）：玩家切到第 8 个 tab「可接任务」应看到真实的可接任务列表。
+;  ★★★ 第 138 轮：产品路径用例须显式 auto（默认即 auto；前一条探针用例把它
+;  强制成 swf 了 —— 强制跨用例保持，这里必须显式设回）。
+step = ui.mode auto
 step = ping
 step = menu.open
 step = wait 5000

@@ -140,6 +140,7 @@ namespace SAQ::Test
 			kInfoProbe,    // ★★★ 第 106 轮：info.probe —— INFO 门槛 OR 组探针（只读，见 ProbeInfoGates）
 			kUiResearch,   // ★★★ 第 117 轮：ui.research —— GFx 注入能力探针（见 ResearchGfxCapabilities）
 			kUiInject,     // ★★★ 第 133 轮：ui.inject —— 数据注入 PoC（见 SAQ_UiInject.h）
+			kUiMode,       // ★★★ 第 138 轮：ui.mode —— 运行期强制 UI 形态（隔离探针/产品路径）
 			kSaveList,     // ★★ 第 62 轮：存档列表诊断（BGSSaveLoadManager，只读）
 			kSaveLoad,     // ★★ 第 62 轮：自动读档（排队 → 等加载走完 → 通道重新就绪）
 		};
@@ -740,6 +741,20 @@ namespace SAQ::Test
 				a_step.kind = Kind::kUiInject;
 				a_step.text = Trim(rest);
 				a_step.timeoutMs = 15000;
+			} else if (op == "ui.mode") {
+				// ★★★ 第 138 轮（P2 会话收口）：运行期强制 UI 形态 —— `swf` / `auto` /
+				//   `inject` / `reset`（清除强制、回 ini 语义）。目的 = P2 计划的用例
+				//   隔离：第 137 轮产品路径（UiMode=auto）上线后会在冲突环境**自动激活**
+				//   注入（tab 7→8），而 `ui.research3` / `ui.inject` 探针假设「原版 7 tab
+				//   干净环境」⇒ 必须先 `ui.mode swf` 关掉产品激活再跑探针（详见计划头）。
+				//   生效范围 = 直到 `reset` 或进程结束（菜单打开时的 ini 解析被忽略）。
+				a_step.kind = Kind::kUiMode;
+				a_step.text = Trim(rest);
+				a_step.timeoutMs = 3000;
+				if (a_step.text.empty()) {
+					a_error = "需要 swf|auto|inject|reset";
+					return false;
+				}
 			} else if (op == "wait") {
 				a_step.kind = Kind::kWait;
 				const auto toks = SplitWs(rest);
@@ -1392,6 +1407,34 @@ namespace SAQ::Test
 				const auto inject = UiInject::RunInjectPoC(SAQ::PendingQuests());
 				REX::INFO("界面注入PoC {}", inject);
 				CompleteStep(true, inject, {});
+				return true;
+			}
+
+			case Kind::kUiMode: {
+				// ★★★ 第 138 轮（P2 会话收口）：`ui.mode <swf|auto|inject|reset>` ——
+				//   运行期强制 UI 形态（见 SAQ_UiInject 的 ForceMode / ClearForceMode）。
+				//   一次性完成（纯内存开关，不碰界面、不需要菜单状态）。
+				//   红线六（第 104 轮）：结果必须**同时打一行产品日志**（assert.log 只认
+				//   产品行）—— 计划里可断言这行确认模式已生效。
+				std::string result;
+				if (step.text == "swf") {
+					UiInject::ForceMode(UiInject::UiMode::kSwf);
+					result = "swf";
+				} else if (step.text == "auto") {
+					UiInject::ForceMode(UiInject::UiMode::kAuto);
+					result = "auto";
+				} else if (step.text == "inject") {
+					UiInject::ForceMode(UiInject::UiMode::kInject);
+					result = "inject";
+				} else if (step.text == "reset") {
+					UiInject::ClearForceMode();
+					result = "reset（回到 ini 语义）";
+				} else {
+					CompleteStep(false, "参数必须是 swf|auto|inject|reset（给的是 " + step.text + "）", {});
+					return true;
+				}
+				REX::INFO("界面形态覆盖：UiMode={}（harness 强制；reset 清除）", result);
+				CompleteStep(true, "UiMode 覆盖 → " + result, {});
 				return true;
 			}
 
