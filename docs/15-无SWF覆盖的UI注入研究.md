@@ -12,7 +12,9 @@
 > （第九·补四节：`ui.research3` = 扩 tab 7→8 / 切 7 拦截哨兵 / `InitializeEntries`
 > 列表注入；`build-saq.ps1 -P2` 部署开关 + verify `--p2`）** + **P2 首跑实测判读与修复
 > （第九·补五节：五段 ok / 注入段 fail —— 真因 = 注入条目缺 `aObjectives`（原版
-> `IsMission` = `hasOwnProperty("aObjectives")` 判定），已修 + verify 加防回归串，待复跑）**。
+> `IsMission` = `hasOwnProperty("aObjectives")` 判定），已修 + verify 加防回归串）** +
+> **P2 复跑实测判读（第九·补六节：六段全 ok + 注入段修复一击生效 `entryCount 1→3`
+> ⇒ **P2 通过**（「无 SWF 覆盖」形态技术成立）；判据五连全绿；眼睛窗口 8 → 30 秒）**。
 
 ## 一、问题定义与成功判据
 
@@ -368,6 +370,53 @@ SWF 禁用）⇒ 判读 `界面研究探针3 …` 一行（六段同现 = ok）+
 `iRemainingTime=-1`（不设会走 `GlobalFunc.GetQuestTimeRemainingString(undefined)`；
 iType=6 的图标标签 = `default "None"`，帧存在、安全）；verify 新增特征串
 `aObjectives`（dev 正向 / 发布反向）防「改回只设 iType」再犯。**已重建部署（P2 态），待复跑**。
+
+### 九·补六、P2 复跑实测判读（2026-09-23 · 第 123 轮）
+**六段全 ok + 注入段修复一击生效 ⇒ P2 通过（「无 SWF 覆盖」目标形态技术成立）**
+
+会话 15:25~15:27（82172 ms / `Plan=SAQ_TestPlan_p2.txt`、SWF 覆盖已禁用、开发 DLL
+1079296 B）—— 用例 `r120_gfx_poc` **PASS**（10375 ms）；实测行：
+
+```
+界面研究探针3 Menu_mc=ok｜环境=(numTabs 7,entryCount 1,mask 0xFFFFFFFF)｜扩tab=ok（7→8）｜切3=ok（mask 0xFFFFFFFF→0x00000008）｜切7=ok（拦截 1 次,mask→0x20000000）｜切0=ok（mask→0xFFFFFFFF）｜回调=3 次（末次 idx=0）｜清理=ok｜注入=ok（entryCount 1→3）
+```
+
+| 段 | 实测 | 判读 |
+| --- | --- | --- |
+| 环境 | `numTabs 7`、`entryCount 1`、`mask 0xFFFFFFFF` | ✅ 原版 SWF 生效（P2 部署正确；我们的 SWF 是 8） |
+| 扩tab（7→8） | ok | ✅ `SetTabsData` 在原版 `BSTabbedSelection` 上生效 |
+| 切3（对照） | ok（mask → `0x00000008`） | ✅ 原版 `onFilterChanged` 正常执行（读自己的 `FilterInfoA[3]`） |
+| 切7（拦截 + 哨兵） | ok（拦截 1 次，`mask→0x20000000`） | ✅ **拦截 + 写双成立**（原版直接切 idx 7 会越界 TypeError —— 被 we priority=100 拦住） |
+| 切0（放行） | ok（mask → `0xFFFFFFFF`） | ✅ 不越权 |
+| 清理 | ok | ✅ `removeEventListener` 正常 |
+| **注入** | **ok（entryCount 1→3）** | ✅ 第 122 轮修复（补 `aObjectives` 空数组）**一击生效** |
+
+**本轮判据五连全绿**（退出码均为 0）：
+- `check_results.py`（1 条用例 PASS / 0 FAIL / 0 SKIP）；
+- `log_hygiene.py`（日志 39910 B / 89 行、结果 JSON —— 零坏字节零控制字符）；
+- `plan_regex_audit.py`（2/2 全命中）；
+- `verify_saq_build.py --dev --p2`（含 `*.p2off` 禁用证据 + 部署 == 工作区）；
+- 离线层 3/3（19 用例 / 936 断言 + 快照 16 件 + tripwire）。
+
+**眼睛窗口（重要说明）**：探针副作用（8 个 tab / 列表 3 条）只在「探针执行后 →
+`menu.close`」之间可见（本次 ~8 秒；tab 条前 7 项 = 探针假数据 `$SAQ-keep0..6`、
+第 8 项 = `SAQ-PoC`；列表被整体替换为 3 条 `SAQ-PoC-Item i`）。菜单关闭后 Movie
+销毁、重开时由原版重建 ⇒ 回到 7 tab + 原版 entries（玩家截图 = 重开后状态，**无残留**）。
+为便于亲验：计划窗口 **8 → 30 秒**（第 123 轮，`wait 30000`）+ 保持 P2 部署。
+
+**P2 形态的两条产品化观察（功能迁移的输入）**：
+1. **产品推送在原版 SWF 下必然失败** —— 我们的 `SAQ_PushData` / `SAQ_Report` 等 AS3
+   入口不存在于原版 SWF ⇒ DLL 每 500 ms 重试、日志持续「推送失败（重试）」+
+   「界面状态一条都没读回来」。未来「兼容模式」要么检测到原版 SWF 即停推（降频降噪），
+   要么把产品 UI 通道整体切换为注入形态（迁移面 = MissionMenu +2113 行 /
+   MissionsList +186 / QuestUtils +2，见第七节）；
+2. 重开菜单时偶见「菜单尚未就绪（UI 表里还没有 BSMissionMenu 条目），稍后重试」= 老
+   时序现象（稍后重试即恢复，与 P2 无关）。
+
+**下一步**：①（可选）眼睛会话（30 秒窗口亲验）；② 恢复部署
+（`build-saq.ps1 -SkipTable -SkipSwf -Harness` —— SWF 拷回 + `*.p2off` 清理 +
+ini `Plan` 改回）；③ 评估功能迁移（第七节）与产品形态（建议「兼容模式」，
+默认仍走 SWF）。
 
 ## 附：复现命令（离线证据）
 

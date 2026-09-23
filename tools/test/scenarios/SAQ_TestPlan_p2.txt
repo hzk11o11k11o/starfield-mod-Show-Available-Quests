@@ -17,8 +17,9 @@
 ;  判读：`界面研究探针3 …` 一行 ——
 ;    环境=(numTabs 7,…) / 扩tab=ok（7→8）/ 切3=ok（对照）/ 切7=ok（拦截 1 次 +
 ;    哨兵 0x20000000 存活）/ 切0=ok（放行）/ 清理=ok / 注入=ok（entryCount → 3）。
-;  眼睛：菜单 tab 条上出现第 8 个 tab「SAQ-PoC」；列表被替换成 3 条
-;    「SAQ-PoC-Item i」（破坏性副作用 —— 随 menu.close 清理，第 27/50 轮定案）。
+;  眼睛：菜单 tab 条上出现第 8 个 tab「SAQ-PoC」（前 7 个显示为探针的假数据
+;    `$SAQ-keep0..6` —— 实验设计如此）；列表被替换成 3 条「SAQ-PoC-Item i」
+;    （破坏性副作用 —— 随 menu.close 清理，第 27/50 轮定案；菜单重开后 = 原版数据）。
 ; ============================================================================
 
 [case:r120_gfx_poc]
@@ -33,6 +34,8 @@ step = wait 1800
 step = ui.research3
 step = assert.log 界面研究探针3 .*Menu_mc=ok scope=prev timeout=8000
 step = assert.log 界面研究探针3 .*扩tab=ok.*切3=ok.*切7=ok.*切0=ok.*清理=ok.*注入=ok scope=case timeout=8000
-;  给「眼睛」留时间：第 8 个 tab（SAQ-PoC）+ 3 条注入条目（列表被替换）
-step = wait 8000
+;  给「眼睛」留时间（★ 第 123 轮起 8 → 30 秒）：菜单开着时的界面状态 =
+;  8 个 tab（前 7 个 `$SAQ-keep0..6` 假数据 + 第 8 个 `SAQ-PoC`）
+;  + 列表 3 条 `SAQ-PoC-Item 0/1/2`；menu.close 后随 Movie 销毁。
+step = wait 30000
 step = menu.close
