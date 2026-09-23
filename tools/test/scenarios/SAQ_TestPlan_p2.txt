@@ -39,6 +39,12 @@ step = assert.log 界面研究探针3 .*扩tab=ok.*切3=ok.*切7=ok.*切0=ok.*�
 ;  + 列表 3 条 `SAQ-PoC-Item 0/1/2`；menu.close 后随 Movie 销毁。
 step = wait 30000
 step = menu.close
+;  ★★★ 第 127 轮（提示时机）：关菜单后的静默窗口 —— 「UI 通道不可用」的 HUD 提示
+;  只等菜单关闭后再发（首发 + 补发 2 次 ≈ 6 秒）。这 10 秒留给「眼睛」：关掉菜单后
+;  HUD 上应弹出中英提示「可接任务界面未生效：… / Available Quests UI not active …」。
+;  放在这条用例末尾（而不是 r125 之后）：**第一次关菜单**就会触发提示，
+;  这段静默期让 3 次提示完整播完、不被下一条用例的 menu.open 打断。
+step = wait 10000
 
 [case:r125_ui_conflict]
 desc = 第 125 轮（路线 D · 冲突检测）：原版 SWF 下判定「UI 通道不可用」+ 停推降噪（不再空转 14 次重试）

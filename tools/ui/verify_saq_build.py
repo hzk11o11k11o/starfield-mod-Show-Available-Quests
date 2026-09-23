@@ -1847,6 +1847,9 @@ def main() -> int:
                         ("P2 冲突判定断言", "assert.log UI 通道不可用".encode()),
                         ("P2 停推降噪断言（不再出现「推送放弃」）",
                          "assert.nolog 推送放弃".encode()),
+                        # ★★★ 第 127 轮（提示时机）：关菜单后的「眼睛」静默窗口。
+                        ("P2 眼睛窗口（关菜单后提示静默期）",
+                         "step = wait 10000".encode()),
                     ):
                         all_ok &= check(f"用例计划 · r120 {label}", p2_text.encode(), needle)
                     # 反向检查：原版 SWF 下我们 SWF 的测试入口（ui.tab / ui.select / ui.key /
@@ -2374,6 +2377,9 @@ def main() -> int:
         all_ok &= check("PEX · UI 提示处理函数", blob, b"ProcessUiChannelNotice")
         all_ok &= check("PEX · UI 提示文案（中）", blob, "可接任务界面未生效".encode())
         all_ok &= check("PEX · UI 提示文案（英）", blob, b"Available Quests UI not active")
+        # ★★★ 第 127 轮（路线 D 补丁 · 提示时机）：提示要等菜单关闭后再发 ——
+        #   菜单状态变量进 PEX（防「改回菜单开着时提示」回退；实测见 docs/15 十·补）。
+        all_ok &= check("PEX · UI 提示等菜单关闭（MissionMenuOpen）", blob, b"MissionMenuOpen")
         # ★★ 第 49 轮（引擎内 harness）：脚本侧的测试命令执行器 ——
         #   DLL 写命令 → 这里执行（Quest.Reset/Start/SetStage/CompleteQuest、Actor.MoveTo）
         #   → 写回执。写侧动作用**语言级 API**（不经原生函数指针，见 docs/04 的调用约定）。

@@ -195,6 +195,13 @@ GlobalVariable TestHarnessCtl = None ; 0x80D：总开关（1=harness 启用）
 GlobalVariable UiNoticeVar = None
 Bool UiNoticeLoaded = False
 
+; ★★★ 第 127 轮（路线 D 补丁 · 提示时机）：任务菜单的开关状态。
+;   实测（第 126 轮 P2 会话 16:25）：轮询节拍在菜单开着时**也会走**几拍（菜单打开后的
+;   几秒窗口内），于是「UI 通道不可用」提示 3 次全落在菜单里头发完 —— 玩家关菜单后
+;   什么也看不到（与设计意图「关菜单后提示」不符）。现在：菜单开着时提示不发
+;   （GLOB 的 1 保留），关菜单事件里立刻补一次 + 之后节拍继续补发。
+Bool MissionMenuOpen = False
+
 Event OnInit()
 	Debug.Trace("[SAQ] SAQ_Main OnInit —— 注册菜单事件 + 启动引导轮询")
 	If NotifyFlag != None
@@ -244,6 +251,9 @@ Event OnMenuOpenCloseEvent(String asMenuName, Bool abOpening)
 		Return
 	EndIf
 	If abOpening
+		; ★★★ 第 127 轮（提示时机）：记下菜单状态 —— HUD 提示一律等菜单关闭后再发
+		;   （见 ProcessUiChannelNotice / ProcessNotice）。
+		MissionMenuOpen = True
 		; ★ 第 26 轮：每次开菜单都重挂一次定时器（重复调用同一 id 只是重置，无副作用）。
 		;   起因：脚本实例**从存档恢复时 OnInit 不跑**（第 26 轮实测）⇒ OnInit 里的
 		;   StartTimer 从来没执行过 ⇒ 世界里没有任何轮询机会；这里补挂一次。
@@ -267,7 +277,11 @@ Event OnMenuOpenCloseEvent(String asMenuName, Bool abOpening)
 		Return
 	EndIf
 	; 关菜单：HUD 要露出来了，顺手立刻应用一次（不用等下一拍轮询）
+	MissionMenuOpen = False
 	ApplyGuide()
+	; ★★★ 第 127 轮（提示时机）：关菜单瞬间也检查一次「UI 通道不可用」提示 ——
+	;   玩家一回到 HUD 就能看到解释（读到的 1 在菜单开着时被有意保留；不必等下一拍）。
+	ProcessUiChannelNotice()
 EndEvent
 
 Function ApplyGuide()
@@ -445,6 +459,11 @@ Function ShowNotice(String asText, int aiRepeats)
 EndFunction
 
 Function ProcessNotice()
+	; ★★★ 第 127 轮（提示时机）：菜单开着时不补发 —— HUD 通知在菜单里多半看不到，
+	;   首发/补发都等菜单关闭后再走（计数与冷却一并冻结，关菜单后自然继续）。
+	If MissionMenuOpen
+		Return
+	EndIf
 	; 「引导目标尚未加载」的提示冷却（每次失败都会走到这里，靠它避免刷屏）
 	If GuideFailNoticeCooldown > 0
 		GuideFailNoticeCooldown -= 1
@@ -496,6 +515,13 @@ String Function UiChannelNoticeText()
 EndFunction
 
 Function ProcessUiChannelNotice()
+	; ★★★ 第 127 轮（提示时机）：菜单开着时不提示 —— 这一刻玩家正盯着任务菜单找
+	;   我们的 tab（HUD 通知在菜单里多半看不到）；GLOB 里的 1 保留着，等菜单关闭
+	;   事件（或之后的节拍）再发。DLL 判定本身就发生在菜单开着时，所以实际效果 =
+	;   「关菜单后提示」，与设计意图一致。
+	If MissionMenuOpen
+		Return
+	EndIf
 	If UiNoticeVar == None
 		If !EnsureUiNoticeVar()
 			Return
