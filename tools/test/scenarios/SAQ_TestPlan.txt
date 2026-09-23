@@ -1538,7 +1538,11 @@ step = wait 1500
 ;  数据（第 114 轮调查，tools/esm/_tmp_r114_pending4b.py / _tmp_r114_find_points.py）：
 ;    · **SG02「通讯失败」** Starfield.esm 0x1E7332（`~0:0x001E7332`）：
 ;      VMAD = `defaultquestchangelocationscript`（**进入 DR019Location「翻新星际站」⇒
-;      SetStage**）；ALUA 三名 NPC 的放置引用在星站内景（0x001E106A AlbanLopezREF）。
+;      SetStage**）；ALUA 三名 NPC 的放置引用在星站内景。
+;      ★★ 第 115 轮修正（实测）：传送目标从 AlbanLopezREF（`~0:0x001E106A`）换成
+;      `~0:0x0013D006`（DR019DockDoor01，DR019Int01 内景**常驻**门）—— 前者实测
+;      **非常驻**（flags=0，落在 FABHoldingCell 模板 cell）⇒ `Game.GetForm` 取不到、
+;      传送根本发不出去（第 115 轮会话唯一 FAIL 的真因 = 用例侧缺陷，产品零影响）。
 ;    · **RL040Quest「异常求救信号」** Starfield.esm 0x25A9E2（`~0:0x0025A9E2`）：
 ;      **无别名、无记录级 CTDA**；触发者 = `RL040RadioOnHitScript`（挂在某个无线电
 ;      引用上，`Const`）——玩家**击中**它 ⇒ `RL040Quest.SetStage(30)`；太空随机遭遇
@@ -1570,8 +1574,8 @@ step = menu.close
 step = note === 现状探针（只读）：记录「通讯失败」在引擎里的状态 ===
 step = quest.probe ~0:0x001E7332
 step = assert.log quest\.probe 0x001E7332： scope=case timeout=3000
-step = note === 传送到星站内景的 AlbanLopezREF（VMAD 的进入触发地点 = DR019Location）===
-step = teleport ~0:0x001E106A
+step = note === 传送到星站内景常驻门（DR019DockDoor01 = DR019Int01；旧目标 AlbanLopezREF 非常驻，第 115 轮换）===
+step = teleport ~0:0x0013D006
 step = wait 5000
 step = note === 触发后状态（判读：变「运行中/已开始」= 进入地点真的启动了它）===
 step = quest.probe ~0:0x001E7332

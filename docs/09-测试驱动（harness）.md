@@ -1293,7 +1293,7 @@ if (line.find("harness：") != std::string::npos) { continue; }
 
 | 用例 | 任务（`~<master>:0x…` 表外直拼） | 关键步骤 |
 | --- | --- | --- |
-| `r114_pending_sg02` | `~0:0x001E7332`（通讯失败） | probe → `teleport ~0:0x001E106A`（星站内 NPC = VMAD 进入触发点）→ 再 probe |
+| `r114_pending_sg02` | `~0:0x001E7332`（通讯失败） | probe → `teleport ~0:0x0013D006`（DR019DockDoor01 = DR019Int01 内景常驻门；★ 第 115 轮换掉非常驻的 AlbanLopezREF）→ 再 probe |
 | `r114_pending_rl040` | `~0:0x0025A9E2`（异常求救信号） | probe + probe stage 30（`RL040RadioOnHitScript` 的 SetStage，只读） |
 | `r114_pending_lc07` | `~4:0x00097FC8`（精炼厂 / ShatteredSpace） | probe（SGE）→ `teleport ~4:0x0008AA34`（LC07Int02 常驻）→ 再 probe |
 | `r114_pending_sfter` | `~3:0x0007E73F`（中继站 / SFBGS050） | probe → `teleport ~3:0x000AD173`（中继站飞船内景常驻门）→ 再 probe |
@@ -1301,3 +1301,13 @@ if (line.find("harness：") != std::string::npos) { continue; }
 **纪律**（verify 正向 + 反向检查）：只读（不 reset / 不推 stage）+ 表外直拼；
 判读 = probe 状态词 + 传送后是否被启动（结论回写 `docs/12` / `ref/extra_quests.json`）。
 第 114 轮数据侧（两档常驻兜底：19 条任务远处点引导**立即生效**）见 `docs/14`。
+
+**★ 第 115 轮实测（2026-09-23 12:30~12:40 会话）：39 条 38 PASS / 1 FAIL**
+（523703 ms / `驱动器 v70` / `stamp=65`；判据四连全绿 —— `check_results` /
+`log_hygiene` 退出码 0、`plan_regex_audit` **150/150**、`verify --dev` 全过；
+`[E]` 0 / `[W]` 46 全老现象；日志 1049232 B）。
+唯一 FAIL = `r114_pending_sg02` 的 `teleport ~0:0x001E106A` —— **用例侧缺陷**：
+该引用实测**非常驻**（`flags=0`、落在 `FABHoldingCell` 模板 cell）⇒ `Game.GetForm`
+取不到、传送发不出去。修复 = 传送目标换 `~0:0x0013D006`（DR019DockDoor01，常驻）
++ verify 检查同步（`sg02 传送到星站内景常驻门`）+ 已部署（部署 == 工作区），**待重跑**。
+4 条判读结论（3 条「不收」+ sg02 待重跑）见 `docs/14` 八节 / `docs/12` 六节。

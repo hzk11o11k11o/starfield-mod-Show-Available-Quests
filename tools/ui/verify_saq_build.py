@@ -220,6 +220,9 @@
              `_rl040` / `_lc07` / `_sfter`，用例集 35 → 39）—— 只读（不 reset / 不推
              stage）+ 表外直拼探针 + 「进入地点触发」型传送到接取点观察；
              这 4 条的结论回写 `ref/extra_quests.json`（收）或 `docs/12`（不收）。
+             ★★ 第 115 轮修正：`sg02` 的传送目标换成 `~0:0x0013D006`（DR019DockDoor01）
+             —— 原目标 AlbanLopezREF（`~0:0x001E106A`）实测非常驻（在 FABHoldingCell），
+             传送取不到表单（第 115 轮会话唯一 FAIL = 用例侧缺陷）。
           本脚本检查：生成器两档标记 + 候选池精确计数 1020 + 3 条任务的 world 级兜底
           候选在位（记录号钉死）+ 4 条新用例的段头/探针/传送/只读纪律 + stamp=65
           （反向检查 stamp=64 不残留）。
@@ -1950,8 +1953,11 @@ def main() -> int:
                      "[case:r114_pending_sg02]".encode()),
                     ("sg02 表外直拼探针（~0:）",
                      "quest.probe ~0:0x001E7332".encode()),
-                    ("sg02 传送到星站内 NPC",
-                     "teleport ~0:0x001E106A".encode()),
+                    # ★★ 第 115 轮：传送目标从 AlbanLopezREF（0x001E106A，实测**非常驻**
+                    #   ⇒ GetForm 取不到、传送发不出去）换成 DR019DockDoor01（0x0013D006，
+                    #   DR019Int01 内景常驻门）—— 第 115 轮会话唯一 FAIL 的修复。
+                    ("sg02 传送到星站内景常驻门（第 115 轮换掉非常驻目标）",
+                     "teleport ~0:0x0013D006".encode()),
                     ("rl040 段头与探针",
                      "[case:r114_pending_rl040]".encode()),
                     ("rl040 探针（stage 30 只读探）",
