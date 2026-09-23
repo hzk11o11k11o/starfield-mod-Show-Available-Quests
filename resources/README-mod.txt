@@ -49,7 +49,8 @@
 五、可选设置（一般无需改动）
   文件：SFSE\Plugins\SAQ_ShowAvailableQuests.ini
   内含测试过滤开关（只显示有目标 / 无目标 / DLC / 任务板入口 ……），默认关闭；
-  以及在 [Log] 段调整日志文件大小上限（MaxSizeMB，单位 MB，默认 1）。
+  [UI] 段的 UiMode 可强制界面形态（swf=只用自带界面 / auto=默认自动判断 /
+  inject=只用注入形态）；以及在 [Log] 段调整日志文件大小上限（MaxSizeMB，默认 1）。
 
 六、已知限制
   · 少量任务（280 条中的 55 条）暂时没有可用的导航目标：条目名会标注
@@ -65,10 +66,11 @@
     （INFO）里的同类条件（84 条任务 / 425 条对话 / 512 条条件，含官方 DLC，
     例如「大器晚成」要「孤立无援」完成）；另有任务链门槛（后续任务在前置完成前
     不显示）；位置/遭遇类条件暂未覆盖。
-  · 本 mod 会覆盖 Interface\missionmenu.swf 与 missionmenu_lrg.swf：
-    与其它修改任务菜单 UI 的 mod 同时使用时，需要做补丁（patch）。
-    若界面未生效（被其它 mod 覆盖 / 未安装 / 旧版本文件），关闭任务菜单后
-    HUD 会弹出中英提示告知原因（v0.1.15 起），不再是「装了没生效、也看不出为什么」。
+  · 本 mod 会覆盖 Interface\missionmenu.swf 与 missionmenu_lrg.swf：与其它修改
+    任务菜单 UI 的 mod 同时使用时，界面部分会自动改用「注入形态」（v0.1.16 起）——
+    不依赖自己的界面文件，直接接管出「可接任务」标签页，一般无需再做补丁。
+    注入形态启动前会做一次结构指纹自检：万一游戏版本更新改了界面结构，功能会
+    保持关闭并在日志里写明原因，不会显示错乱的列表。
 
 七、日志与排错
   日志：SFSE\Plugins\SAQ_ShowAvailableQuests.log（默认最大 1 MB，写满自动滚动清空；
@@ -141,7 +143,8 @@
 5. Optional settings
   File: SFSE\Plugins\SAQ_ShowAvailableQuests.ini
   Contains a test filter (only with target / without target / DLC only /
-  mission boards only…), off by default, and a [Log] section to change the
+  mission boards only…), off by default; [UI] UiMode can force the UI form
+  (swf / auto / inject, default auto); and a [Log] section to change the
   log file size limit (MaxSizeMB, in MB, default 1).
 
 6. Known limitations
@@ -166,9 +169,12 @@
     "The Empty Nest" finished), plus a quest-chain gate (a follow-up quest
     stays hidden until its prerequisite is done); location/encounter based
     conditions are not covered yet.
-  · This mod overrides Interface\missionmenu.swf and
-    missionmenu_lrg.swf: patches are needed if you use another mod that
-    modifies the mission menu UI.
+  · This mod overrides Interface\missionmenu.swf and missionmenu_lrg.swf.
+    If you use another mod that modifies the mission menu UI, the UI part
+    automatically switches to built-in injection mode (as of v0.1.16) -
+    usually no patch is needed anymore. Before injecting, a structure
+    self-check runs: if a game update ever changes the UI layout, the
+    feature stays off and the log says why - instead of a broken list.
 
 7. Log & troubleshooting
   Log: SFSE\Plugins\SAQ_ShowAvailableQuests.log (1 MB max by default,

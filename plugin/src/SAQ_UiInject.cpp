@@ -2376,6 +2376,8 @@ namespace SAQ::UiInject
 			SAQ::CurrentGuideQuestID(), n.keyX, n.keyY, n.activate, n.blocked, n.delegated,
 			n.guideReq, g_takeoverActs);
 	}
-}
 
 #endif  // SAQ_WITH_HARNESS
+}  // namespace SAQ::UiInject（★ 第 144 轮：闭括号必须在 #if 之外 —— 发布构建
+   //   （saq_harness=n）下 harness 段被整体排除，闭括号留在段内会让第 41 行的 `{`
+   //   找不到匹配（C1075；0.1.16 打包的发布构建首次暴露，开发构建一直掩盖着它）。）

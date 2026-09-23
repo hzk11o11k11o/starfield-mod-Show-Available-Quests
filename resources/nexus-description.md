@@ -1,4 +1,4 @@
-# Nexus 上传素材（v0.1.15）
+# Nexus 上传素材（v0.1.16）
 
 > 用途：复制下面内容到 Nexus 的 mod 页。Summary 填「名称/摘要」栏，
 > Description 填「描述」栏（Nexus 描述框可用 BBCode，纯文本换行也正常）。
@@ -37,7 +37,7 @@ Starfield 从不告诉你去哪接任务，全靠自己撞见。这个 mod 在�
 [*] 没有导航目标的任务会明确提示：条目名字前面直接标注**「（不可导航）」**，描述里写明原因，不用点就知道它没法引导
 [*] 导航目标很远的任务：远处点引导会先落到**就近位置**（不再「点了没反应」），走近后自动切换到精确目标；v0.1.14 起这批任务的兜底目标已补全 —— 只剩 1 条 DLC 收集型任务仍需**靠近**目标区域（描述会**提前**写明，HUD 会提示、引导保持待生效，靠近后自动生效，不必重新点）
 [*] 被引导的任务一旦接取，引导自动取消
-[*] 界面文件被其它任务菜单 mod 覆盖 / 未生效时：**关闭任务菜单后 HUD 会明确提示原因**（v0.1.15 起；后台同时停止无效重试，日志更干净）—— 不再是「装了但没生效、也看不出为什么」
+[*] 界面文件被其它任务菜单 mod 覆盖 / 未安装时（v0.1.16 起）：**自动切换到内置注入形态** —— 不依赖自己的界面文件，直接接管出「可接任务」标签页，功能照常可用（一般不再需要打补丁）；并带**结构指纹自检**：万一游戏版本更新改了界面结构，功能会保持关闭并给出明确日志提示，**不会显示错乱的列表**
 [*] 支持中文 / 英文
 [*] 支持官方内容（追踪者联盟 / 破碎空间 / 地球舰队等；未安装的模块不会显示其任务）
 [*] 日志写在 mod 目录里，删 mod 不残留；日志不超过 1 MB 自动滚动
@@ -61,11 +61,11 @@ Starfield 从不告诉你去哪接任务，全靠自己撞见。这个 mod 在�
 [*] 无限生成任务本身不显示，但其接取入口（13 处任务板 + 8 位提供可重复任务的 NPC）作为独立条目列出；任何位置都能一键导航过去——在远处先给你一个大致方位，等你走到那块任务板所在的区域，蓝点会自动落到任务板上（不会停在几米外；读档或重启游戏后也会自动校正）
 [*] 引导在关闭任务菜单后生效（与原版一致：HUD 蓝点本来就要关菜单才可见）
 [*] 「进度没到就不显示」覆盖**两层条件**：任务记录级条件里「引用别的任务」的那一类（7 条任务 / 11 条条件，含条件组里的「或」逻辑，例如「要先完成 A 才能接到 B」），以及任务对话（INFO）里的同类条件（84 条任务 / 425 条对话 / 512 条条件，含官方 DLC，例如「大器晚成」要「孤立无援」完成）；另有**任务链门槛**（后续任务在前置完成前不显示，含官方 DLC）；位置/遭遇类条件暂未覆盖
-[*] 会覆盖任务菜单的 UI 文件（missionmenu.swf / missionmenu_lrg.swf），与其它改任务菜单的 mod 需要打补丁
+[*] 会覆盖任务菜单的 UI 文件（missionmenu.swf / missionmenu_lrg.swf）；与其它改任务菜单的 mod 同时使用时，界面部分自动改用**内置注入形态**（v0.1.16 起，一般无需打补丁）
 [/list]
 
 [b]兼容性[/b]
-仅使用 SFSE + ESM。**不改任何原版数据**：本插件只往那些任务板 / 可重复任务 NPC 所在的 12 个 cell 里**新增**自己的常驻标记引用（用于精确导航）；为了让引擎接受这些新增引用，我们对这些 cell 各写一条**只含 EDID 的空壳 CELL 记录**（官方 Creation 对同一条 cell 用的就是这种写法），**不覆盖 cell 的任何数据字段**。与不触碰任务菜单 UI 的 mod 完全兼容；与修改任务菜单 SWF 的 mod 冲突（需补丁）。
+仅使用 SFSE + ESM。**不改任何原版数据**：本插件只往那些任务板 / 可重复任务 NPC 所在的 12 个 cell 里**新增**自己的常驻标记引用（用于精确导航）；为了让引擎接受这些新增引用，我们对这些 cell 各写一条**只含 EDID 的空壳 CELL 记录**（官方 Creation 对同一条 cell 用的就是这种写法），**不覆盖 cell 的任何数据字段**。与不触碰任务菜单 UI 的 mod 完全兼容；与修改任务菜单 SWF 的 mod 同时使用时，界面部分自动改用**内置注入形态**（v0.1.16 起，一般无需打补丁）。
 
 [b]反馈[/b]
 遇到问题请附上：SFSE\Plugins\SAQ_ShowAvailableQuests.log、安装方式（MO2 / 手动）、游戏与 SFSE 版本号。
@@ -90,7 +90,7 @@ Starfield never tells you where to pick up quests — you just have to stumble i
 [*] Quests with no navigation target are clearly flagged (the description explains why) — no dead ends
 [*] Guidance now works from any distance for almost every quest (as of v0.1.14): only one DLC collection quest still needs you to get near (the description says so in advance, the HUD reminds you after you press guide, and the guidance activates automatically once you arrive - no need to press it again)
 [*] Guidance is cancelled automatically once you accept the quest
-[*] If the mission-menu UI is overridden by another mission-menu mod (or missing / outdated), the HUD now clearly tells you why after you close the menu (as of v0.1.15) - no more silent failure
+[*] If the mission-menu UI is overridden by another mission-menu mod (or missing / outdated), the mod now **switches to its built-in injection mode** (as of v0.1.16): the "Available Quests" tab keeps working (usually no patch needed), and a **structure fingerprint self-check** keeps the feature off with a clear log message - instead of showing a broken list - if a game update ever changes the UI layout
 [*] Chinese and English games supported
 [*] Official content aware (Trackers Alliance, Shattered Space, Earth Fleet, …); quests from modules you don't own are never listed
 [*] Log lives inside the mod folder (no leftovers), capped at 1 MB with auto-roll
@@ -114,11 +114,11 @@ Mission menu (TAB) -> "Available Quests" -> select an entry -> expand the "Go to
 [*] Radiant quests themselves are not listed, but their pickup points (13 mission boards + 8 repeatable-job NPCs) are listed as entries; every entry can be navigated to from anywhere — far away you get the approximate direction, and once you reach the board's area the marker automatically snaps onto the board itself (no more stopping a few metres short; it also self-corrects after a save reload or restart)
 [*] Guidance applies after you close the mission menu (same as vanilla: the HUD marker only appears outside menus)
 [*] "Hidden when your progress isn't far enough" covers **two layers**: record-level preconditions that reference another quest (7 quests / 11 conditions, including "or" groups, e.g. "you must finish A before B shows up") and the same kind of conditions inside a quest's dialogues (INFOs: 84 quests / 425 dialogues / 512 conditions, official DLC included), plus a quest-chain gate (a follow-up quest stays hidden until its prerequisite is done, official DLC included); location/encounter based conditions are not covered yet
-[*] Overrides the mission menu UI (missionmenu.swf / missionmenu_lrg.swf): patching needed with other mission-menu mods
+[*] Overrides the mission menu UI (missionmenu.swf / missionmenu_lrg.swf); when another mission-menu mod is present, the UI part automatically switches to built-in injection mode instead (as of v0.1.16 - usually no patch needed)
 [/list]
 
 [b]Compatibility[/b]
-SFSE + ESM only. **No vanilla data is changed**: the plugin only *adds* its own persistent marker references inside the cells that contain those mission boards / NPCs. So the engine accepts them, one EDID-only "stub" CELL record is written per cell (the exact pattern the official Creations use for the same cells) — **none of the cell's data fields are overridden**. Fully compatible with mods that don't touch the mission menu UI; conflicts with mission-menu SWF mods (patch required).
+SFSE + ESM only. **No vanilla data is changed**: the plugin only *adds* its own persistent marker references inside the cells that contain those mission boards / NPCs. So the engine accepts them, one EDID-only "stub" CELL record is written per cell (the exact pattern the official Creations use for the same cells) — **none of the cell's data fields are overridden**. Fully compatible with mods that don't touch the mission menu UI; when a mission-menu SWF mod is present, the UI part automatically switches to built-in injection mode (as of v0.1.16 - usually no patch needed).
 
 [b]Feedback[/b]
 Please include SFSE\Plugins\SAQ_ShowAvailableQuests.log, install method (MO2 / manual), and your game & SFSE versions.
@@ -127,6 +127,11 @@ Please include SFSE\Plugins\SAQ_ShowAvailableQuests.log, install method (MO2 / m
 ---
 
 ## 更新日志（Changelog）
+
+### v0.1.16（2026-09-23）
+- 新增：**界面兼容性升级 —— 与其它任务菜单 mod 共存**。此前本 mod 的界面文件（`Interface\missionmenu.swf`）被其它修改任务菜单的 mod 覆盖 / 未安装时，只能提示「界面未生效」（标签页不可用）。现在**自动切换到内置注入形态**：不依赖自己的界面文件，直接在原版任务菜单里接管出「可接任务」标签页 —— 功能照常可用，一般不再需要打补丁（可在 ini 的 `[UI] UiMode` 里强制 `swf` / `auto` / `inject`，默认 `auto` 即自动判断）
+- 新增：**结构指纹自检** —— 注入形态启动前会校验原版界面结构是否符合预期；万一游戏版本更新改了界面布局，功能会保持关闭并给出明确日志提示，**不会显示错乱的界面或半残列表**
+- 其它：内部测试与验证设施更新（不影响游戏内行为；发布包仍不包含任何测试代码）
 
 ### v0.1.15（2026-09-23）
 - 新增：**界面未生效时明确提示** —— 如果本 mod 的界面文件（`Interface\missionmenu.swf`）被其它修改任务菜单的 mod 覆盖、未安装或被旧版本文件覆盖，**关闭任务菜单后 HUD 会弹出中英提示**「可接任务界面未生效：可能被其它任务菜单 mod 覆盖 / Available Quests UI not active - likely overridden by another mission menu mod」。此前这种情况表现为「任务菜单里看不到『可接任务』标签页、也没有任何说明」（且后台日志会反复重试）；现在原因直接告诉你，后台同时停止无效重试（日志更干净）
@@ -210,7 +215,7 @@ Please include SFSE\Plugins\SAQ_ShowAvailableQuests.log, install method (MO2 / m
 
 | 项 | 说明 |
 | --- | --- |
-| 上传包 | `dist\SAQ-ShowAvailableQuests-0.1.15.zip`（由 `tools\package-saq.ps1` 生成；会先以发布构建重编 DLL —— 包里不含任何 harness/测试代码） |
+| 上传包 | `dist\SAQ-ShowAvailableQuests-0.1.16.zip`（由 `tools\package-saq.ps1` 生成；会先以发布构建重编 DLL —— 包里不含任何 harness/测试代码） |
 | 测试功能 | 包内**不含任何测试资产**（用例文件 / 结果 JSON），配置强制为「正常玩」的默认值（ini `[Test] Mode=0 / Harness=0`）；发布 DLL 不含 harness 编译 —— 由打包脚本 + `verify_saq_build.py` 三层校验把守 |
 | 版本号 | 三处一致：`plugin\xmake.lua`、`plugin\src\main.cpp`、`meta.ini` |
 | 依赖声明 | Nexus 上标注 SFSE 为必需依赖（版本 0.2.21+） |

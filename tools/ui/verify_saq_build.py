@@ -609,7 +609,11 @@ HARNESS_STRINGS = (
     #   切3= / 切7= / 切0= / U2=（dev 正向；发布构建一条都不见，本表反向覆盖）。
     ("harness GFx 探针2 op 名", "ui.research2"),
     ("harness GFx 探针2 产品行（可被 assert.log 取证）", "界面研究探针2 {}"),
-    ("harness GFx 探针2 · 拦截事件名", "BSTabbedSelection::selectionChange"),
+    # ★★★ 第 144 轮（0.1.16 发布构建收口）：「拦截事件名 BSTabbedSelection::selectionChange」
+    #   从本表**移出** ⇒ 产品表（UI_INJECT_PRODUCT_STRINGS）—— 第 137 轮起注入产品路径
+    #   也用同一个事件名监听 tab 切换（常量在 SAQ_UiInject.cpp 第 304 行，产品段）。
+    #   它在发布构建里**必须存在**（产品功能所需），留在本表会被误判成「harness 泄漏」。
+    #   （对照：探针2 自己的判据标记「｜切7=」等仍在表内且发布构建一条不见。）
     ("harness GFx 探针2 · 拦截判据标记（切7=）", "｜切7="),
     ("harness GFx 探针2 · SetTabsData 补测标记（U2=）", "｜U2="),
     # ★★★ 第 120 轮（P2 · 原版 SWF 完整 PoC · docs/15 九·补三/九·补四）：`ui.research3` ——
@@ -628,9 +632,11 @@ HARNESS_STRINGS = (
     #   `MissionsListEntry.IsMission(param1)` = `param1.hasOwnProperty("aObjectives")`
     #   （原版没有我们 SWF 的 `bSaqAvailable` 分支）⇒ 条目收进 rawEntries 但
     #   entryList 一条不留 ⇒ entryCount 0。修复 = 每条注入条目补空 aObjectives 数组。
-    #   这条特征串钉住「注入条目带 aObjectives」，防「改回只设 iType」再犯
-    #   （dev 正向；发布构建一条都不见，本表反向覆盖）。
-    ("harness GFx 探针3 · 注入条目 aObjectives 字段（原版 IsMission 判定）", "aObjectives"),
+    #   这条特征串原钉「注入条目带 aObjectives」防回归 —— ★★★ 第 144 轮（0.1.16 发布构建
+    #   收口）：`aObjectives` 从本表**移出** ⇒ 产品表（UI_INJECT_PRODUCT_STRINGS）——
+    #   第 137 轮起注入条目构造（SAQ_UiInject.cpp 产品段）**必须**带 aObjectives
+    #   （每主条目 1 条子项 + 子项自身不带），它在发布构建里必须存在（产品功能所需），
+    #   留在本表会被误判成「harness 泄漏」。（防回归目的由产品表的正向检查继续覆盖。）
     # ★★★ 第 130 轮（功能迁移探针 v4 · docs/15 十一）：`ui.research4` / `ui.research4b` ——
     #   第十一节评估列的 5 个未知点一次问清：
     #     U5 按键接管：`Data` 是 protected（读不到）⇒ `CreateObject` 带**类名**造真
@@ -650,8 +656,11 @@ HARNESS_STRINGS = (
     ("harness GFx 探针4 · 按键接管判据标记（造对象=/接管=）", "｜造对象="),
     ("harness GFx 探针4 · 类通道判据标记（类通道=）", "｜类通道="),
     ("harness GFx 探针4 · 就地刷新判据标记（刷新=）", "｜刷新="),
-    ("harness GFx 探针4 · CreateObject 类名（真 AS3 实例 —— U5 的钥匙）",
-     "Shared.Components.ButtonControls.ButtonData.UserEventData"),
+    # ★★★ 第 144 轮（0.1.16 发布构建收口）：「CreateObject 类名
+    #   Shared.Components.ButtonControls.ButtonData.UserEventData」从本表**移出** ⇒
+    #   产品表（UI_INJECT_PRODUCT_STRINGS）—— 第 140 轮起产品接管（P4）也用 CreateObject
+    #   造同一类名的真实例（常量在 SAQ_UiInject.cpp 第 371 行，产品段）。
+    #   它在发布构建里必须存在（产品功能所需），留在本表会被误判成「harness 泄漏」。
     # ★★ 第 131 轮（2026-09-23 18:29 P2 会话判读后的探针修正 · docs/15 十二·补）：
     #   ① U5 `接管=fail` 真因 = 旧版把 **UserEventManager 实例**当 param2 传给
     #      `ButtonBaseData` —— 原版 ctor 只接受 `UserEventData` 或 `Array`（其它类型
@@ -748,6 +757,15 @@ UI_INJECT_PRODUCT_STRINGS = [
     ("产品 · 接管 · 目标尚未加载（保持待生效）", "的目标尚未加载：保持待生效"),
     ("产品 · 菜单关闭 · 交互接管计数行", "菜单关闭：交互接管（X "),
     ("产品 · 激活日志 · 接管字段", "，接管="),
+    # ★★★ 第 144 轮（0.1.16 发布构建收口）：三条**产品与探针共用**的底层契约串 ——
+    #   原先放在 HARNESS_STRINGS（发布构建反向）⇒ 0.1.16 首次以发布构建打包时被
+    #   误报「harness 泄漏」（它们在产品段定义/使用，发布构建里**必须存在**）。
+    #   移到这里（dev / release 双向正向）：既消除误报，又给这三条产品契约加上
+    #   「发布构建也存在」的正向检查（回退 ⇒ 报红）。
+    ("产品 · 注入 · tab 切换拦截事件名（订阅 tab 变化）", "BSTabbedSelection::selectionChange"),
+    ("产品 · 注入 · 条目子项字段 aObjectives（原版 IsMission 判定）", "aObjectives"),
+    ("产品 · 接管 · CreateObject 类名（ButtonData 真实例）",
+     "Shared.Components.ButtonControls.ButtonData.UserEventData"),
     # ★★★ 第 143 轮（P5 双形态与发布 · docs/15 11.8 风险①）：**结构指纹自检** ——
     #   激活前核对原版菜单结构（Menu_mc / TabbedFilterSelection_mc / MissionsList_mc /
     #   tab 数 == 7）；不匹配 ⇒ 不注入（一行 WARN + 本菜单不再重试）。
