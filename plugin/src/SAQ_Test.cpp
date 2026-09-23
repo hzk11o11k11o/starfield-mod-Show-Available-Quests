@@ -392,6 +392,25 @@ namespace SAQ::Test
 					a_local, q.master, q.nameZh, id);
 				return true;
 			}
+			// ★★★ 第 110 轮：**显式 master 的「表外记录」**（`~1:0x00000CF2` 形态）——
+			//   用例要推的**前置任务**可能不在「可接任务」静态表里（如追踪者联盟的
+			//   `SFBGS003_MiscPointer`：SGE 自启的引导任务、不进列表），而上面的表查找
+			//   只认表内记录 ⇒ 旧实现直接失败（r110 用例的硬阻塞）。
+			//   显式 master 的语义本来就是「直接用这个 master 拼运行期 FormID」（不依赖表）
+			//   ⇒ 表里没有时按它直拼。证据（第 110 轮）：`quest.stage ~1:0x00000CF2 1000`。
+			//   注意：仍然要求 master 已解析（未加载 / 表没就绪 ⇒ 失败并给同一句提示）。
+			if (a_master != 0xFF) {
+				const auto id = Masters::MakeFormID(a_master, a_local);
+				if (id == 0) {
+					a_detail = std::format(
+						"master {} 未解析（没装 / 静态表还没就绪）—— 先开一次菜单再跑本用例", a_master);
+					return false;
+				}
+				a_out = id;
+				a_detail = std::format("记录号 0x{:06X}@master{}（表外记录，直拼）→ 运行期 0x{:08X}",
+					a_local, a_master, id);
+				return true;
+			}
 			a_detail = std::format("静态表里没有记录号 0x{:06X}（master {}）", a_local,
 				a_master == 0xFF ? std::string{ "任意" } : std::to_string(a_master));
 			return false;

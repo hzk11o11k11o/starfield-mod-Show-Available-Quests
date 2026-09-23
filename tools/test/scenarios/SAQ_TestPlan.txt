@@ -159,8 +159,11 @@ step = guide.clear
 ;  同 cell 常驻兜底」，依次 LookupByID 取第一个命中的。
 ;
 ;  判据（第 34 轮实测形态：`入口=12(可导航 12｜marker 10 原板 2 兜底 0 不可用 0)`；
-;  ★ 第 80 轮起是 20 条 = 12 任务板 + 8 可重复 NPC ⇒ `入口=20(可导航 20｜…)`）：
-;    ① 20 条入口**全部可导航**、`不可用 0`；
+;  ★ 第 80 轮起是 20 条 = 12 任务板 + 8 可重复 NPC ⇒ `入口=20(可导航 20｜…)`；
+;  ★★ 第 110 轮起是 21 条 = **13 任务板** + 8 可重复 NPC ⇒ `入口=21(可导航 21｜…)`）：
+;    ① 21 条入口**全部可导航**、`不可用 0` —— 新增的「任务板 · 追踪者联盟总部」
+;       （SFBGS003.esm · medium 档）在此刻（站在阿基拉城、总部内景 cell 没开）
+;       走的是**常驻兜底**（总部展示柜）⇒ 断言里 `兜底` 那一档 >0；
 ;    ② 站在别的城市（这里先传送到阿基拉城 ⇒ 新亚特兰蒂斯城的 cell 未加载）
 ;       点「任务板 · 新亚特兰蒂斯城」⇒ 引导目标 = **新建常驻 marker（精确）**
 ;       —— 证明引擎接受了我们新建的常驻引用（第 30~34 轮的治本判据），
@@ -168,16 +171,20 @@ step = guide.clear
 ;    ③ 关菜单后 `引导已生效 脚本状态=1`（脚本 ForceRefTo 成功 = 引擎真把它当引用）。
 ; ----------------------------------------------------------------------------
 [case:r47_board_marker]
-desc = 第 30~34 轮：任务板入口 20/20 可导航（含第 80 轮的 NPC 条目）；引导落在新建常驻 marker（精确）
+desc = 第 30~34 轮：任务板入口 21/21 可导航（含第 80 轮 NPC + 第 110 轮追踪者联盟）；引导落在新建常驻 marker（精确）
 step = note === 先站到阿基拉城（让新亚特兰蒂斯城 The Well 的 cell 卸载）===
 step = ping
 step = guide.clear
 step = teleport.entry 0x0014D497
 step = wait 3000
-step = note === 开菜单：看入口统计（20 条全可导航、不可用 0）===
+step = note === 开菜单：看入口统计（21 条全可导航、不可用 0；追踪者联盟走常驻兜底）===
 step = menu.open
-step = assert.log 入口=20\(可导航 20｜marker [1-9]\d* 原板 \d+ 兜底 \d+ 不可用 0\) scope=prev timeout=12000
-; ★ 第 57 轮：**必须等 C++ 数据推送成功再切 tab** —— 「入口=20」那行是**收集阶段**
+step = assert.log 入口=21\(可导航 21｜marker [1-9]\d* 原板 \d+ 兜底 [1-9]\d* 不可用 0\) scope=prev timeout=12000
+; ★★ 第 110 轮：`兜底` 那档从宽松 `\d+` 收紧为 `[1-9]\d*` —— 追踪者联盟悬赏信息台
+;   此刻原板未加载（总部内景 cell 没开）⇒ 必须落在**常驻兜底**（展示柜 0xFD00F9CE）上，
+;   这一档 >0 同时是「medium 条目的兜底链路真的在工作」的就地证据。
+;   反向检查（verify 已钉）：候选全不可用的条目会让这行出现 `不可用 [1-9]` ⇒ 断言不匹配。
+; ★ 第 57 轮：**必须等 C++ 数据推送成功再切 tab** —— 「入口=21」那行是**收集阶段**
 ;   打印的（推送之前），而开菜单的第一次推送常因桥解析失败、0.8 秒后才重试成功；
 ;   不等就会撞上「列表还是内嵌回退数据（202 条、不含任务板入口）」⇒ ui.selectchild
 ;   报 err|notfound（09:35 会话 r47 的真因；证据 = 界面报告 src=embedded / raw=202）。
@@ -841,7 +848,8 @@ step = menu.close
 ;   见 tools/esm/gen_repeatable_givers.py / create_board_markers.py 的说明）。
 ;
 ;  判据（本用例的 PASS 线）：
-;    ① DLL 侧两类计数：`入口条目表=20 条（任务板 12 + 可重复 NPC 8）`；
+;    ① DLL 侧两类计数：`入口条目表=21 条（任务板 13 + 可重复 NPC 8）`
+;       （★ 第 110 轮 +1 任务板：追踪者联盟悬赏信息台）；
 ;    ② 界面 `rep=` 探针 = `8|0x214684=（可重复）贸易管理局 · 邓肯·林奇`——
 ;       8 条 type=101 条目真的进了载荷解析，且名字前缀在位（C++ → 载荷 → AS3 全链）；
 ;    ③ 点「（可重复）贸易管理局 · 邓肯·林奇」⇒ `引导请求：…` 且目标 =
@@ -858,7 +866,7 @@ step = ping
 step = guide.clear
 step = teleport.entry 0x001DF853
 step = wait 3000
-step = note === 开菜单：DLL 侧「任务板 12 + 可重复 NPC 8」计数 ===
+step = note === 开菜单：DLL 侧「任务板 13 + 可重复 NPC 8」计数（第 110 轮起）===
 step = menu.open
 ; ★★ 第 83 轮两处修正（22:52 会话这条唯一的 FAIL，产品全对）：
 ;   ① **括号**：产品那行是**全角** `（…）`（SAQ.cpp: `入口条目表={} 条（任务板 {} + 可重复 NPC {}）`），
@@ -867,8 +875,9 @@ step = menu.open
 ;   ② **窗口**：这行由 menu.open **同一次 Tick 里的产品处理**打印（收集阶段，早于首次推送
 ;      尝试）——`scope=prev`（窗口起点 = 上一步开始）的基准值在个别时序下会落在它之后 ⇒
 ;      改用 `scope=case`（本用例窗口），与 r74/r75 对同类「菜单打开处理行」的写法一致。
-;      判据不变：`入口条目表=20 条（任务板 12 + 可重复 NPC 8）`（第 80 轮两类计数）。
-step = assert.log 入口条目表=20 条（任务板 12 \+ 可重复 NPC 8） scope=case timeout=12000
+;      判据：`入口条目表=21 条（任务板 13 + 可重复 NPC 8）`（第 80 轮两类计数；
+;      ★ 第 110 轮任务板 +1 = 追踪者联盟悬赏信息台 —— SFBGS003.esm · medium 档）。
+step = assert.log 入口条目表=21 条（任务板 13 \+ 可重复 NPC 8） scope=case timeout=12000
 step = assert.log 推送成功 scope=case timeout=12000
 step = ui.tab
 step = note === 界面 rep= 探针：8 条 + 第一条名字带「（可重复）」前缀 ===
@@ -1440,4 +1449,74 @@ step = ui.select 0x0021625F
 step = ui.select 0x001A8B64
 step = note === 收尾：清场 ===
 step = menu.close
+step = wait 1500
+
+; ----------------------------------------------------------------------------
+;  用例 r110：第 110 轮（追踪者联盟 · SFBGS003 · **medium 档**）—— 门槛与「引擎真接取」判据：
+;
+;  背景：SFBGS003 是 medium 档插件（运行期 FormID = 0xFD | idx<<16 | local16，idx 未知）。
+;  本轮把它接进全链路（探测 / 静态表 / 入口表 / 门槛）。「悬赏罪犯：星际盗贼」
+;  （SFTA00，记录号 0x00492D）同时受两类门槛约束：
+;    · INFO 门槛：官方对话要求 Starfield.esm 的 **MS04** 已完成（存档状态相关）；
+;    · 链式边：**追踪者联盟（SFBGS003_MiscPointer，记录号 0x000CF2）@1000** ——
+;      玩家在总部展示柜取走第一张通缉海报时，fragment 执行
+;      `CompleteAllObjectives() + SFBGS003_SFTA00.Start()`（= 任务被**真正接取**）。
+;  ⇒ A 段名单归属因此与存档的 MS04 状态有关（两种都可能）⇒ 断言用交替正则。
+;  另：MiscPointer **不在本 MOD 静态表里**（SGE 自启的引导任务、不进可接列表）⇒ 顺带验证
+;  驱动器第 110 轮新增的 `~<master>:0x…` 表外直拼（见 SAQ_Test.cpp::ResolveLocalFormID）。
+;
+;  medium 的正则写法：运行期 FormID = 0xFD??492D（高字节 0xFD 固定、中间 = 加载序号、
+;  低 16 位 = 记录号）—— 所以正则写 `0xFD[0-9A-F]{2}492D`（沿用 r98 对 DLC 的 `0x[0-9A-F]{2}` 思路）。
+; ----------------------------------------------------------------------------
+[case:r110_trackers_a]
+desc = 第 110 轮（A）：前置没做 ⇒「悬赏罪犯：星际盗贼」（SFBGS003 · medium）被门槛藏（进「INFO没到 / 链式没到」名单）
+step = note === 预热：开一次菜单（master 探测 + 静态表就绪 —— `~0x` / `~1:` 解析都依赖它）===
+step = ping
+step = menu.open
+step = assert.log 推送成功 scope=prev timeout=12000
+step = menu.close
+step = note === 准备：把前置（MiscPointer，表外记录 ⇒ ~1: 写法）与星际盗贼自身都回滚到「没开始」===
+step = quest.reset ~1:0x00000CF2
+step = quest.reset ~0x00492D
+step = wait 2500
+step = note === 对照探针：medium 的 FormID 直拼正确（`0xFD??492D` 这行出现 = 引擎里真有这条任务）===
+; ★ 只断言「探针行出现」（不校验状态词）：reset 对「本会话运行过的任务」可能保留
+;   started 标记（第 101/103 轮实测：Reset 后引擎拒绝再次 Start，状态不保证回到未开始）。
+step = quest.probe ~0x00492D
+step = assert.log quest\.probe 0xFD[0-9A-F]{2}492D： scope=case timeout=3000
+step = note === 进度没到 ⇒ 星际盗贼必须在门槛名单里（INFO/链式取决于存档的 MS04 状态）===
+; 红线（第 68 轮）：正则只写单反斜杠；统计行与名单是同一条「运行时状态」长行 ⇒ scope=case。
+step = menu.open
+step = assert.log 推送成功 scope=prev timeout=12000
+step = assert.log (INFO没到|链式没到): .*星际盗贼\[0xFD[0-9A-F]{2}492D scope=case timeout=3000
+step = menu.close
+
+[case:r110_trackers_b]
+desc = 第 110 轮（B）：推前置 MiscPointer@1000（取走第一张通缉海报）⇒ 引擎 fragment 真的启动星际盗贼（medium 全链路：探测 / 直拼 / fragment / 门槛名单）
+step = note === 预热：开一次菜单（本用例独立跑时也要先让静态表就绪）===
+step = ping
+step = menu.open
+step = assert.log 推送成功 scope=prev timeout=12000
+step = menu.close
+step = note === 推前置到 1000：fragment 执行 SFBGS003_SFTA00.Start() = 玩家真的接取了星际盗贼 ===
+step = quest.start ~1:0x00000CF2
+step = wait 1500
+step = quest.stage ~1:0x00000CF2 1000
+step = wait 2500
+step = note === 写侧硬证据：前置跑到 1000（记录号 0x000CF2 的运行期值 = 0xFD??0CF2）===
+step = quest.probe ~1:0x00000CF2 1000
+step = assert.log quest\.probe 0xFD[0-9A-F]{2}0CF2：.*stageDone\(1000\)=1 scope=case timeout=3000
+step = note === 引擎执行了 fragment ⇒ 星际盗贼「运行中 / 已开始」（medium 直拼 + fragment 双重证据）===
+step = quest.probe ~0x00492D
+step = assert.log quest\.probe 0xFD[0-9A-F]{2}492D：.*(运行中|已开始) scope=case timeout=3000
+step = note === 门槛层：它不再出现在两类名单里（链式边已触发 / 已开始豁免 INFO）===
+; 窗口纪律（第 57 轮）：紧跟 menu.open 的反向检查用 scope=prev（只看上一步 —— 预热那次
+; 开菜单不在窗口里，它当时打过的名单行不会造成假 FAIL）。
+step = menu.open
+step = assert.nolog (INFO没到|链式没到):.*星际盗贼 scope=prev timeout=3000
+step = assert.log 推送成功 scope=case timeout=12000
+step = menu.close
+step = note === 收尾：清场（让下一轮 / 下次会话从此状态可复现）===
+step = quest.reset ~0x00492D
+step = quest.reset ~1:0x00000CF2
 step = wait 1500

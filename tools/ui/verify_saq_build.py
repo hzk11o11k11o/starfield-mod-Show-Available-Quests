@@ -982,6 +982,9 @@ def main() -> int:
             # ★★★ 第 110 轮（追踪者联盟 · medium 档）：探测日志的 medium 形态
             #   （SAQ_Masters.cpp 的 Describe：`序号=0x{:02X}(medium) 前缀=0xFD|…`）。
             "medium 探测(文案)": "medium) 前缀=0xFD|0x".encode(),
+            # ★★★ 第 110 轮：`~<master>:0x…` 对**表外记录**的直拼文案（harness 驱动器
+            #   SAQ_Test.cpp::ResolveLocalFormID —— r110 用例推前置任务依赖它）。
+            "表外记录直拼(文案)": "表外记录，直拼".encode(),
             # ★★ 第 80 轮（可重复 NPC 入口）：入口表两类的计数日志 + NPC 名字前缀
             #   （数据真的进了 DLL 的静态表 —— 不只是生成脚本写对了文件）。
             "入口两类计数(日志)": "（任务板 {} + 可重复 NPC {}）".encode(),
@@ -1834,7 +1837,8 @@ def main() -> int:
                                 plan_text.encode(),
                                 "assert.nolog 链式没到:.*深藏不露".encode())
                 # ★★ 第 80 轮（可重复 NPC 入口）：r80 用例的三条判据 ——
-                #   ① DLL 两类计数（`入口条目表=20 条（任务板 12 + 可重复 NPC 8）`）；
+                #   ① DLL 两类计数（`入口条目表=21 条（任务板 13 + 可重复 NPC 8）`；
+                #      ★ 第 110 轮任务板 +1 = 追踪者联盟悬赏信息台）；
                 #   ② 界面 `rep=` 探针（8 条 + 名字前缀「（可重复）」进了载荷/解析）；
                 #   ③ 点邓肯·林奇 ⇒ 引导目标 = **精确目标**（第 84 轮改判：原板 / marker
                 #      二选一 —— 见下面的说明）。
@@ -1844,7 +1848,7 @@ def main() -> int:
                 #      Tick 的产品处理打印，窗口基准在个别时序下会落在它之后）。
                 all_ok &= check("用例计划 · r80 NPC 两类计数断言（全角括号 + scope=case）",
                                 plan_text.encode(),
-                                "assert.log 入口条目表=20 条（任务板 12 \\+ 可重复 NPC 8） scope=case".encode())
+                                "assert.log 入口条目表=21 条（任务板 13 \\+ 可重复 NPC 8） scope=case".encode())
                 all_ok &= check("用例计划 · r80 界面 rep= 探针断言（8 条 + 名字前缀）",
                                 plan_text.encode(),
                                 "assert.ui rep=\\[8\\|0x214684=（可重复）贸易管理局 · 邓肯·林奇".encode())
@@ -1878,9 +1882,26 @@ def main() -> int:
                                 "assert.ui guide=\\d+\\|\\d+\\|该任务暂无导航目标:伦敦地标任务".encode())
                 #   ★ 第 80 轮更新：r47 的入口统计从 12 → **20**（任务板 12 + NPC 8）——
                 #   反向钉住「改回 12」的回归（NPC 条目静默消失时这条会 MISS）。
-                all_ok &= check("用例计划 · r47 入口统计 20 条（含第 80 轮 NPC）",
+                #   ★★★ 第 110 轮：20 → **21**（任务板 13 = +追踪者联盟悬赏信息台），
+                #   同时「兜底」档收紧为 `[1-9]\d*`（该条目远处必须走常驻兜底）。
+                all_ok &= check("用例计划 · r47 入口统计 21 条（含第 80/110 轮）",
                                 plan_text.encode(),
-                                "assert.log 入口=20\\(可导航 20｜marker".encode())
+                                "assert.log 入口=21\\(可导航 21｜marker".encode())
+                # ★★★ 第 110 轮（追踪者联盟 · SFBGS003 · medium）：r110 两段用例的判据 ——
+                #   ① A 段：门槛名单里出现「星际盗贼」（FormID 用 `0xFD[0-9A-F]{2}492D`
+                #      宽匹配 —— medium 的中间字节 = 加载序号，不能写死）；
+                #   ② B 段：`~1:0x00000CF2` = **表外记录的显式 master 直拼**（驱动器
+                #      第 110 轮新增能力，见 SAQ_Test.cpp::ResolveLocalFormID ——
+                #      没有它，不在静态表里的前置任务（MiscPointer）根本推不动）。
+                for label, needle in (
+                    ("r110 A 段门槛名单断言",
+                     "(INFO没到|链式没到): .*星际盗贼".encode()),
+                    ("r110 B 段表外记录直拼步骤",
+                     "quest.stage ~1:0x00000CF2 1000".encode()),
+                    ("r110 medium 的 FormID 宽匹配写法",
+                     "0xFD[0-9A-F]{2}492D".encode()),
+                ):
+                    all_ok &= check(f"用例计划 · {label}", plan_text.encode(), needle)
                 # ★★ 第 62 轮（大项 I）：自动读档用例 —— ① 只允许用**用户指定的那个存档**
                 #   （子串 ★ 第 101 轮切到 Exit0 → ★★★ 第 103 轮切到 Save1）；② 读档步骤在；
                 #   ③ 存档列表诊断在；④ **与部署 ini 的 [Test] AutoLoad 一致**（见下）。
