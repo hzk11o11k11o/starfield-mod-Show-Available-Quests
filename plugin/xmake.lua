@@ -9,7 +9,7 @@
 set_xmakever("3.0.0")
 
 set_project("SAQ_ShowAvailableQuests")
-set_version("0.1.13")
+set_version("0.1.14")
 set_arch("x64")
 set_languages("c++23")
 set_encodings("utf-8")
@@ -39,7 +39,7 @@ option_end()
 
 target("SAQ_ShowAvailableQuests", function()
     set_default(true)
-    set_version("0.1.13")
+    set_version("0.1.14")
     set_license("GPL-3.0-or-later")
 
     add_rules("commonlibsf.plugin", {
