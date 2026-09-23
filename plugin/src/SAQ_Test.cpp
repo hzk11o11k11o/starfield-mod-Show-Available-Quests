@@ -708,6 +708,26 @@ namespace SAQ::Test
 				a_step.kind = Kind::kUiResearch;
 				a_step.text = "3";
 				a_step.timeoutMs = 8000;
+			} else if (op == "ui.research4") {
+				// ★★★ 第 130 轮（功能迁移探针 v4 · docs/15 十一）：把评估列的 5 个
+				//   未知点一次问清（**原版 SWF** 上跑）：U5 按键接管（Data 读不到 ⇒
+				//   走 CreateObject 带类名造真 AS3 实例 → 换按钮 Data → 程序化触发）、
+				//   U6 引擎条目直读（GetDataForEntry）、U8 语言判定（引擎任务名 CJK）、
+				//   U9 关闭原语（ProcessUserEvent）、U10 类通道（applicationDomain
+				//   → BSUIDataManager 静态调用 + Subscribe("QuestData")）；
+				//   另含 `bCanShowOnMap` ⇒ SET COURSE 置灰的数据驱动验证。
+				//   一次跑完（见 SAQ_UI.cpp 的 ResearchGfxInjection4）。
+				a_step.kind = Kind::kUiResearch;
+				a_step.text = "4";
+				a_step.timeoutMs = 10000;
+			} else if (op == "ui.research4b") {
+				// ★★★ 第 130 轮：探针 v4 第二段（**渲染层** —— U7 就地刷新
+				//   （clip.itemIndex ↔ 数据下标 → SetEntryText → 竖条帧名）+
+				//   U8b 渲染文本 + U9 关闭原语）。注入与读回之间必须隔一帧
+				//   （P2 计划里 `wait 1200`，见 SAQ_UI.cpp 的 ResearchGfxInjection4b）。
+				a_step.kind = Kind::kUiResearch;
+				a_step.text = "4b";
+				a_step.timeoutMs = 10000;
 			} else if (op == "wait") {
 				a_step.kind = Kind::kWait;
 				const auto toks = SplitWs(rest);
@@ -1372,6 +1392,21 @@ namespace SAQ::Test
 					const auto probe3 = UI::ResearchGfxInjection3();
 					REX::INFO("界面研究探针3 {}", probe3);
 					CompleteStep(true, probe3, {});
+					return true;
+				}
+				// ★★★ 第 130 轮（功能迁移探针 v4 · docs/15 十一）：`ui.research4`
+				//   （U5/U6/U8/U9/U10 + 置灰）与 `ui.research4b`（U7 渲染层 + U8b +
+				//   U9 收口）。两段各一行产品日志（红线六）。
+				if (step.text == "4") {
+					const auto probe4 = UI::ResearchGfxInjection4();
+					REX::INFO("界面研究探针4a {}", probe4);
+					CompleteStep(true, probe4, {});
+					return true;
+				}
+				if (step.text == "4b") {
+					const auto probe4b = UI::ResearchGfxInjection4b();
+					REX::INFO("界面研究探针4b {}", probe4b);
+					CompleteStep(true, probe4b, {});
 					return true;
 				}
 				const bool withEvents = step.text.find("events") != std::string::npos;

@@ -2533,5 +2533,678 @@ namespace SAQ::UI
 
 		return out;
 	}
+
+	// ======================================================================
+	// ★★★ 第 130 轮（功能迁移探针 v4 / U5~U10 · docs/15 十一）：`ui.research4` 系列
+	//
+	//   第十一节评估把「无 SWF 覆盖」产品化的剩余未知点收敛成 5 项。本探针在
+	//   **原版 SWF**（P2 态）上把它们一次问清（每项「调用 → 读回验证」，判据进
+	//   一行产品日志 —— 红线六）：
+	//
+	//     U6 引擎条目直读：`MissionsList_mc.GetDataForEntry(i)` / `selectedEntry`
+	//        （原版 public）—— 「切走我们 tab 时恢复原版列表」与「选中项是不是
+	//        我们的」两个判据都靠它（原「订阅 QuestData 事件」不再是必需）。
+	//     U8 语言判定 + 渲染文本：语言 = **引擎任务名**里的 CJK 统计（与 SWF 版
+	//        SaqNameVerdict 同源；注入形态没有 AS3 侧任务名可看）；渲染文本 =
+	//        读 clip 的 TextField（验收手段：描述/名字真的显示了）。
+	//     U10 类通道：`loaderInfo.applicationDomain.getDefinition("…BSUIDataManager")`
+	//        + 静态调用（`hasEventListener` 只读）+ `Subscribe("QuestData", C++ 函数)`
+	//        —— 通了就能用「订阅引擎推送」替代 watchdog 轮询，并可用
+	//        `dispatchCustomEvent` 实现「委托原版行为」。
+	//     U5 按键接管（三条路，一次试完）：
+	//        ① 读 `ButtonBar_mc.<Btn>_mc.Data` —— 原版 `MinimalButton.Data` 是
+	//           **protected** ⇒ 与 U1（private）同类边界，预期读不到；
+	//        ② `CreateObject` 带**类名**造真 AS3 实例（`UserEventData` →
+	//           `UserEventManager`（ctor 参数 = 数组）→ `ButtonBaseData`）——
+	//           这是 GFx 里唯一能拿到「真 ButtonData 实例」的办法；
+	//        ③ `SetButtonData` 换到按钮上 + public 的
+	//           `MinimalButton.HandleUserEvent("R3",false,false)` **程序化触发按键
+	//           路径** ⇒ 我们的 C++ `funcCallback` 被调用 = **按键可接管**。
+	//           （接管不了也有 fallback：父条目 Enter = 引导，docs/15 11.4-⑥）
+	//        为什么拿 **REJECT（R3）** 当靶子：它平时不可见（`bVisible=false`），
+	//        探测期间被换 Data 对玩家无观感影响；`Enabled` 初值 = true，换成
+	//        `bEnabled=false` 后读回 false ⇒ **副证「实例被接受并被 AS3 侧读取」**。
+	//     U9 关闭原语：public 的 `MissionMenu.ProcessUserEvent("SAQ_Research",false)`
+	//        可调用 + 返回 false + 菜单仍在（不真关菜单 —— 真关留到 P4 用驱动器验证）。
+	//     另加：`bCanShowOnMap` 字段 ⇒ SET COURSE 按钮 `Enabled` 的**数据驱动**验证
+	//        （11.4-⑦「不可导航 ⇒ 置灰」：条目 0 给 false、条目 1 给 true，选中后
+	//        读按钮 Enabled 必须 0 / 1）。
+	//
+	//   为什么拆两段（4 / 4b）：U7（就地刷新）是**渲染层**证据 —— clip 的
+	//   `itemIndex` 由 `BSScrollingContainer.Update` 在**帧推进**时写，注入与读回
+	//   之间必须隔一帧（P2 计划在两步之间插 `wait 1200`）；其余各项都是对象/数据
+	//   层，同一次调用内完成。
+	//   副作用（注入条目 / mask / REJECT 的 Data）随 `menu.close`（Movie 销毁）
+	//   清理 —— 第 27/50 轮定案。
+	// ======================================================================
+	namespace
+	{
+		constexpr std::uint32_t kResearch4InjectCount = 2;                 // 注入条数（0=未导航 / 1=可导航）
+		constexpr std::uint32_t kResearch4InjectType = 6;                  // = AVAILABLE_QUEST_TYPE（掩码 1<<6）
+		constexpr std::uint32_t kResearch4InjectBaseUID = 0x56780000u;     // 探针 uID 基线（不与真任务撞号）
+		constexpr std::uint32_t kResearch4NewTabFlag = 1u << 6;            // 我们 tab 的掩码（与探针 v3 同值）
+		constexpr const char*   kResearch4RejectKey = "R3";                // REJECT 按钮的 UserEvent 名（原版 PopulateButtonBar）
+		constexpr const char*   kResearch4InertCode = "SAQ_Research4";     // 惰性事件名（没人监听；防引擎收到未知 questID）
+		constexpr const char*   kResearch4QuestDataChannel = "QuestData";  // 引擎任务数据通道（原版 Subscribe 用的同一个）
+		constexpr const char*   kResearch4BsUiDataManager = "Shared.AS3.Data.BSUIDataManager";
+
+		// AS3 类名候选（CreateObject 的 className：先全名、再短名、再 `::` 分隔写法 ——
+		//   哪种有效本身也是本轮要测的；命中率最高的写法会写进 docs）。
+		constexpr std::size_t kResearch4ClassNameCount = 3;
+		const char* const kResearch4UedNames[] = {
+			"Shared.Components.ButtonControls.ButtonData.UserEventData",
+			"UserEventData",
+			"Shared.Components.ButtonControls.ButtonData::UserEventData"
+		};
+		const char* const kResearch4UemNames[] = {
+			"Shared.Components.ButtonControls.ButtonData.UserEventManager",
+			"UserEventManager",
+			"Shared.Components.ButtonControls.ButtonData::UserEventManager"
+		};
+		const char* const kResearch4BbdNames[] = {
+			"Shared.Components.ButtonControls.ButtonData.ButtonBaseData",
+			"ButtonBaseData",
+			"Shared.Components.ButtonControls.ButtonData::ButtonBaseData"
+		};
+
+		bool SafeReadValueBool(const RE::Scaleform::GFx::Value& a_value, bool& a_out)
+		{
+			__try {
+				if (a_value.IsBoolean()) {
+					a_out = a_value.GetBoolean();
+					return true;
+				}
+				return false;
+			} __except (EXCEPTION_EXECUTE_HANDLER) {
+				return false;
+			}
+		}
+
+		// ★★★ 第 130 轮新能力：`CreateObject(Value*, className, args, numArgs)` ——
+		//   带类名就直接造 AS3 类实例（本轮才知道 commonlibsf 的 0x2E 槽有 className
+		//   参数）。逐个候选名试，命中即返回（失败不抛 C++ 异常；AS3 侧的错误由
+		//   GFx 自己记日志）。
+		bool SafeCreateObjectOfClass(RE::Scaleform::GFx::ASMovieRootBase* a_root,
+			RE::Scaleform::GFx::Value* a_out, const char* const* a_names, std::size_t a_nameCount,
+			const RE::Scaleform::GFx::Value* a_args, std::uint32_t a_numArgs)
+		{
+			if (!VtableSlotInModule(a_root, kSlotAsRootCreateObject)) {
+				return false;
+			}
+			for (std::size_t i = 0; i < a_nameCount; ++i) {
+				__try {
+					a_root->CreateObject(a_out, a_names[i], a_args, a_numArgs);
+				} __except (EXCEPTION_EXECUTE_HANDLER) {
+					continue;
+				}
+				if (a_out->IsObject()) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		// 日志用：截断长文本（超出加省略号）。
+		std::string ClipLogText(const std::string& a_text, std::size_t a_max)
+		{
+			return a_text.size() <= a_max ? a_text : a_text.substr(0, a_max) + "…";
+		}
+
+		// U8a：UTF-8 里的 CJK 统计（3 字节序列、前导字节 E4~E9 = U+4000~U+9FFF）。
+		//   判据与 SWF 版 `SaqNameVerdict` 同源：**引擎推来的任务名**是本地化的。
+		std::size_t CountCjkUtf8(const std::string& a_text)
+		{
+			std::size_t n = 0;
+			for (std::size_t i = 0; i + 2 < a_text.size(); ++i) {
+				const auto c = static_cast<unsigned char>(a_text[i]);
+				if (c >= 0xE4 && c <= 0xE9) {
+					++n;
+					i += 2;
+				}
+			}
+			return n;
+		}
+
+		// U5：被换上去的 `funcCallback`（按键路径真的走到这里 = 接管成立）。
+		class Research4Handler : public RE::Scaleform::GFx::FunctionHandler
+		{
+		public:
+			void Call(const Params& a_params) override
+			{
+				++s_calls;
+				REX::INFO("界面研究探针4：接管回调收到（第 {} 次，argCount={}）", s_calls.load(), a_params.argCount);
+			}
+			static std::atomic<int> s_calls;
+		};
+		std::atomic<int> Research4Handler::s_calls{ 0 };
+
+		// U10：`BSUIDataManager.Subscribe("QuestData", …)` 的回调（引擎推送计数 ——
+		//   第二段读回；本会话没有新推送时为 0，属正常）。
+		class Research4QuestDataHandler : public RE::Scaleform::GFx::FunctionHandler
+		{
+		public:
+			void Call(const Params& a_params) override
+			{
+				(void)a_params;
+				++s_calls;
+				REX::INFO("界面研究探针4：QuestData 订阅回调收到（第 {} 次）", s_calls.load());
+			}
+			static std::atomic<int> s_calls;
+		};
+		std::atomic<int> Research4QuestDataHandler::s_calls{ 0 };
+	}
+
+	std::string ResearchGfxInjection4()
+	{
+		std::string detail;
+		if (!EnsureResolved(detail)) {
+			return "桥没通（" + EscapeForLog(detail, 200) + "）";
+		}
+		auto& bridge = Cached();
+		auto* root = reinterpret_cast<RE::Scaleform::GFx::ASMovieRootBase*>(bridge.asRoot);
+		if (!root) {
+			return "ASMovieRoot 指针为空";
+		}
+
+		std::string out;
+
+		RE::Scaleform::GFx::Value menu;
+		if (!(SafeGetVariable(root, "_root.Menu_mc", &menu) && menu.IsObject())) {
+			return "Menu_mc=fail（路径取不到，后面全部依赖它）";
+		}
+		out += "Menu_mc=ok";
+
+		RE::Scaleform::GFx::Value list;
+		RE::Scaleform::GFx::Value buttonBar;
+		const bool listOk = SafeValueGetMember(&menu, "MissionsList_mc", &list) && list.IsObject();
+		const bool barOk = SafeValueGetMember(&menu, "ButtonBar_mc", &buttonBar) && buttonBar.IsObject();
+		if (!listOk || !barOk) {
+			return out + std::format("｜List={} ButtonBar={}（缺一个就做不下去）",
+				listOk ? "ok" : "fail", barOk ? "ok" : "fail");
+		}
+
+		auto readNum = [](RE::Scaleform::GFx::Value& a_obj, const char* a_name, double& a_out) -> bool {
+			RE::Scaleform::GFx::Value v;
+			return SafeValueGetMember(&a_obj, a_name, &v) && SafeReadValueNumber(v, a_out);
+		};
+		auto readStr = [](RE::Scaleform::GFx::Value& a_obj, const char* a_name, std::string& a_out) -> bool {
+			RE::Scaleform::GFx::Value v;
+			char                    buf[256]{};
+			if (!SafeValueGetMember(&a_obj, a_name, &v) || !SafeReadValueString(v, buf, sizeof(buf))) {
+				return false;
+			}
+			a_out = buf;
+			return true;
+		};
+		auto readBool = [](RE::Scaleform::GFx::Value& a_obj, const char* a_name, bool& a_out) -> bool {
+			RE::Scaleform::GFx::Value v;
+			return SafeValueGetMember(&a_obj, a_name, &v) && SafeReadValueBool(v, a_out);
+		};
+		// `GetDataForEntry(i)`（原版 public）—— U6 的读入口。
+		auto getEntry = [&list](std::uint32_t a_index, RE::Scaleform::GFx::Value& a_out) -> bool {
+			RE::Scaleform::GFx::Value arg(static_cast<std::int32_t>(a_index));
+			RE::Scaleform::GFx::Value ret;
+			if (!SafeValueInvoke(&list, "GetDataForEntry", &ret, &arg, 1) || !ret.IsObject()) {
+				return false;
+			}
+			a_out = ret;
+			return true;
+		};
+		auto readSelectedUID = [&list, &readNum](double& a_out) -> bool {
+			RE::Scaleform::GFx::Value se;
+			if (!SafeValueGetMember(&list, "selectedEntry", &se) || !se.IsObject()) {
+				return false;
+			}
+			return readNum(se, "uID", a_out);
+		};
+
+		// ---- 环境 ----
+		double entries0 = -1.0, mask0 = -1.0;
+		(void)readNum(list, "entryCount", entries0);
+		(void)readNum(list, "filterMask", mask0);
+		out += std::format("｜环境=(entryCount {},mask {})", Research2NumStr(entries0), Research2MaskHex(mask0));
+
+		// ---- U6：引擎条目直读（首条字段 + 选中项）----
+		std::string sampleName;
+		std::string firstNote = "-";
+		bool        readOk = false;
+		if (entries0 >= 1.0) {
+			RE::Scaleform::GFx::Value e0;
+			if (getEntry(0, e0)) {
+				double      uid = -1.0, itype = -1.0;
+				std::string nm;
+				(void)readNum(e0, "uID", uid);
+				(void)readNum(e0, "iType", itype);
+				(void)readStr(e0, "sName", nm);
+				sampleName = nm;
+				int fields = 0;
+				for (const char* f : { "uID", "sName", "iType", "iFaction", "aObjectives", "bActive", "bComplete", "iRemainingTime" }) {
+					if (e0.HasMember(f)) {
+						++fields;
+					}
+				}
+				firstNote = std::format("0x{:08X}:类型{:.0f}:名={}:字段{}",
+					static_cast<std::uint32_t>(static_cast<std::uint64_t>(uid)), itype, ClipLogText(nm, 20), fields);
+				readOk = uid >= 0.0 && !nm.empty();
+			}
+		}
+		std::string selNote = "无";
+		{
+			double suid = -1.0;
+			if (readSelectedUID(suid)) {
+				selNote = std::format("0x{:08X}", static_cast<std::uint32_t>(static_cast<std::uint64_t>(suid)));
+			}
+		}
+		if (entries0 < 1.0) {
+			out += "｜读条目=fail（entryCount 0，无样本）";
+		} else {
+			out += std::format("｜读条目={}（{:.0f} 条,首条 {}｜选中项={}）",
+				readOk ? "ok" : "fail", entries0, firstNote, selNote);
+		}
+
+		// ---- U8a：语言判定（引擎任务名 = 本地化样本）----
+		if (sampleName.empty()) {
+			out += "｜语言=?（无样本）";
+		} else {
+			const std::size_t cjk = CountCjkUtf8(sampleName);
+			if (cjk > 0) {
+				out += std::format("｜语言=zh（中文样本 {} 字）", cjk);
+			} else {
+				out += "｜语言=en（无中文样本）";
+			}
+		}
+
+		// ---- U10：类通道（applicationDomain.getDefinition → 静态方法 → 订阅）----
+		std::string                 classNote = "fail（loaderInfo/applicationDomain 断链）";
+		std::string                 staticNote = "未做";
+		std::string                 subNote = "未做";
+		bool                        classOk = false;
+		RE::Scaleform::GFx::Value   classObj;
+		{
+			RE::Scaleform::GFx::Value loaderInfo, appDomain;
+			if (SafeValueGetMember(&list, "loaderInfo", &loaderInfo) && loaderInfo.IsObject() &&
+				SafeValueGetMember(&loaderInfo, "applicationDomain", &appDomain) && appDomain.IsObject()) {
+				RE::Scaleform::GFx::Value nameVal;
+				if (SafeCreateString(root, &nameVal, kResearch4BsUiDataManager)) {
+					RE::Scaleform::GFx::Value args[1]{ nameVal };
+					RE::Scaleform::GFx::Value def;
+					if (SafeValueInvoke(&appDomain, "getDefinition", &def, args, 1) && def.IsObject()) {
+						classObj = def;
+						classOk = true;
+						classNote = "ok（BSUIDataManager）";
+					} else {
+						classNote = "fail（getDefinition 失败）";
+					}
+				} else {
+					classNote = "fail（类名编码失败）";
+				}
+			}
+		}
+		if (classOk) {
+			RE::Scaleform::GFx::Value evName;
+			if (SafeCreateString(root, &evName, kResearch4QuestDataChannel)) {
+				RE::Scaleform::GFx::Value args[1]{ evName };
+				RE::Scaleform::GFx::Value ret;
+				bool                    has = false;
+				if (SafeValueInvoke(&classObj, "hasEventListener", &ret, args, 1) && SafeReadValueBool(ret, has)) {
+					staticNote = std::format("ok（hasEventListener={}）", has ? "true" : "false");
+				} else {
+					staticNote = "fail（静态方法不可调）";
+				}
+				RE::Scaleform::GFx::Value fn;
+				if (VtableSlotInModule(root, kSlotAsRootCreateFunction) &&
+					SafeCreateFunction(root, &fn, new Research4QuestDataHandler(), nullptr)) {
+					RE::Scaleform::GFx::Value sargs[2]{ evName, fn };
+					RE::Scaleform::GFx::Value sret;
+					subNote = SafeValueInvoke(&classObj, "Subscribe", &sret, sargs, 2) ?
+						"ok" : "fail（Subscribe 调用失败）";
+				} else {
+					subNote = "fail（CreateFunction 失败）";
+				}
+			} else {
+				staticNote = "fail（事件名编码失败）";
+			}
+		}
+		out += std::format("｜类通道={}｜静态={}｜订阅={}", classNote, staticNote, subNote);
+
+		// ---- U5：按键接管（REJECT 按钮；三条路一次试完）----
+		RE::Scaleform::GFx::Value reject;
+		const bool               rejectOk = SafeValueGetMember(&buttonBar, "RejectButton_mc", &reject) && reject.IsObject();
+		bool                     enBefore = false;
+		const bool               enRead = rejectOk && readBool(reject, "Enabled", enBefore);
+		bool                     dataReadable = false;
+		if (rejectOk) {
+			RE::Scaleform::GFx::Value d;
+			dataReadable = reject.HasMember("Data") &&
+				SafeValueGetMember(&reject, "Data", &d) && d.IsObject();
+		}
+		std::string dataNote = rejectOk ?
+			(dataReadable ? "ok（protected 可读）" : "fail（Data 是 protected trait —— 与 U1 同类边界）") :
+			"fail（RejectButton_mc 取不到）";
+		std::string makeNote = "未做";
+		std::string takeNote = "未试";
+		if (rejectOk && enRead && VtableSlotInModule(root, kSlotAsRootCreateFunction)) {
+			RE::Scaleform::GFx::Value ourFn;
+			if (SafeCreateFunction(root, &ourFn, new Research4Handler(), nullptr)) {
+				// ① UserEventData（真实例）：(sUserEvent, funcCallback, sCodeCallback, bEnabled)
+				RE::Scaleform::GFx::Value ud;
+				bool                    ok1 = false;
+				{
+					RE::Scaleform::GFx::Value key, code;
+					if (SafeCreateString(root, &key, kResearch4RejectKey) &&
+						SafeCreateString(root, &code, kResearch4InertCode)) {
+						RE::Scaleform::GFx::Value args[4]{ key, ourFn, code, RE::Scaleform::GFx::Value(true) };
+						ok1 = SafeCreateObjectOfClass(root, &ud, kResearch4UedNames,
+							kResearch4ClassNameCount, args, 4);
+					}
+				}
+				std::string udKey;
+				if (ok1) {
+					ok1 = readStr(ud, "sUserEvent", udKey) && udKey == kResearch4RejectKey;
+				}
+				// ② UserEventManager（真实例）：ctor 参数 = [UserEventData] 数组
+				RE::Scaleform::GFx::Value uem;
+				bool                    ok2 = false;
+				if (ok1) {
+					RE::Scaleform::GFx::Value arr;
+					if (SafeCreateArray(root, &arr) && SafeValuePushBack(&arr, ud)) {
+						RE::Scaleform::GFx::Value args[1]{ arr };
+						ok2 = SafeCreateObjectOfClass(root, &uem, kResearch4UemNames,
+							kResearch4ClassNameCount, args, 1);
+					}
+				}
+				// ③ ButtonBaseData（真实例）：("$REJECT", uem, bEnabled=false, bVisible=false)
+				//   —— bEnabled 给 false：SetButtonData 之后按钮 `Enabled` 由 true 变 false
+				//   即是「实例被接受并被 AS3 侧读到」的副证。
+				RE::Scaleform::GFx::Value data;
+				bool                    ok3 = false;
+				if (ok2) {
+					RE::Scaleform::GFx::Value t;
+					if (SafeCreateString(root, &t, "$REJECT")) {
+						RE::Scaleform::GFx::Value args[4]{ t, uem,
+							RE::Scaleform::GFx::Value(false), RE::Scaleform::GFx::Value(false) };
+						ok3 = SafeCreateObjectOfClass(root, &data, kResearch4BbdNames,
+							kResearch4ClassNameCount, args, 4);
+					}
+				}
+				makeNote = ok3 ? "ok（UserEventData/UserEventManager/ButtonBaseData 三级）" :
+					std::format("fail（断在{}）",
+						ok1 ? (ok2 ? "ButtonBaseData" : "UserEventManager") : "UserEventData");
+				if (ok3) {
+					RE::Scaleform::GFx::Value ret;
+					const bool               setOk = SafeValueInvoke(&reject, "SetButtonData", &ret, &data, 1);
+					bool                     enAfter = enBefore;
+					const bool               enAfterOk = readBool(reject, "Enabled", enAfter);
+					if (setOk && enAfterOk && enBefore && !enAfter) {
+						// ④ 复原 `bEnabled=true` + RefreshButtonData（Data 已是真 ButtonData，
+						//   `this.Data as ButtonData` 的类型转换安全）⇒ Enabled 回 true。
+						RE::Scaleform::GFx::Value bTrue(true);
+						(void)SafeValueSetMember(&data, "bEnabled", bTrue);
+						RE::Scaleform::GFx::Value ret2;
+						const bool               refreshed = SafeValueInvoke(&reject, "RefreshButtonData", &ret2, nullptr, 0);
+						bool                     enNow = false;
+						const bool               enNowOk = readBool(reject, "Enabled", enNow);
+						// ⑤ 程序化触发按键路径（public `HandleUserEvent`；pressed=false ⇒
+						//   走 CallForMatchingData → OnMouseClick → funcCallback）。
+						const int                before = Research4Handler::s_calls.load();
+						RE::Scaleform::GFx::Value key;
+						bool                     trig = false;
+						if (SafeCreateString(root, &key, kResearch4RejectKey)) {
+							RE::Scaleform::GFx::Value args[3]{ key,
+								RE::Scaleform::GFx::Value(false), RE::Scaleform::GFx::Value(false) };
+							RE::Scaleform::GFx::Value tret;
+							trig = SafeValueInvoke(&reject, "HandleUserEvent", &tret, args, 3);
+						}
+						const int calls = Research4Handler::s_calls.load() - before;
+						takeNote = (refreshed && enNowOk && enNow && trig && calls == 1) ?
+							"ok（回调收到 1 次 —— R 键可接管）" :
+							std::format("fail（刷新={} 触发={} 回调={} 次 Enabled={}）",
+								refreshed ? "ok" : "fail", trig ? "ok" : "fail", calls, enNow ? "1" : "0");
+					} else {
+						takeNote = std::format("fail（SetButtonData 未生效：Enabled {}→{} set={}）",
+							enBefore ? "1" : "0", enAfter ? "1" : "0", setOk ? "ok" : "fail");
+					}
+				}
+			} else {
+				makeNote = "fail（CreateFunction 失败）";
+			}
+		} else if (!rejectOk) {
+			makeNote = "fail（RejectButton_mc 取不到）";
+		} else if (!enRead) {
+			makeNote = "fail（Enabled 读不到）";
+		} else {
+			makeNote = "fail（CreateObject 槽不在）";
+		}
+		out += std::format("｜读Data={}｜造对象={}｜接管={}", dataNote, makeNote, takeNote);
+
+		// ---- 注入（真实字段集）+ 选中 + 置灰（bCanShowOnMap 数据驱动）----
+		{
+			RE::Scaleform::GFx::Value m(static_cast<std::uint32_t>(kResearch4NewTabFlag));
+			(void)SafeValueSetMember(&list, "filterMask", m);
+		}
+		auto buildEntries = [&](std::uint32_t a_count) -> bool {
+			RE::Scaleform::GFx::Value arr;
+			if (!(VtableSlotInModule(root, kSlotAsRootCreateArray) && SafeCreateArray(root, &arr))) {
+				return false;
+			}
+			for (std::uint32_t i = 0; i < a_count; ++i) {
+				RE::Scaleform::GFx::Value item;
+				if (!SafeCreateObject(root, &item)) {
+					return false;
+				}
+				const auto uid = static_cast<std::uint32_t>(kResearch4InjectBaseUID + i);
+				(void)SafeValueSetMember(&item, "uID", RE::Scaleform::GFx::Value(uid));
+				(void)SafeValueSetMember(&item, "uInstanceID", RE::Scaleform::GFx::Value(uid));
+				(void)SafeValueSetMember(&item, "iType", RE::Scaleform::GFx::Value(static_cast<std::int32_t>(kResearch4InjectType)));
+				(void)SafeValueSetMember(&item, "iFaction", RE::Scaleform::GFx::Value(static_cast<std::int32_t>(-1)));
+				(void)SafeValueSetMember(&item, "bComplete", RE::Scaleform::GFx::Value(false));
+				(void)SafeValueSetMember(&item, "bFailed", RE::Scaleform::GFx::Value(false));
+				// 原版 `IsMission` = hasOwnProperty("aObjectives")（第 122 轮 P2 首跑的真因）——
+				//   空数组即通过第一道门（`GetChildrenOfEntry` 返回空数组 ⇒ 行照常渲染）。
+				RE::Scaleform::GFx::Value objs;
+				if (VtableSlotInModule(root, kSlotAsRootCreateArray) && SafeCreateArray(root, &objs)) {
+					(void)SafeValueSetMember(&item, "aObjectives", objs);
+				}
+				(void)SafeValueSetMember(&item, "bActive", RE::Scaleform::GFx::Value(false));
+				(void)SafeValueSetMember(&item, "iRemainingTime", RE::Scaleform::GFx::Value(static_cast<std::int32_t>(-1)));
+				RE::Scaleform::GFx::Value nm, desc;
+				if (SafeCreateString(root, &nm, std::format("SAQ-Mig-{}", i).c_str())) {
+					(void)SafeValueSetMember(&item, "sName", nm);
+				}
+				if (SafeCreateString(root, &desc, std::format("SAQ migration probe #{} — description comes from the sDescription field.", i).c_str())) {
+					(void)SafeValueSetMember(&item, "sDescription", desc);
+				}
+				// 条目 0 = 不可导航（SET COURSE 必须置灰）/ 条目 1 = 可导航（必须亮）。
+				(void)SafeValueSetMember(&item, "bCanShowOnMap", RE::Scaleform::GFx::Value(i == 1));
+				if (!SafeValuePushBack(&arr, item)) {
+					return false;
+				}
+			}
+			RE::Scaleform::GFx::Value ret;
+			return SafeValueInvoke(&list, "InitializeEntries", &ret, &arr, 1);
+		};
+		double     entries1 = -1.0;
+		const bool inj = buildEntries(kResearch4InjectCount) && readNum(list, "entryCount", entries1);
+		const bool passInject = inj && entries1 == static_cast<double>(kResearch4InjectCount);
+		if (passInject) {
+			out += std::format("｜注入=ok（entryCount {}→{}）",
+				Research2NumStr(entries0), Research2NumStr(entries1));
+		} else if (!inj) {
+			out += "｜注入=fail（构造条目数组 / 调用 InitializeEntries / 读 entryCount 失败）";
+		} else {
+			out += std::format("｜注入=fail（entryCount {}→{}，期望 {}）",
+				Research2NumStr(entries0), Research2NumStr(entries1), Research2NumStr(kResearch4InjectCount));
+		}
+
+		RE::Scaleform::GFx::Value plotBtn;
+		const bool               plotOk = SafeValueGetMember(&buttonBar, "PlotToLocationButton_mc", &plotBtn) && plotBtn.IsObject();
+		std::string              selOut = "fail（selectedIndex 写入 / selectedEntry 读回失败）";
+		bool                     passSel = false;
+		bool                     enNoNav = true, enNav = false;
+		if (passInject) {
+			auto selectIndex = [&list](std::uint32_t a_idx) -> bool {
+				return SafeValueSetMember(&list, "selectedIndex", RE::Scaleform::GFx::Value(static_cast<std::int32_t>(a_idx)));
+			};
+			double     uid0 = -1.0, uid1 = -1.0;
+			const bool s0 = selectIndex(0) && readSelectedUID(uid0);
+			const bool b0 = plotOk && readBool(plotBtn, "Enabled", enNoNav);
+			const bool s1 = selectIndex(1) && readSelectedUID(uid1);
+			const bool b1 = plotOk && readBool(plotBtn, "Enabled", enNav);
+			passSel = s0 && s1 && uid0 == static_cast<double>(kResearch4InjectBaseUID) &&
+				uid1 == static_cast<double>(kResearch4InjectBaseUID + 1);
+			selOut = passSel ? std::format("ok（0x{:08X}）", static_cast<std::uint32_t>(kResearch4InjectBaseUID + 1)) :
+				std::format("fail（uid0={} uid1={}）",
+					static_cast<std::int64_t>(uid0), static_cast<std::int64_t>(uid1));
+			if (plotOk) {
+				const bool passGrey = b0 && b1 && !enNoNav && enNav;
+				out += std::format("｜选中={}｜置灰={}（不可导航={}，可导航={}）", selOut,
+					passGrey ? "ok" : "fail", enNoNav ? "1" : "0", enNav ? "1" : "0");
+			} else {
+				out += std::format("｜选中={}｜置灰=fail（PlotToLocationButton_mc 取不到）", selOut);
+			}
+		} else {
+			out += std::format("｜选中={}｜置灰=未做", selOut);
+		}
+
+		return out;
+	}
+
+	std::string ResearchGfxInjection4b()
+	{
+		std::string detail;
+		if (!EnsureResolved(detail)) {
+			return "桥没通（" + EscapeForLog(detail, 200) + "）";
+		}
+		auto& bridge = Cached();
+		auto* root = reinterpret_cast<RE::Scaleform::GFx::ASMovieRootBase*>(bridge.asRoot);
+		if (!root) {
+			return "ASMovieRoot 指针为空";
+		}
+
+		std::string out;
+
+		RE::Scaleform::GFx::Value menu;
+		if (!(SafeGetVariable(root, "_root.Menu_mc", &menu) && menu.IsObject())) {
+			return "Menu_mc=fail（路径取不到）";
+		}
+		out += "Menu_mc=ok";
+
+		RE::Scaleform::GFx::Value list;
+		const bool               listOk = SafeValueGetMember(&menu, "MissionsList_mc", &list) && list.IsObject();
+		if (!listOk) {
+			return out + "｜MissionsList_mc=fail";
+		}
+
+		auto readNum = [](RE::Scaleform::GFx::Value& a_obj, const char* a_name, double& a_out) -> bool {
+			RE::Scaleform::GFx::Value v;
+			return SafeValueGetMember(&a_obj, a_name, &v) && SafeReadValueNumber(v, a_out);
+		};
+		auto readStr = [](RE::Scaleform::GFx::Value& a_obj, const char* a_name, std::string& a_out) -> bool {
+			RE::Scaleform::GFx::Value v;
+			char                    buf[256]{};
+			if (!SafeValueGetMember(&a_obj, a_name, &v) || !SafeReadValueString(v, buf, sizeof(buf))) {
+				return false;
+			}
+			a_out = buf;
+			return true;
+		};
+
+		double entries = -1.0, mask = -1.0;
+		(void)readNum(list, "entryCount", entries);
+		(void)readNum(list, "filterMask", mask);
+		out += std::format("｜环境=(entryCount {},mask {})", Research2NumStr(entries), Research2MaskHex(mask));
+
+		// ---- U7：就地刷新（第 0 行的 clip → 改条目 bActive → SetEntryText → 竖条帧名）----
+		RE::Scaleform::GFx::Value clip;
+		bool                     clipOk = false;
+		double                   clips = -1.0;
+		(void)readNum(list, "totalEntryClips", clips);
+		for (std::uint32_t i = 0; i < 16 && clips > 0.0 &&
+			i < static_cast<std::uint32_t>(clips); ++i) {
+			RE::Scaleform::GFx::Value arg(static_cast<std::int32_t>(i));
+			RE::Scaleform::GFx::Value c;
+			if (!SafeValueInvoke(&list, "GetClipByIndex", &c, &arg, 1) || !c.IsObject()) {
+				continue;
+			}
+			double idx = -2.0;
+			if (readNum(c, "itemIndex", idx) && idx == 0.0) {
+				clip = c;
+				clipOk = true;
+				break;
+			}
+		}
+		if (!clipOk) {
+			out += std::format("｜刷新=fail（行未渲染：{} 个 clip 里没有 itemIndex=0）｜文本=未做",
+				Research2NumStr(clips));
+		} else {
+			auto readTrack = [&clip, &readStr](std::string& a_out) -> bool {
+				RE::Scaleform::GFx::Value mv, ind;
+				return SafeValueGetMember(&clip, "MissionVisuals_mc", &mv) && mv.IsObject() &&
+					SafeValueGetMember(&mv, "TrackIndicator_mc", &ind) && ind.IsObject() &&
+					readStr(ind, "currentLabel", a_out);
+			};
+			// `GetDataForEntry(0)` —— 拿回**原版列表里那条条目对象**（注入时构造的那个
+			//   实例；改它的 bActive 再 SetEntryText = 产品形态的「就地刷新」）。
+			auto getEntry = [&list](std::uint32_t a_index, RE::Scaleform::GFx::Value& a_out) -> bool {
+				RE::Scaleform::GFx::Value arg(static_cast<std::int32_t>(a_index));
+				RE::Scaleform::GFx::Value got;
+				if (!SafeValueInvoke(&list, "GetDataForEntry", &got, &arg, 1) || !got.IsObject()) {
+					return false;
+				}
+				a_out = got;
+				return true;
+			};
+			std::string              l0, l1;
+			RE::Scaleform::GFx::Value entry;
+			const bool               haveEntry = getEntry(0, entry);
+			const bool               read0 = readTrack(l0);
+			const bool               wrote = haveEntry &&
+				SafeValueSetMember(&entry, "bActive", RE::Scaleform::GFx::Value(true));
+			RE::Scaleform::GFx::Value ret;
+			const bool               refreshed = wrote && SafeValueInvoke(&clip, "SetEntryText", &ret, &entry, 1);
+			const bool               read1 = refreshed && readTrack(l1);
+			const bool               passRefresh = read0 && read1 && l0 == "Inactive" && l1 == "Active";
+			out += std::format("｜刷新={}（竖条 {}→{}）", passRefresh ? "ok" : "fail",
+				l0.empty() ? "?" : l0, l1.empty() ? "?" : l1);
+
+			// ---- U8b：渲染文本（名字真的显示 = 验收手段）----
+			std::string text;
+			bool        textOk = false;
+			{
+				RE::Scaleform::GFx::Value mv, tf, tf2;
+				if (SafeValueGetMember(&clip, "MissionVisuals_mc", &mv) && mv.IsObject() &&
+					SafeValueGetMember(&mv, "TextField_tf", &tf) && tf.IsObject() &&
+					SafeValueGetMember(&tf, "text_tf", &tf2) && tf2.IsObject()) {
+					textOk = readStr(tf2, "text", text) && !text.empty();
+				}
+			}
+			out += std::format("｜文本={}（{}）", textOk ? "ok" : "fail", ClipLogText(text, 16));
+		}
+
+		// ---- U9：关闭原语（传未知事件名 —— 可调用、返回 false、菜单仍在；不真关）----
+		{
+			RE::Scaleform::GFx::Value evName;
+			bool                     called = false;
+			bool                     retBool = true;
+			if (SafeCreateString(root, &evName, "SAQ_Research")) {
+				RE::Scaleform::GFx::Value args[2]{ evName, RE::Scaleform::GFx::Value(false) };
+				RE::Scaleform::GFx::Value ret;
+				called = SafeValueInvoke(&menu, "ProcessUserEvent", &ret, args, 2);
+				if (called) {
+					(void)SafeReadValueBool(ret, retBool);
+				}
+			}
+			double     after = -1.0;
+			const bool alive = readNum(list, "entryCount", after) && after == entries;
+			const bool pass = called && !retBool && alive;
+			out += std::format("｜关菜单入口={}（返回 {}，菜单仍在={}）",
+				pass ? "ok" : "fail", retBool ? "true" : "false", alive ? "是" : "否");
+		}
+
+		// ---- U10 收口：QuestData 订阅回调计数（本会话没有新推送 ⇒ 0 属正常）----
+		out += std::format("｜订阅回调={} 次", Research4QuestDataHandler::s_calls.load());
+
+		return out;
+	}
 #endif
 }

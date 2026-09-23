@@ -22,7 +22,11 @@
 > 待实机：正常态 43 条防误报 + P2 态正向）** + **功能迁移评估（第十一节 · 第 129 轮 ·
 > 纯离线：迁移面按「归宿」分组（原版自带 ≈ 60%）+ 原版字段契约/接管点全清单 + 8 项清单
 > 逐项落地设计 + 新增未知点 U5~U9 与探针 v4 设计 + 产品形态三选项（推荐 B 双形态自动切换）
-> + 分期计划 P3/P4/P5 与轮次估算 + 风险自检）**。
+> + 分期计划 P3/P4/P5 与轮次估算 + 风险自检）** + **探针 v4 落地（第十二节 · 第 130 轮：
+> `ui.research4` / `ui.research4b` —— 一次问清 U5~U10 + 置灰的数据驱动验证；新发现
+> `CreateObject` 带类名可造真 AS3 实例（换按钮 Data 的钥匙）；拆两段（渲染层需帧推进）+
+> 拿 REJECT 当靶子（零观感影响 + Enabled 副证）；`verify --dev --p2` **782 行 / 0 MISS**
+> + 离线层 4 步 + 正则离线自检；**P2 实验态已部署、待实机**）**。
 
 ## 一、问题定义与成功判据
 
@@ -705,6 +709,90 @@ verify / 离线层改造 ≈ 200~400 行（并删除一批 SWF 专属检查）�
    触发条件写进 `docs/99`；
 5. 若探针 v4 出现红灯：U5 红 ⇒ 交互层退化为「Enter 激活引导 + 其余降级」；U6/U7 红 ⇒ 退化为
    「重建列表 + 恢复滚动/选中」；都不影响 P3 立项，只影响 P4 的实现路径。
+
+## 十二、探针 v4 落地（2026-09-23 · 第 130 轮；`ui.research4` / `ui.research4b`）
+
+**目标**：把第十一节列的 5 个未知点（U5~U9）+ 两项顺带取证（U10 类通道、`bCanShowOnMap`
+⇒ SET COURSE 置灰）在**原版 SWF**（P2 态）上一次问清。判据纪律 = **「有结论」而不是
+「必须全 ok」**（能力边界失败也有对应 fallback，见 11.4-⑥）：三项能力边界（类通道 /
+造对象 / 接管）用 `(ok|fail)` 宽匹配，其余关键段（读条目 / 注入 / 选中 / 置灰 / 刷新 /
+文本 / 关菜单入口）必须 ok。
+
+**产物**：
+
+| 层 | 产物 | 说明 |
+| --- | --- | --- |
+| DLL | `plugin/src/SAQ_UI.{h,cpp}` 的 `ResearchGfxInjection4` / `…4b` | **harness 段内**（发布构建零残留，verify 反向检查覆盖）；各打一行产品日志（红线六） |
+| op | `plugin/src/SAQ_Test.cpp`：`ui.research4` / `ui.research4b` | 复用 `Kind::kUiResearch`（`step.text` = `4` / `4b`），timeout 10 s |
+| 计划 | `tools/test/scenarios/SAQ_TestPlan_p2.txt`：`[case:r130_gfx_migrate]` | 三段断言（4a 首行 + 八段同现；4b 首行 + 三段同现）+ 帧推进窗口 `wait 1200` + 眼睛窗口 30 s；计划头同步更新 |
+| verify | +8 条 DLL 特征串（dev 正向 / 发布反向）+ 6 条 P2 计划形状检查 | 含「CreateObject 类名」「读条目=」「造对象=」「类通道=」「刷新=」等判据标记 |
+| 离线自检 | `tools/test/p2_plan_regex_check.py`（第 130 轮新建、入库） | P2 计划全部 `assert.log` 正则**编译** + 新增两段与**样例产品行匹配**（补 verify 只查存在性、不查正则语义的缺口） |
+
+**判据链**（一次跑完，逐段读回验证）：
+
+| 段 | 动作 | 判据字段 |
+| --- | --- | --- |
+| 4a-R1 | 环境（`entryCount` / `filterMask`）+ `List` / `ButtonBar` 可达 | `Menu_mc=ok` + `环境=(…)` |
+| 4a-R2 | **U6**：`GetDataForEntry(0)` 读首条（uID / iType / sName / 8 个字段存在性）+ `selectedEntry` | `读条目=ok（N 条,首条 0x…:类型…:名…:字段8｜选中项=0x…）` |
+| 4a-R3 | **U8a**：首条名字的 CJK 统计（与 SWF 版 `SaqNameVerdict` 同源） | `语言=zh（中文样本 N 字）/ en / ?（无样本）` |
+| 4a-R4 | **U10**：`loaderInfo.applicationDomain.getDefinition("…BSUIDataManager")` → 静态 `hasEventListener("QuestData")` → `Subscribe("QuestData", C++ 函数)` | `类通道=ok（BSUIDataManager）｜静态=ok（…）｜订阅=ok` |
+| 4a-R5 | **U5**：① 读 `Data`（protected，预期 fail）；② `CreateObject` 带类名造三级真实例（UserEventData → UserEventManager → ButtonBaseData）；③ `SetButtonData` 换到 REJECT 按钮（`Enabled` true→false = 被接受）；④ `RefreshButtonData` 复位；⑤ `HandleUserEvent("R3",false,false)` 程序化触发 | `读Data=…｜造对象=…｜接管=ok（回调收到 1 次 —— R 键可接管）` |
+| 4a-R6 | 列表注入（2 条真实字段集：`aObjectives` 空数组 / `iRemainingTime=-1` / `bActive=false` / **`bCanShowOnMap` 0 与 1**）+ `selectedIndex` 读写 | `注入=ok（entryCount N→2）｜选中=ok（0x…）｜置灰=ok（不可导航=0，可导航=1）` |
+| 4b-R1 | **U7**：`GetClipByIndex(i).itemIndex` ↔ 数据下标 → 改条目 `bActive` → `clip.SetEntryText(条目)` | `刷新=ok（竖条 Inactive→Active）` |
+| 4b-R2 | **U8b**：读 clip 的 `MissionVisuals_mc.TextField_tf.text_tf.text` | `文本=ok（SAQ-Mig-0）` |
+| 4b-R3 | **U9**：`Invoke(Menu_mc,"ProcessUserEvent",["SAQ_Research",false])` + 菜单仍在 | `关菜单入口=ok（返回 false，菜单仍在=是）` |
+| 4b-R4 | U10 收口：订阅回调计数（会话内无新推送 ⇒ 0 正常） | `订阅回调=N 次` |
+
+**本轮新发现（值得记住的 GFx 能力）**：`ASMovieRootBase::CreateObject(Value*, const char*
+className, const Value* args, numArgs)` —— **带类名即造 AS3 类实例**（commonlibsf 的
+0x2E 槽本来就带 `className` 参数，第 117 轮只用了无参形式）。这是 GFx 侧**唯一**能拿到
+「真 `ButtonData` 实例」的路子：`MinimalButton.Data` 是 **protected trait**（读不到 ——
+与 U1 同类边界），没有实例就换不了按钮回调。类名候选 = 全名 / 短名 / `::` 分隔三种写法
+（探针逐个试，命中写法进日志 —— 三种写法本身也是要测的内容）。
+
+**两个设计选择**：
+- **为什么拆两段**：U7 是**渲染层**证据 —— clip 的 `itemIndex` 由
+  `BSScrollingContainer.Update` 在**帧推进**时写，注入与读回之间必须隔一帧
+  （计划里 `wait 1200`）；其余各项都是对象/数据层，同一次调用内完成。
+- **为什么拿 REJECT（R3）当接管靶子**：它平时不可见（`bVisible=false`），探测期间
+  被换 Data 对玩家无观感影响；`Enabled` 初值 = true ⇒ 换成 `bEnabled=false` 后读回
+  false = **「实例被接受并被 AS3 侧读取」的副证**；随后复位 + public 的
+  `HandleUserEvent` 触发 ⇒ 我们的 `funcCallback` 被调用 = R 键可接管的硬证据。
+  副产品：`sCodeCallback` 会被换成惰性名 —— 即使接管成功也不会把「未知 questID」发给引擎。
+
+**副作用（仅本次会话；随 `menu.close` 清理 —— 第 27/50 轮定案）**：注入 2 条
+`SAQ-Mig-0/1`（`filterMask=1<<6`，其它 tab 不可见）；REJECT 按钮的 Data 被换成探针实例；
+`Subscribe("QuestData")` 注册了一个回调（进程内残留、无副作用）。
+
+**离线验证（全绿）**：
+- 构建部署：DLL 开发构建（harness）**1116160 B**（1083392 → +32768）；**P2 实验态**
+  （`Interface/missionmenu.swf` / `_lrg.swf` → `*.p2off`；ini `Harness=1` +
+  `Plan=SAQ_TestPlan_p2.txt` + `AutoLoad=Save1_FDBB7678M54696D6D6568_000034_20260922142854_2_0_4`）；
+- `verify --dev --p2`：**782 行 / 0 MISS / 全部通过**（含本轮 8 条 DLL 特征串 dev 正向
+  + 6 条 P2 计划形状 + `*.p2off` 禁用证据 + `AutoLoad` 一致性）；
+- 离线层 `run-all-tests.ps1` **5 步全过**（第 5 步 = 本轮新建的 P2 计划正则自检；决策单测
+  本轮可执行 —— 第 128 轮的「环境拦截 exe」未复现；快照 16 件一致；tripwire「表内 leak 0」）；
+- 断言正则自检 `tools/test/p2_plan_regex_check.py`：7 条正则编译全过 + 新增两段匹配样例行。
+
+**待实机（下一次 P2 会话：`r120_gfx_poc` + `r125_ui_conflict` + `r130_gfx_migrate`）**：
+
+| 段位 | 字段 | ok 的含义（→ 对 `docs/15` 十一节的影响） |
+| --- | --- | --- |
+| 4a | `读条目=ok` | 引擎条目直读可用 ⇒ **分时注入**（切走我们 tab 时恢复原版列表）与「选中项是不是我们的」判据成立（U6 ✅） |
+| 4a | `语言=zh/en` | 语言判定有通道（引擎任务名 CJK）；`?` = 存档里一条任务都没有（罕见）⇒ 加 ini 兜底 |
+| 4a | `类通道=ok` + `静态=ok（hasEventListener）` | `BSUIDataManager` 可达 ⇒ ① `Subscribe("QuestData")` 替代 watchdog 轮询；② `dispatchCustomEvent` 可用于**委托原版行为**（换按钮 Data 后仍保留真实任务的原版语义） |
+| 4a | `造对象=ok（三级）` | `CreateObject` 带类名可用 ⇒ 换按钮 Data 的**钥匙**拿到（记住日志里的命中类名写法） |
+| 4a | `接管=ok（回调收到 1 次）` | **R 键可接管** ⇒ 保持 SWF 版 UX（一键设定航线）；`fail` ⇒ 走 fallback：`bCanShowOnMap=false`（SET COURSE 置灰）+ 父条目 Enter = 引导（11.4-⑥） |
+| 4a | `注入=ok` / `选中=ok` | 真实字段集条目注入 + 选中判据（P3 的验收手段） |
+| 4a | `置灰=ok（不可导航=0，可导航=1）` | 「不可导航 ⇒ SET COURSE 置灰」是**数据驱动**的（11.4-⑦ 成立，不需要接管按钮） |
+| 4b | `刷新=ok（竖条 Inactive→Active）` | 就地刷新成立 ⇒ 引导态切换**不重建列表**（不跳滚动位置、不丢展开态） |
+| 4b | `文本=ok（SAQ-Mig-0）` | 渲染文本可读 ⇒ 验收手段（也能读描述面板，兼作 U8 收口） |
+| 4b | `关菜单入口=ok` | `ProcessUserEvent` 可调 ⇒ 星图交接（关菜单 + 回游戏）有正门（U9 ✅） |
+| 4b | `订阅回调=N 次` | 类通道订阅生效（会话内无新推送 ⇒ 0 正常；>0 = 引擎推送也收到了） |
+
+**眼睛**：`r130` 用例的 30 秒窗口里，列表应显示 2 条 `SAQ-Mig-0/1`；选中一条时右侧
+描述面板 = `sDescription` 字段（Probe 用 ASCII 文案，避免英文环境缺中文字形）；
+`menu.close` 后重开 = 原版数据（副作用清理）。
 
 ## 附：复现命令（离线证据）
 

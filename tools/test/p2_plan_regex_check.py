@@ -1,0 +1,66 @@
+"""P2 计划 `assert.log` 正则**编译 + 样例匹配**自检（第 130 轮建立）。
+
+为什么需要：断言正则由 DLL 在**解析期**编译（非法正则 ⇒ 该用例判 FAIL，不再退化成
+「日志里没出现」的误导性超时 —— 第 68 轮），但那只在实机会话里才发生；本脚本在
+离线阶段就把「正则合法 + 能匹配预期产品行」验一遍（与 `verify` 里的存在性检查互补：
+verify 只看串在不在，不看它是不是合法正则、能不能匹配）。
+
+用法：python tools/test/p2_plan_regex_check.py
+"""
+import pathlib
+import re
+import sys
+
+ROOT = pathlib.Path(__file__).resolve().parents[2]
+PLAN = ROOT / "tools/test/scenarios/SAQ_TestPlan_p2.txt"
+
+# 探针 v4 两行产品日志的**样例形态**（字段/顺序照 SAQ_UI.cpp 的拼装顺序写死；
+# 数值与文本用实测时不定的占位值，只为验证正则的「顺序 + 段同现」语义）。
+SAMPLES = {
+    "4a": (
+        "界面研究探针4a Menu_mc=ok｜环境=(entryCount 1,mask 0xFFFFFFFF)｜"
+        "读条目=ok（1 条,首条 0x0000006F:类型3:名=你的名字:字段8｜选中项=0x0000006F）｜"
+        "语言=zh（中文样本 4 字）｜类通道=ok（BSUIDataManager）｜静态=ok（hasEventListener=false）｜"
+        "订阅=ok｜读Data=fail（Data 是 protected trait —— 与 U1 同类边界）｜"
+        "造对象=ok（UserEventData/UserEventManager/ButtonBaseData 三级）｜"
+        "接管=ok（回调收到 1 次 —— R 键可接管）｜注入=ok（entryCount 1→2）｜"
+        "选中=ok（0x56780001）｜置灰=ok（不可导航=0，可导航=1）"
+    ),
+    "4b": (
+        "界面研究探针4b Menu_mc=ok｜环境=(entryCount 2,mask 0x00000040)｜"
+        "刷新=ok（竖条 Inactive→Active）｜文本=ok（SAQ-Mig-0）｜"
+        "关菜单入口=ok（返回 false，菜单仍在=是）｜订阅回调=0 次"
+    ),
+}
+
+
+def main() -> int:
+    text = PLAN.read_text(encoding="utf-8", errors="replace")
+    patterns = [
+        line.split("assert.log ", 1)[1].rsplit(" scope=", 1)[0].strip()
+        for line in text.splitlines()
+        if line.startswith("step = assert.log")
+    ]
+    bad = 0
+    checked = 0
+    for p in patterns:
+        try:
+            rx = re.compile(p)
+        except re.error as e:  # noqa: PERF203
+            print(f"非法   {p[:70]}…（{e}）")
+            bad += 1
+            continue
+        for tag, sample in SAMPLES.items():
+            if tag in p:
+                checked += 1
+                if rx.search(sample):
+                    print(f"OK     {tag} 正则编译 + 样例匹配：{p[:60]}…")
+                else:
+                    print(f"MISS   {tag} 正则合法但**匹配不到样例**：{p}")
+                    bad += 1
+    print(f"—— 共 {len(patterns)} 条 assert 正则：编译全过（{checked} 条样例匹配已验）；问题 {bad} 条")
+    return 1 if bad else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

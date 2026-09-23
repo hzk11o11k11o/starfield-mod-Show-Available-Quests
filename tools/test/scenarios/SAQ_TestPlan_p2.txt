@@ -7,18 +7,24 @@
 ;       ⇒ 游戏加载**原版** missionmenu.swf；
 ;    ② 部署 ini（SFSE\Plugins\SAQ_ShowAvailableQuests.ini）：
 ;       [Test] Harness=1（已有）+ Plan=SAQ_TestPlan_p2.txt（指向本文件）；
-;    ③ 开发构建 DLL（含 harness + ui.research3 探针）。
+;    ③ 开发构建 DLL（含 harness + `ui.research3` / `ui.research4` 探针）。
 ;  跑完恢复：SWF 改回 + ini 的 Plan 键改回 SAQ_TestPlan.txt（或删键）。
 ;
 ;  为什么单独一份：原版 SWF 下我们 SWF 的测试入口（ui.* / SAQ_Report / 推送 /
 ;  assert.ui）全不可用 —— 42 条主计划在 P2 环境会大面积 FAIL。本计划只用
-;  **C++ 侧原语**（ping / menu.open / wait / menu.close）+ 探针 op（ui.research3）。
+;  **C++ 侧原语**（ping / menu.open / wait / menu.close）+ 探针 op
+;  （`ui.research3` / `ui.research4` / `ui.research4b`）。
 ;
-;  判读：`界面研究探针3 …` 一行 ——
-;    环境=(numTabs 7,…) / 扩tab=ok（7→8）/ 切3=ok（对照）/ 切7=ok（拦截 1 次 +
-;    哨兵 0x20000000 存活）/ 切0=ok（放行）/ 清理=ok / 注入=ok（entryCount → 3）。
-;  眼睛：菜单 tab 条上出现第 8 个 tab「SAQ-PoC」（前 7 个显示为探针的假数据
-;    `$SAQ-keep0..6` —— 实验设计如此）；列表被替换成 3 条「SAQ-PoC-Item i」
+;  判读（每条用例一行产品日志）：
+;    `界面研究探针3 …`：环境=(numTabs 7,…) / 扩tab=ok（7→8）/ 切3=ok（对照）/
+;      切7=ok（拦截 1 次 + 哨兵 0x20000000 存活）/ 切0=ok（放行）/ 清理=ok /
+;      注入=ok（entryCount → 3）。
+;    `界面研究探针4a …`（第 130 轮 · 功能迁移探针 v4）：读条目 / 语言 / 类通道 /
+;      造对象 / 接管 / 注入 / 选中 / 置灰 —— 判据见 `docs/15` 第十一节（U5~U10）。
+;    `界面研究探针4b …`：刷新（就地刷新竖条）/ 文本（渲染文本）/ 关菜单入口。
+;  眼睛：`r120` 用例 = tab 条上出现第 8 个 tab「SAQ-PoC」（前 7 个显示为探针的
+;    假数据 `$SAQ-keep0..6` —— 实验设计如此）+ 列表 3 条「SAQ-PoC-Item i」；
+;    `r130` 用例 = 列表 2 条 `SAQ-Mig-0/1` + 右侧描述面板（sDescription 字段）。
 ;    （破坏性副作用 —— 随 menu.close 清理，第 27/50 轮定案；菜单重开后 = 原版数据）。
 ; ============================================================================
 
@@ -58,4 +64,39 @@ step = menu.open
 step = wait 3500
 step = assert.log UI 通道不可用 scope=case timeout=8000
 step = assert.nolog 推送放弃 scope=case timeout=1000
+step = menu.close
+
+[case:r130_gfx_migrate]
+desc = 第 130 轮（功能迁移探针 v4）：U5 按键接管 / U6 引擎条目直读 / U7 就地刷新 / U8 语言+渲染文本 / U9 关闭原语 / U10 类通道
+;  判据（`docs/15` 十一节的 U5~U10）：
+;    4a = 对象/数据层：读条目（GetDataForEntry / selectedEntry）/ 语言（引擎任务名 CJK）/
+;         类通道（applicationDomain → BSUIDataManager + hasEventListener 静态调用 +
+;         Subscribe("QuestData")）/ 造对象（CreateObject 带类名 → UserEventData →
+;         UserEventManager → ButtonBaseData 三级真 AS3 实例）/ 接管（SetButtonData 换到
+;         REJECT 按钮 → HandleUserEvent("R3") 程序化触发 → 我们的回调收到）/
+;         注入（2 条真实字段集条目）/ 选中（selectedIndex → selectedEntry 读回）/
+;         置灰（bCanShowOnMap=false ⇒ SET COURSE Enabled=0；=true ⇒ 1）。
+;    4b = 渲染层（与 4a 之间隔一帧）：就地刷新（竖条 Inactive→Active）/ 渲染文本
+;         （clip 的 TextField）/ 关菜单入口（ProcessUserEvent 返回 false 且菜单仍在）。
+;  判据里 `类通道`/`造对象`/`接管` 用 (ok|fail) 宽匹配：这三项是**能力边界测量**
+;  （任一 fail 都有对应的 fallback，见 docs/15 11.4-⑥），必须「有结论」而不是「猜 ok」。
+;  眼睛：列表被替换成 2 条 `SAQ-Mig-0/1`（当前 tab 掩码 = 1<<6）；选中一条 ⇒ 右侧描述
+;    面板显示的就是 `sDescription` 字段（Probe 用的 ASCII 文案，避免英文环境缺中文字形）；
+;    破坏性副作用随 `menu.close` 清理（第 27/50 轮定案；重开后 = 原版数据）。
+;  ★ 探针副作用（仅本次会话）：REJECT 按钮的 Data 被换成探针造的实例（该按钮平时
+;    不可见；「换 Data 是否被接受」本身就是 U5 的判据 —— 菜单关闭随 Movie 销毁还原）。
+step = ping
+step = menu.open
+step = wait 1800
+step = ui.research4
+step = assert.log 界面研究探针4a .*Menu_mc=ok scope=prev timeout=10000
+step = assert.log 界面研究探针4a .*读条目=ok.*语言=.*类通道=(ok|fail).*造对象=(ok|fail).*接管=(ok|fail|未试).*注入=ok.*选中=ok.*置灰=ok scope=case timeout=10000
+;  U7（就地刷新）是渲染层证据：clip 的 itemIndex 由 BSScrollingContainer.Update 在
+;  帧推进时写 ⇒ 注入与读回之间必须隔一帧（1200 ms 留够菜单帧推进）。
+step = wait 1200
+step = ui.research4b
+step = assert.log 界面研究探针4b .*Menu_mc=ok scope=prev timeout=10000
+step = assert.log 界面研究探针4b .*刷新=ok.*文本=ok.*关菜单入口=ok scope=case timeout=10000
+;  眼睛窗口（30 秒）：2 条 SAQ-Mig 条目 + 描述面板（sDescription 字段）。
+step = wait 30000
 step = menu.close

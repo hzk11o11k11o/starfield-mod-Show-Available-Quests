@@ -212,6 +212,37 @@ namespace SAQ
 		//   副作用（tab 假数据 / 列表被替换 / filterMask）随 `menu.close` 清理
 		//   （第 27/50 轮定案）。结果一行汇总（红线六）。
 		std::string ResearchGfxInjection3();
+
+		// ★★★ 第 130 轮（功能迁移探针 v4 · docs/15 十一）：`ui.research4` ——
+		//   把第十一节评估列出的 5 个未知点 (U5~U9) 一次问清（**原版 SWF** 上跑）：
+		//     U6 引擎条目直读：`GetDataForEntry(i)` / `selectedEntry`（public）——
+		//        分时注入（切走我们 tab 时恢复原版列表）与「选中项是不是我们的」判据；
+		//     U8 语言判定 + 渲染文本：语言 = 引擎任务名里的 CJK（注入形态没有 AS3 侧
+		//        任务名可看）；渲染文本 = clip 的 TextField（验收手段）；
+		//     U10 类通道：`loaderInfo.applicationDomain.getDefinition("…BSUIDataManager")`
+		//        + 静态调用 + `Subscribe("QuestData", fn)`（产物形态用它替代 watchdog）；
+		//     U5 按键接管：① `Data` 是原版 **protected**（预期读不到，与 U1 同类边界）；
+		//        ② `CreateObject` 带**类名**造真 AS3 实例（UserEventData /
+		//        UserEventManager / ButtonBaseData）→ `SetButtonData` 换到按钮上 →
+		//        public 的 `MinimalButton.HandleUserEvent("R3",false,false)` 程序化触发
+		//        ⇒ 我们的 C++ 回调被调用 = **R 键可接管**（接管不了也有 fallback：
+		//        父条目 Enter = 引导，见 docs/15 11.4-⑥）；
+		//     另加：`bCanShowOnMap` 字段 ⇒ SET COURSE `Enabled` 的**数据驱动**验证
+		//        （docs/15 11.4-⑦「不可导航 ⇒ 置灰」）。
+		//   数据/对象层一次完成（注入条目 / mask / 按钮 Data 为破坏性副作用，
+		//   随 `menu.close` 清理 —— 第 27/50 轮定案）；结果一行产品日志（红线六）。
+		std::string ResearchGfxInjection4();
+
+		// ★★★ 第 130 轮：`ui.research4b` —— 探针 v4 的第二段（**渲染层**证据）：
+		//     U7 就地刷新：`GetClipByIndex(i).itemIndex` ↔ 数据下标 → 改条目 `bActive`
+		//        → `clip.SetEntryText(条目)` ⇒ 竖条帧名 Inactive→Active（不重建列表）；
+		//     U8b 渲染文本：读回 clip 的 TextField（名字真的显示）；
+		//     U9 关闭原语：public 的 `MissionMenu.ProcessUserEvent("SAQ_Research",false)`
+		//        可调用 + 返回 false + 菜单仍在（**不真关菜单**；真关留到 P4 验证）。
+		//   为什么拆两段：U7 是渲染层证据 —— clip 的 `itemIndex` 由
+		//   `BSScrollingContainer.Update` 在帧推进时写，注入与读回之间必须隔一帧
+		//   （P2 计划在两步之间插 `wait 1200`）。
+		std::string ResearchGfxInjection4b();
 #endif
 	}
 }

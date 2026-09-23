@@ -631,6 +631,27 @@ HARNESS_STRINGS = (
     #   这条特征串钉住「注入条目带 aObjectives」，防「改回只设 iType」再犯
     #   （dev 正向；发布构建一条都不见，本表反向覆盖）。
     ("harness GFx 探针3 · 注入条目 aObjectives 字段（原版 IsMission 判定）", "aObjectives"),
+    # ★★★ 第 130 轮（功能迁移探针 v4 · docs/15 十一）：`ui.research4` / `ui.research4b` ——
+    #   第十一节评估列的 5 个未知点一次问清：
+    #     U5 按键接管：`Data` 是 protected（读不到）⇒ `CreateObject` 带**类名**造真
+    #        AS3 实例（UserEventData / UserEventManager / ButtonBaseData）→
+    #        `SetButtonData` → public 的 `HandleUserEvent("R3")` 程序化触发 ⇒ 回调收到；
+    #     U6 引擎条目直读（`GetDataForEntry` / `selectedEntry`）；
+    #     U7 就地刷新（`GetClipByIndex().itemIndex` ↔ 数据下标 → `SetEntryText` → 竖条帧名）；
+    #     U8 语言判定（引擎任务名 CJK —— 与 SWF 版 SaqNameVerdict 同源）+ 渲染文本；
+    #     U9 关闭原语（public `ProcessUserEvent`，不真关）；U10 类通道
+    #        （applicationDomain → BSUIDataManager 静态调用 + `Subscribe("QuestData")`）。
+    #   实现只在开发构建（SAQ_UI.cpp 的 `#if SAQ_WITH_HARNESS` 段 + SAQ_Test.cpp 的 op 名）
+    #   ⇒ 发布 DLL 必须一条都不见（本表反向检查覆盖）。
+    ("harness GFx 探针4 op 名", "ui.research4"),
+    ("harness GFx 探针4 产品行 a（可被 assert.log 取证）", "界面研究探针4a {}"),
+    ("harness GFx 探针4 产品行 b（可被 assert.log 取证）", "界面研究探针4b {}"),
+    ("harness GFx 探针4 · 引擎条目直读判据标记（读条目=）", "｜读条目="),
+    ("harness GFx 探针4 · 按键接管判据标记（造对象=/接管=）", "｜造对象="),
+    ("harness GFx 探针4 · 类通道判据标记（类通道=）", "｜类通道="),
+    ("harness GFx 探针4 · 就地刷新判据标记（刷新=）", "｜刷新="),
+    ("harness GFx 探针4 · CreateObject 类名（真 AS3 实例 —— U5 的钥匙）",
+     "Shared.Components.ButtonControls.ButtonData.UserEventData"),
 )
 
 
@@ -1870,6 +1891,20 @@ def main() -> int:
                         # ★★★ 第 127 轮（提示时机）：关菜单后的「眼睛」静默窗口。
                         ("P2 眼睛窗口（关菜单后提示静默期）",
                          "step = wait 10000".encode()),
+                        # ★★★ 第 130 轮（功能迁移探针 v4 · docs/15 十一）：`r130_gfx_migrate`
+                        #   两段判据 —— 4a（读条目/语言/类通道/造对象/接管/注入/选中/置灰）
+                        #   + 4b（刷新/文本/关菜单入口）。三项能力边界（类通道/造对象/接管）
+                        #   用 (ok|fail) 宽匹配：必须「有结论」而不是「猜 ok」（见计划注释）。
+                        ("P2 迁移探针用例段头", "[case:r130_gfx_migrate]".encode()),
+                        ("P2 迁移探针 a 步骤", "step = ui.research4".encode()),
+                        ("P2 迁移探针 a 行内汇总断言（八段同现）",
+                         "界面研究探针4a .*读条目=ok.*语言=.*类通道=(ok|fail).*造对象=(ok|fail)"
+                         ".*接管=(ok|fail|未试).*注入=ok.*选中=ok.*置灰=ok".encode()),
+                        ("P2 迁移探针 b 步骤", "step = ui.research4b".encode()),
+                        ("P2 迁移探针 b 行内汇总断言（刷新/文本/关菜单入口 同现）",
+                         "界面研究探针4b .*刷新=ok.*文本=ok.*关菜单入口=ok".encode()),
+                        # 渲染层证据的前提：注入与读回之间隔一帧（wait 1200）。
+                        ("P2 迁移探针 a/b 之间的帧推进窗口", "step = wait 1200".encode()),
                     ):
                         all_ok &= check(f"用例计划 · r120 {label}", p2_text.encode(), needle)
                     # 反向检查：原版 SWF 下我们 SWF 的测试入口（ui.tab / ui.select / ui.key /
@@ -2817,6 +2852,12 @@ def main() -> int:
         ok_rat = "ctda_ops.py" in rat_src and "--self-test" in rat_src
         print(("OK  " if ok_rat else "MISS") + " operator 二期 · 离线测试含折叠内核自检步骤")
         all_ok &= ok_rat
+        # ★★★ 第 130 轮（功能迁移探针 v4 · docs/15 十二）：离线层第 5 步 ——
+        #   P2 计划断言正则自检（正则合法性 + 样例匹配）。它防的是「非法正则 ⇒
+        #   解析期就判 FAIL」（第 68 轮）与「正则合法但语义写错（漏段/顺序错）」。
+        ok_rat5 = "p2_plan_regex_check.py" in rat_src
+        print(("OK  " if ok_rat5 else "MISS") + " 第 130 轮 · 离线测试含 P2 计划正则自检步骤")
+        all_ok &= ok_rat5
         ok_want = all(r[3] in ("0", "1") for r in q_rows) and all(r[3] in ("0", "1") for r in i_rows)
         print(("OK  " if ok_want else "MISS") +
               " operator 二期 · 门槛 want 只含 0/1（进度门槛 + INFO 门槛 = 折叠结果）")
