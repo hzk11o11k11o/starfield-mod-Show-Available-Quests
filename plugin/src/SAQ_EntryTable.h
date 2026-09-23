@@ -4,9 +4,13 @@
 // 「无限任务入口」条目（AGENTS.md 需求 —— 无限生成任务本身不显示，但「接取入口」
 // 作为一条数据显示在列表里，点了就引导到它的位置）。两类：
 //   kind=0（任务板，13 条）：ACTIVATOR `MissionBoardConsole*`，名字「任务板 · <地点>」；
-//     ★★ 第 110 轮 +1：追踪者联盟总部（SFBGS003.esm · medium 档手工条目，见 EXTRA_ENTRIES）；
+//     ★★ 第 110 轮 +1：追踪者联盟总部（SFBGS003.esm · medium 档手工条目，见 EXTRA_ENTRIES）
+//        —— ★★★ 第 150 轮：它追加在**任务板段末尾**、与 12 条基础任务板连成一段
+//        （界面里紧挨其它「任务板 · <地点>」；此前排在表末尾 ⇒ 混进了「（可重复）…」堆）；
 //   kind=1（可重复 NPC，8 条）：贸易管理局商人 / 追踪者联盟探员（第 80 轮），
-//     名字自带「（可重复）」前缀 —— 数据 ref/repeatable_givers.json。
+//     名字自带「（可重复）」前缀 —— 数据 ref/repeatable_givers.json；
+//     ★★★ 第 150 轮：本表**行顺序 = 界面列表顺序**（DLL 按表追加 + 组内稳定排序）
+//       —— 段序固定为「任务板段 → 可重复 NPC 段」（main 有布局硬校验）。
 //
 // 字段说明（★ 第 30 轮起，引导目标是**候选链**：DLL 依次 LookupByID 取第一个命中的）——
 //   refLocal   条目引用的记录号（任务板 ACTIVATOR / NPC 的 ACHR）—— 同时是界面条目的
@@ -66,6 +70,7 @@ namespace SAQ
 		{ 0x0016265fu, 0u, false, 0x00000904u, 0x00205de2u, 0x0025a67au, 0u, "Mission Board - Trident Staryard", "任务板 · 海神叉造船厂" },
 		{ 0x00167872u, 0u, false, 0x00000905u, 0x00001712u, 0x0011c577u, 0u, "Mission Board - Stroud-Eklund Staryards", "任务板 · 斯特劳艾克伦集团造船厂" },
 		{ 0x00197d22u, 0u, false, 0x00000906u, 0x00315942u, 0x0022eef0u, 0u, "Mission Board - The Key", "任务板 · 星钥站" },
+		{ 0xfd0024adu, 1u, false, 0x00000000u, 0xfd00f9ceu, 0xfd000033u, 0u, "Mission Board - Trackers Alliance HQ", "任务板 · 追踪者联盟总部" },
 		{ 0x00214684u, 0u, false, 0x00000910u, 0x000c35bau, 0x0033d022u, 1u, "(Repeatable) Trade Authority - Duncan Lynch", "（可重复）贸易管理局 · 邓肯·林奇" },
 		{ 0x00115442u, 0u, false, 0x0000090cu, 0x0015b130u, 0x0013154cu, 1u, "(Repeatable) Trade Authority - Kolman Lang", "（可重复）贸易管理局 · 科尔曼·朗" },
 		{ 0x000137b2u, 0u, false, 0x0000090bu, 0x0024f4e8u, 0x0024f4e7u, 1u, "(Repeatable) Trade Authority - Zoe Kaminski", "（可重复）贸易管理局 · 卓伊·卡明斯基" },
@@ -74,7 +79,6 @@ namespace SAQ
 		{ 0x001d8bd1u, 0u, false, 0x0000090fu, 0x0024afd2u, 0x0024afd1u, 1u, "(Repeatable) Trackers Alliance Agent - Cydonia", "（可重复）追踪者联盟探员 · 赛多尼亚" },
 		{ 0x001d8bceu, 0u, false, 0x0000090eu, 0x0010cac4u, 0x0010cac5u, 1u, "(Repeatable) Trackers Alliance Agent - Neon", "（可重复）追踪者联盟探员 · 霓虹城" },
 		{ 0x001b20b3u, 0u, false, 0x0000090du, 0x001ebffdu, 0x001ebffbu, 1u, "(Repeatable) Trackers Alliance Agent - New Atlantis", "（可重复）追踪者联盟探员 · 新亚特兰蒂斯城" },
-		{ 0xfd0024adu, 1u, false, 0x00000000u, 0xfd00f9ceu, 0xfd000033u, 0u, "Mission Board - Trackers Alliance HQ", "任务板 · 追踪者联盟总部" },
 	};
 	inline constexpr std::size_t kEntryTableSize = 21;
 }

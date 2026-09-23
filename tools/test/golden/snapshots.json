@@ -23,7 +23,7 @@
     },
     "ref/entry_targets.json": {
       "desc": "任务板入口表（gen_entry_table.py）",
-      "sha256": "0b59a4c5583568f7c6529433dd0e95546af327a908ce08b0c73a10ac1c310e66",
+      "sha256": "c102e26ed32c338c0ac679619e568a03a0346c462149cae9d14ae867b1929185",
       "summary": "条目 21"
     },
     "ref/board_markers.json": {
@@ -73,7 +73,7 @@
     },
     "plugin/src/SAQ_EntryTable.h": {
       "desc": "入口条目表（gen_entry_table.py，DLL 编译进去）",
-      "sha256": "1b6862f433f935361c63434922e7e6e8cc7d4ef89776b9902c4aa74e1b2f4064",
+      "sha256": "04556f1ed450a67afced045f5847b73ac0e34e396d2fb91681b48c3425317fe5",
       "summary": "入口 21"
     },
     "esm/SAQ_ShowAvailableQuests.esm": {

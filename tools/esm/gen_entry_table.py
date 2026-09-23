@@ -165,6 +165,9 @@ ENTRIES = [
 #   local 一律写**文件内 FormID 的低位**（medium = 16 位）；运行期由
 #   `Masters::MakeFormID(kQuestMasters 下标, local)` 拼出（SFBGS003 是 medium 档，
 #   前缀 0xFD | idx<<16 —— 探测见 SAQ_Masters.cpp 的 Tier::Medium）。
+#
+# ★★★ 第 150 轮：这些条目**追加在任务板段末尾**（12 条 ENTRIES 之后、可重复 NPC 段之前）
+#   —— 界面里与其它「任务板 · <地点>」连成一片（本表行顺序 = 列表顺序，见 main 的布局校验）。
 EXTRA_ENTRIES: list[dict] = [
     {
         "master": "SFBGS003.esm",
@@ -255,6 +258,28 @@ def main() -> int:
             print("   -", p)
         return 1
 
+    # ★★★ 第 150 轮（玩家反馈：「追踪者联盟的任务板没有和其他任务板排序在一起」）：
+    #   手工条目（追踪者联盟悬赏信息台）**追加在任务板段末尾** —— 紧接 ENTRIES 的 12 条
+    #   任务板之后、可重复 NPC 段之前。列表顺序 = 本表顺序（DLL 先追加、后按组稳定排序
+    #   ⇒ 组内保持表顺序，见 SAQ.cpp::CollectAvailableQuests 的第 96 轮注释）——
+    #   第 110 轮曾把它追加在**表末尾** ⇒ 界面里落在一串「（可重复）…」入口与可重复
+    #   任务之间，看起来不像任务板（玩家截图：MISSION BOARD - TRACKERS ALLIANCE HQ
+    #   夹在 4 条「TRACKERS ALLIANCE AGENT」与「（可重复）ONE RIOT…」之间）。
+    #   master 下标从任务表产物解析（SFBGS003 = 1，见 master_index_map）。
+    master_idx = master_index_map()
+    for extra in EXTRA_ENTRIES:
+        m = extra["master"]
+        if m not in master_idx:
+            problems.append(f"EXTRA_ENTRIES：{m} 不在 kQuestMasters 里（先把它的任务加进表）")
+            continue
+        if not extra.get("fallback1"):
+            problems.append(f"EXTRA_ENTRIES：{extra['nameZh']} 没有兜底候选（远处将不可导航）")
+        rows.append({
+            **extra,
+            "master": master_idx[m],
+            "refHex": f"0x{extra['refLocal']:08X}",
+        })
+
     # ★ 第 80 轮：「提供无限任务的 NPC」条目（ref/repeatable_givers.json —— 上游已把
     #   「REFR / 常驻性 / 兜底候选 / 官方名」全部核验过，这里只做合并与少量交叉校验）。
     for g in givers:
@@ -279,20 +304,19 @@ def main() -> int:
             "nameZh": g["nameZh"],
         })
 
-    # ★★★ 第 110 轮：手工条目（追踪者联盟悬赏信息台）—— master 下标从任务表产物解析。
-    master_idx = master_index_map()
-    for extra in EXTRA_ENTRIES:
-        m = extra["master"]
-        if m not in master_idx:
-            problems.append(f"EXTRA_ENTRIES：{m} 不在 kQuestMasters 里（先把它的任务加进表）")
-            continue
-        if not extra.get("fallback1"):
-            problems.append(f"EXTRA_ENTRIES：{extra['nameZh']} 没有兜底候选（远处将不可导航）")
-        rows.append({
-            **extra,
-            "master": master_idx[m],
-            "refHex": f"0x{extra['refLocal']:08X}",
-        })
+    # ★★★ 第 150 轮：**布局硬校验** —— 同类入口必须连成一段（任务板段在前、可重复 NPC
+    #   段在后）。第 110 轮的手工条目曾被追加在表末尾（落在 NPC 段之后）⇒ 界面里那块
+    #   任务板混进「（可重复）…」堆里（本轮玩家反馈的直接原因：表顺序 = 列表顺序，
+    #   DLL 先按表追加、再按组稳定排序 ⇒ 组内保持表顺序）。把「顺序即布局」钉在这里：
+    #   以后新增条目插花会直接构建失败，而不是静默错位。
+    seen_npc = False
+    for r in rows:
+        if r["kind"] == KIND_REPEAT_NPC:
+            seen_npc = True
+        elif seen_npc:
+            problems.append(
+                f"入口顺序：{r['nameZh']}（kind={r['kind']}）排在可重复 NPC 段之后 —— "
+                f"同类入口必须相邻（任务板段 → 可重复 NPC 段，见第 150 轮）")
 
     if problems:
         print("!! 入口数据校验失败：")
@@ -323,9 +347,13 @@ def main() -> int:
     lines.append("// 「无限任务入口」条目（AGENTS.md 需求 —— 无限生成任务本身不显示，但「接取入口」")
     lines.append("// 作为一条数据显示在列表里，点了就引导到它的位置）。两类：")
     lines.append("//   kind=0（任务板，13 条）：ACTIVATOR `MissionBoardConsole*`，名字「任务板 · <地点>」；")
-    lines.append("//     ★★ 第 110 轮 +1：追踪者联盟总部（SFBGS003.esm · medium 档手工条目，见 EXTRA_ENTRIES）；")
+    lines.append("//     ★★ 第 110 轮 +1：追踪者联盟总部（SFBGS003.esm · medium 档手工条目，见 EXTRA_ENTRIES）")
+    lines.append("//        —— ★★★ 第 150 轮：它追加在**任务板段末尾**、与 12 条基础任务板连成一段")
+    lines.append("//        （界面里紧挨其它「任务板 · <地点>」；此前排在表末尾 ⇒ 混进了「（可重复）…」堆）；")
     lines.append("//   kind=1（可重复 NPC，8 条）：贸易管理局商人 / 追踪者联盟探员（第 80 轮），")
-    lines.append("//     名字自带「（可重复）」前缀 —— 数据 ref/repeatable_givers.json。")
+    lines.append("//     名字自带「（可重复）」前缀 —— 数据 ref/repeatable_givers.json；")
+    lines.append("//     ★★★ 第 150 轮：本表**行顺序 = 界面列表顺序**（DLL 按表追加 + 组内稳定排序）")
+    lines.append("//       —— 段序固定为「任务板段 → 可重复 NPC 段」（main 有布局硬校验）。")
     lines.append("//")
     lines.append("// 字段说明（★ 第 30 轮起，引导目标是**候选链**：DLL 依次 LookupByID 取第一个命中的）——")
     lines.append("//   refLocal   条目引用的记录号（任务板 ACTIVATOR / NPC 的 ACHR）—— 同时是界面条目的")
