@@ -58,8 +58,8 @@
     },
     "ref/gate_coverage.json": {
       "desc": "门槛覆盖盘点（survey_gate_coverage.py）",
-      "sha256": "f0d22e06b1c7750332539112e702fc53b8e66caa4234e6e4b40cfc28a4b812c5",
-      "summary": "键 6"
+      "sha256": "2dcfe13bf0b6087d1ab92660d5421f5e35148ed0dbe448c8c2f552ac4789e8bb",
+      "summary": "表内 pending 12 / 折叠已覆盖 0 / 管不到 0"
     },
     "plugin/src/SAQ_QuestTable.h": {
       "desc": "静态任务表（gen_quest_table.py，DLL 编译进去）",

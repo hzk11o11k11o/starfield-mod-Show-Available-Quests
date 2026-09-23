@@ -226,6 +226,18 @@
           本脚本检查：生成器两档标记 + 候选池精确计数 1020 + 3 条任务的 world 级兜底
           候选在位（记录号钉死）+ 4 条新用例的段头/探针/传送/只读纪律 + stamp=65
           （反向检查 stamp=64 不残留）。
+  第 128 轮（**operator 二期** · 比较运算符折叠产品化）：
+          第 86 轮解出的运算符语义（type >> 5）此前只产品化了 `==` + OR 位；本轮把
+          `!=` / `>` / `>=` / `<` / `<=` 也用**生成期折叠**收进来（三个门槛函数都返回
+          0/1 布尔 ⇒ 折叠精确，恒真/恒假按组语义丢弃）—— 折叠内核
+          `tools/esm/ctda_ops.py`（真值表 + OR 组边界 + 组装；`--self-test` 逐条钉死），
+          两条数据管线（记录级 analyze_ctda.py / INFO 侧 scan_info_gates.py）都接到它；
+          运行时（DLL）**零改动**。数据面：7 条运算符条件（全在**非表内**任务）被收进
+          门槛，表内零变化（静态表 / 内嵌载荷逐字节不变）；tripwire 报红条件换成
+          「折叠已覆盖仍 pending」与「折叠管不到的形态（flags / cmp）在表内」。
+          本脚本检查：折叠内核在场（五个符号）+ 两条管线接线 + 离线测试含内核自检 +
+          静态表 want 只含 0/1（进度门槛 + INFO 门槛）+ 反向检查（旧「只支持等于」
+          实现/文案不得残留）。
 
 用法：python tools/ui/verify_saq_build.py [--release|--dev]
 """
@@ -724,6 +736,14 @@ def check_esm_test_globs(path: pathlib.Path, label: str, require_zero: bool) -> 
 
 
 def main() -> int:
+    # ★★★ 第 128 轮（判据通道加固）：输出统一 UTF-8 —— 判据行里有 GBK 编不出来的字符
+    #   （如 `⇒`），在**管道 / 重定向**下（stdout 走 cp936）会 UnicodeEncodeError 直接崩，
+    #   整份校验一条结果都打不出来（比单条 MISS 严重得多）。与其它工具同款收口
+    #   （errors=replace 兜底，绝不因为一个字符让判据通道失效）。
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:  # noqa: BLE001
+        pass
     # ★ 第 53 轮（大项 F · 发布就绪）：构建模式 ——
     #   `--release` 强制按**发布构建**校验（package-saq.ps1 用：即使 xmake 配置没切过去，
     #     也会因为「DLL 里还有 harness 字符串」直接失败，挡住「带着测试代码打包」）；
@@ -2184,8 +2204,15 @@ def main() -> int:
                 _ini_deployed = MO2_MOD / "SFSE/Plugins/SAQ_ShowAvailableQuests.ini"
                 if _ini_deployed.exists():
                     _ini_txt = _ini_deployed.read_text(encoding="utf-8", errors="replace")
-                    _m_al = re.search(r"(?mi)^\s*AutoLoad\s*=\s*(.+?)\s*$", _ini_txt)
+                    # ★★★ 第 128 轮修（验出并修正的老缺陷）：取值模式必须**行内** ——
+                    #   旧写法 `^\s*AutoLoad\s*=\s*(.+?)\s*$` 里的 `\s*` 会跨过换行，
+                    #   于是「AutoLoad=（空）+ 下一行以 ; 开头」被解读成值 = ";"，
+                    #   正常玩部署（AutoLoad 空）下永远 MISs（假红，掩盖真问题）。
+                    #   现在：行首/行尾只用空格与制表符，值用 `.*?`（不跨行）。
+                    _m_al = re.search(r"(?mi)^[ \t]*AutoLoad[ \t]*=[ \t]*(.*?)[ \t]*$", _ini_txt)
                     _al = (_m_al.group(1) if _m_al else "").strip()
+                    if _al.startswith(";"):     # 写成注释（示例）⇒ 视为未开启
+                        _al = ""
                     _m_sl = re.search(r"(?mi)^\s*step\s*=\s*save\.load\s+(\S+)", plan_text)
                     _sl = (_m_sl.group(1) if _m_sl else "").strip()
                     if not _al:
@@ -2762,6 +2789,45 @@ def main() -> int:
         gone = "第 6 元恒 0" not in blob     # blob 是 str（table_h.read_text）—— 别加 .encode()
         print(("OK  " if gone else "MISS") + " 静态表 · 旧「INFO 侧第 6 元恒 0」注释已替换(反向检查)")
         all_ok &= gone
+
+        # ★★★ 第 128 轮（operator 二期）：比较运算符折叠 —— 内核 + 接线 + 数据不变量。
+        #   ① 折叠内核在场（tools/esm/ctda_ops.py：真值表 / OR 组边界 / 组装，有 --self-test）；
+        #   ② 两条数据管线都**接线**到内核（记录级 analyze_ctda.py / INFO 侧
+        #      scan_info_gates.py）—— 防「改了折叠但某条管线没跟上」；
+        #   ③ 离线测试一键脚本含内核自检步骤（否则自检形同虚设）；
+        #   ④ 数据不变量：静态表的 want 只可能是 0/1（折叠结果；进度门槛 + INFO 门槛）；
+        #   ⑤ 反向检查：旧「只支持等于」的实现/注释残留（改回旧行为就会红）。
+        fold_path = ROOT / "tools" / "esm" / "ctda_ops.py"
+        fold_src = fold_path.read_text(encoding="utf-8") if fold_path.exists() else ""
+        ok_fold = all(k in fold_src for k in ("fold_operator", "or_group_end",
+                                             "assemble_gates", "WANT", "CONST"))
+        print(("OK  " if ok_fold else "MISS") +
+              " operator 二期 · 折叠内核在场（ctda_ops 真值表 / 组语义 / 组装）")
+        all_ok &= ok_fold
+        for rel, needle in (("analyze_ctda.py", "ctda_ops.assemble_gates"),
+                            ("scan_info_gates.py", "ctda_ops.fold_operator")):
+            p = ROOT / "tools" / "esm" / rel
+            src = p.read_text(encoding="utf-8") if p.exists() else ""
+            ok_wire = needle in src
+            print(("OK  " if ok_wire else "MISS") +
+                  f" operator 二期 · {rel} 已接线（{needle}）")
+            all_ok &= ok_wire
+        rat_path = ROOT / "tools" / "test" / "run-all-tests.ps1"
+        rat_src = rat_path.read_text(encoding="utf-8", errors="replace") if rat_path.exists() else ""
+        ok_rat = "ctda_ops.py" in rat_src and "--self-test" in rat_src
+        print(("OK  " if ok_rat else "MISS") + " operator 二期 · 离线测试含折叠内核自检步骤")
+        all_ok &= ok_rat
+        ok_want = all(r[3] in ("0", "1") for r in q_rows) and all(r[3] in ("0", "1") for r in i_rows)
+        print(("OK  " if ok_want else "MISS") +
+              " operator 二期 · 门槛 want 只含 0/1（进度门槛 + INFO 门槛 = 折叠结果）")
+        all_ok &= ok_want
+        ac_src = (ROOT / "tools" / "esm" / "analyze_ctda.py").read_text(encoding="utf-8")
+        si_src = (ROOT / "tools" / "esm" / "scan_info_gates.py").read_text(encoding="utf-8")
+        ok_rev = ("（其它运算符暂不求值）" not in ac_src
+                  and "运算符/flags 不在门槛子集" not in si_src)
+        print(("OK  " if ok_rev else "MISS") +
+              " operator 二期 · 旧「只支持等于」实现/文案已替换(反向检查)")
+        all_ok &= ok_rev
 
         # ★★★ 第 106 轮（覆盖面全量复盘）：补收的 7 条「无 QTYP 但完整」漏收任务 ——
         #   ① ref/extra_quests.json 的每一条都在表里（按记录号 + itype 对齐）；

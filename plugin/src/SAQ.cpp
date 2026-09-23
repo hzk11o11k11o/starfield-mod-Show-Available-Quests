@@ -589,7 +589,8 @@ namespace SAQ
 				";\r\n"
 				"; ---- 进度门槛过滤（第 35 轮，「游戏进度还不能让玩家接到就不显示」） ----\r\n"
 				"; 判据来自任务记录级条件里「引用别的任务」的 GetQuestRunning / GetQuestCompleted\r\n"
-				"; / GetStageDone（等于比较）—— 目前覆盖 7 条任务（如「迟到者」要「枝节横生」完成）。\r\n"
+				"; / GetStageDone（比较运算符在生成期折叠成期望值，第 128 轮）—— 目前覆盖 7 条任务\r\n"
+				"; （如「迟到者」要「枝节横生」完成）。\r\n"
 				";   1 = 过滤（默认）：进度没到的任务不显示\r\n"
 				";   0 = 不过滤：只把判据结果写进日志（便于对照界面）\r\n"
 				";\r\n"
@@ -1062,8 +1063,9 @@ namespace SAQ
 				// ★ 第 35 轮：进度门槛（需求「游戏进度还不能让玩家接到 ⇒ 不显示」）。
 				//
 				// 判据 = 任务记录级条件（CTDA）里「引用别的任务」的进度检查（只收
-				// GetQuestRunning/GetQuestCompleted/GetStageDone 的等于比较；数据由
-				// tools/esm/analyze_ctda.py 提取，见 SAQ_QuestTable.h 的 kQuestConds）。
+				// GetQuestRunning/GetQuestCompleted/GetStageDone；★ 第 128 轮起比较运算符
+				// 在生成期折叠成 want —— 数据由 tools/esm/analyze_ctda.py 提取，见
+				// SAQ_QuestTable.h 的 kQuestConds）。
 				// 求值见 SAQ_QuestCond.cpp：任何一步求不了 ⇒ kUnknown ⇒ **放行**
 				// （宁可在进度没到的时候多显示一条，也不能因为求值器的问题把真任务藏掉）。
 				if (info.condCount) {

@@ -30,10 +30,13 @@
 ★ 第 35 轮定案：真正拿来做「进度没到不显示」的判据叫 **gate（进度门槛）**，
   比「可有条件」更窄、更安全（--gates 输出 ref/ctda_gates.json）：
     * ★★ 第 87 轮（第 86 轮反汇编实证，见 docs/08 4.3）：type 按位域解析 ——
-      **运算符 = type >> 5 必须为 0（等于）**；flags = type & 0x1F **只允许 OR 位
-      （0x01）**，其余（别名 / GLOB / Pack Data / 交换主客体）一律放行；
-      OR 位条件按**引擎的 OR 组语义**成组处理（build_gates：组内 OR、组间 AND；
-      组里有一条不能当门槛 ⇒ 整组放弃）
+      flags = type & 0x1F **只允许 OR 位（0x01）**，其余（别名 / GLOB / Pack Data /
+      交换主客体）一律放行；OR 位条件按**引擎的 OR 组语义**成组处理（build_gates：
+      组内 OR、组间 AND；组里有一条不能当门槛 ⇒ 整组放弃）；
+    * ★★★ 第 128 轮（**operator 二期**）：运算符（type >> 5）全解 —— `!=` / `>` /
+      `>=` / `<` / `<=` 在 cmp∈{0,1} 下交给 `ctda_ops.fold_operator` 精确折叠
+      （want / 恒真 / 恒假），组级处置见 `build_gates` 与 `tools/esm/ctda_ops.py`
+      头注释（真值表 + 有自检）。折叠不改动运行时（`want` 本来就是生成期字段）。
     * Run On == Subject
     * 函数是 GetQuestRunning / GetQuestCompleted / GetStageDone 之一
     * 比较值 ∈ {0.0, 1.0}
@@ -58,6 +61,9 @@ import struct
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+import ctda_ops  # noqa: E402  （第 128 轮 · operator 二期：运算符折叠内核）
 
 ROOT = Path(__file__).resolve().parents[2]
 REF = ROOT / "ref"
@@ -87,16 +93,18 @@ FORMID_RE = re.compile(r"\[(?:QUST|NPC_|KYWD|GLOB|FACT|CNDF|LCRT|FLST)?:?([0-9A-
 
 
 def cond_to_gate(c: dict, self_formid: int) -> dict | None:
-    """一条 CTDA 能否作为「进度门槛」。不能则返回 None。
+    """一条 CTDA 能否作为「进度门槛」以及它的**折叠结果**。不能则返回 None。
 
     ★★ 第 87 轮：type 按位域解析（第 86 轮反汇编实证，见 docs/08 4.3）——
-      运算符 = type >> 5（必须 == 0，即「等于」）；flags = type & 0x1F：
-      **只允许 OR 位（0x01）**，其余（别名 / GLOB / Pack Data / 交换主客体）一律放行。
+      运算符 = type >> 5、flags = type & 0x1F；flags **只允许 OR 位（0x01）**，
+      其余（别名 / GLOB / Pack Data / 交换主客体）仍一律放行。
+    ★★★ 第 128 轮（operator 二期）：运算符不再限定 `==` —— 交给折叠内核
+      `ctda_ops.fold_operator`（真值表 + 组语义见该文件；`!=` / `>` / `>=` / `<` / `<=`
+      在 cmp∈{0,1} 下都能精确折叠）。返回 dict 的 `fold` ∈
+      `("want", 0|1)` / `("const", True|False)`；常量的组级处置见 `build_gates`。
     """
     t = c.get("op", 0)
     op, flags = t >> 5, t & 0x1F
-    if op != 0:                             # 只支持「等于」（其它运算符暂不求值）
-        return None
     if flags & ~0x01:                       # 只允许 OR 位
         return None
     if c.get("runOn") != 0:                 # Run On 必须是 Subject
@@ -112,10 +120,12 @@ def cond_to_gate(c: dict, self_formid: int) -> dict | None:
         return None
     if (p1 >> 24) != 0:                     # 只支持 base 游戏空间（Starfield.esm）的引用
         return None
+    folded = ctda_ops.fold_operator(op, cmpv)
+    if folded is None:                      # 运算符越界（理论上不出现）
+        return None
     return {
-        "func": GATE_FUNCS[name],
+        "fold": folded,                     # ("want", 0|1) / ("const", True|False)
         "name": name,
-        "want": 1 if cmpv == 1.0 else 0,    # 1 = 「应为真」，0 = 「应为假」
         "quest_master": 0,                  # 目前全部是 Starfield.esm（kQuestMasters[0]）
         "quest_local": p1 & 0xFFFFFF,
         "stage": (c.get("p2", 0) & 0xFFFF) if name == "GetStageDone" else 0,
@@ -124,35 +134,34 @@ def cond_to_gate(c: dict, self_formid: int) -> dict | None:
 
 
 def build_gates(conds: list, self_formid: int) -> list:
-    """把一条任务的**全部条件**转成门槛列表（按引擎的 OR 组语义）。
+    """把一条任务的**全部条件**转成门槛列表（按引擎的 OR 组语义 + 折叠规则）。
 
     ★★ 第 87 轮（引擎算法见 docs/08 4.3）：OR 位标记「**开始一个 OR 组**」——
       组 = 从带 OR 位的那条起，直到**第一条不带 OR 位的条件**（含）或列表末尾；
       组内条件相互 OR、组作为整体 AND；无 OR 位的独立条件各自 AND。
 
-    保守规则：**OR 组里只要有一条不能作为门槛（非进度类 / 自引用 / 含其它 flags），
-      整组放弃**（不倒半组 —— 那样会把 OR 语义算错，宁可少过滤）。
+    ★★★ 第 128 轮：组语义与**常量 / 不可折叠的处置**统一由 `ctda_ops.assemble_gates`
+      给出（一条真相源，有自检）—— 概览：
+        * 独立条件：不可门槛 ⇒ 丢弃（放行）；恒真 ⇒ 丢弃（无约束）；恒假 ⇒ 丢弃（放行）；
+        * OR 组：任一成员不可门槛 / 恒假 ⇒ 整组放弃；任一成员恒真 ⇒ 整组丢弃；
+          全部是 `want` ⇒ 整组保留（顺序与 OR 位不动）。
+      保守底线与旧实现一致：**绝不引入误藏**。
     """
+    raw = [cond_to_gate(c, self_formid) for c in conds]
+    or_bits = [bool(c.get("op", 0) & 0x01) for c in conds]
+    folds = [r["fold"] if r else None for r in raw]
     gates: list = []
-    i, n = 0, len(conds)
-    while i < n:
-        if not (conds[i].get("op", 0) & 0x01):      # 无 OR 位：独立条件
-            g = cond_to_gate(conds[i], self_formid)
-            if g:
-                gates.append(g)
-            i += 1
-            continue
-        # 有 OR 位：本条开始一个 OR 组 —— 找到「第一个无 OR 位的条件」（含）或列表末尾
-        j = i
-        while j < n and (conds[j].get("op", 0) & 0x01):
-            j += 1
-        if j < n:
-            j += 1                                  # 含关闭组的那个条件
-        group = [cond_to_gate(x, self_formid) for x in conds[i:j]]
-        if all(group):
-            gates.extend(group)
-        # else：整组放弃（放行）
-        i = j
+    for idx, want in ctda_ops.assemble_gates(folds, or_bits):
+        r = raw[idx]
+        gates.append({
+            "func": GATE_FUNCS[r["name"]],
+            "name": r["name"],
+            "want": want,                   # 1 = 「应为真」，0 = 「应为假」（折叠结果）
+            "quest_master": r["quest_master"],
+            "quest_local": r["quest_local"],
+            "stage": r["stage"],
+            "or_bit": r["or_bit"],
+        })
     return gates
 
 

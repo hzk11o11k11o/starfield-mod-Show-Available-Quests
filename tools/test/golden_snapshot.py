@@ -146,6 +146,13 @@ def summarize(rel: str, path: pathlib.Path) -> str:
                 hosts = sorted({e.get("host_edid", "?") for e in edges})
                 return (f"任务 {len(obj)} / 边 {len(edges)}"
                         f"（宿主 {'/'.join(hosts) if hosts else '—'}）")
+            if rel.endswith("gate_coverage.json") and isinstance(obj, dict):
+                # ★★★ 第 128 轮（operator 二期）：门槛覆盖盘点 —— 三类计数一眼可判读
+                #   （表内 pending / 折叠已覆盖 / 折叠管不到的形态；标「表内」才是对象）
+                ip = obj.get("infoPending", {})
+                return (f"表内 pending {len(ip.get('inTableRows', []))}"
+                        f" / 折叠已覆盖 {len(ip.get('foldCovered', []))}"
+                        f" / 管不到 {len(ip.get('uncovered', []))}")
             return f"键 {len(obj)}" if isinstance(obj, dict) else f"条目 {len(obj)}"
         if rel.endswith("SaqEmbeddedPayload.inc"):
             # ★★ 第 74 轮续：内嵌载荷 —— 条数 + 第一条 FormID（顺序不变量的第一眼证据）

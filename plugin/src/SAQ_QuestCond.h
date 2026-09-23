@@ -5,7 +5,10 @@
 //
 //  数据（生成物 SAQ_QuestTable.h 里的 kQuestConds[]）：任务的**记录级条件（CTDA）**
 //  中「引用别的任务」的进度检查，只收：
-//      GetQuestRunning / GetQuestCompleted / GetStageDone（等于比较、Run On=Subject）
+//      GetQuestRunning / GetQuestCompleted / GetStageDone（Run On=Subject）
+//  ★★★ 第 128 轮（operator 二期）：比较运算符（`==` / `!=` / `>` / `>=` / `<` / `<=`）
+//  在**生成期**折叠成静态期望值 want ∈ {0,1}（三个函数都返回 0/1 布尔 ⇒ 折叠精确，
+//  恒真/恒假按组语义丢弃）—— 折叠内核 tools/esm/ctda_ops.py，这里运行时**零改动**。
 //  提取规则与「为什么自引用条件不算」见 tools/esm/analyze_ctda.py 头注释。
 //
 //  求值是**保守**的：任何一步失败（目标任务取不到 / 状态读不了 / 引擎函数不可用）

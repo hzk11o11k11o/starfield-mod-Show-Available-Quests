@@ -6,8 +6,9 @@
 
 本工具做三件事（只读探测 + 产出一份原始数据）：
   1. 统计 INFO 规模（总数 / 带 CTDA / 带 VMAD）；
-  2. 提取「引用**别的任务**」的进度类条件（GetQuestRunning/GetStageDone/GetQuestCompleted 的
-     等于比较）—— 这是「接取前置」在对话侧的表达，作为大项 D 的候选门槛；
+  2. 提取「引用**别的任务**」的进度类条件（GetQuestRunning/GetStageDone/GetQuestCompleted；
+     ★★★ 第 128 轮起 = **运算符折叠**后的期望值，`!= / > / >= / < / <=` 都在内 ——
+     折叠内核见 tools/esm/ctda_ops.py）—— 这是「接取前置」在对话侧的表达，作为大项 D 的候选门槛；
   3. 输出 ref/info_gates.json 供后续分析（另附函数索引分布，方便以后扩子集）。
 
 用法：
@@ -26,6 +27,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from esm_probe import DEFAULT_ESM, subrecords  # noqa: E402
+import ctda_ops  # noqa: E402  （第 128 轮 · operator 二期：运算符折叠内核）
 
 ROOT = Path(__file__).resolve().parents[2]
 REF = ROOT / "ref"
@@ -165,8 +167,9 @@ def main() -> int:
     # ★ 第 106 轮（operator 全量产品化）：全量 CTDA 的 operator/flags 盘点 ——
     #   ① op_hist：全部条件按 (运算符, flags) 分布；
     #   ② prog_hist：进度类形态（三函数 + Run On=Subject + cmp∈{0,1}）条件分布；
-    #   ③ pending：**外键进度类、但旧判据不收**（op != 0 —— 带运算符/flags）的清单
-    #     —— 这就是「还能收多少」的答案。本轮只统计，不改提取行为。
+    #   ③ pending：**外键进度类、但不能作门槛**的清单（第 128 轮起 = 折叠后仍不可门槛的：
+    #     flags 非 OR / 常量 / 引用解析不了 / 组内混着自引用或非进度类）
+    #     —— 这就是「还有多少没收」的答案（第 109/128 轮两份盘点都对账过：表内 0 条）。
     op_hist = Counter()
     prog_hist = Counter()
     pending = []
@@ -194,22 +197,44 @@ def main() -> int:
             continue
         n_ctda += 1
 
-        # ★ 第 106 轮（operator 全量产品化）：判据拆两层 ——
+        # ★ 第 106 轮（operator 全量产品化）判据拆两层；★★★ 第 128 轮（operator 二期）
+        #   判定与折叠全部走共享内核 `ctda_ops`（真值表 / 组语义见 tools/esm/ctda_ops.py，
+        #   有 `--self-test`）：
         #   · is_progress = 「进度类形态」（三函数 + Run On=Subject + cmp∈{0,1}），
-        #     **不含 op/flags 要求**：用于对话分类（入口/推进/中性）。
-        #     旧实现要求 op==0 ⇒ 带 OR 位的自引用条件看不见 ⇒ 分类会偏。
-        #   · is_gateable = 「可作为门槛条件」：进度类 + **运算符 == 且 flags 只允许
-        #     OR 位**（与记录级 analyze_ctda.py 的 cond_to_gate 同判据，见 docs/08 4.3）。
+        #     **不含 op/flags 要求**：用于对话分类（入口/推进/中性）；
+        #   · fold_of = 进度类 + flags 只允许 OR + 运算符可折叠 ⇒
+        #     ("want", 0/1) / ("const", True/False)；不可门槛 ⇒ None + 诊断原因。
         def is_progress(c):
             return (c["runOn"] == 0 and c["cmp"] in (0.0, 1.0)
                     and c["func"] in GATE_FUNCS)
 
-        def is_gateable(c):
-            t = c["op"]
-            return (t >> 5) == 0 and (t & ~0x01) == 0 and is_progress(c)
+        def fold_of(c):
+            if not is_progress(c):
+                return None, "非进度类"
+            if (c["op"] & 0x1F) & ~0x01:            # 别名 / GLOB / Pack Data / 交换主客体
+                return None, "flags 不在门槛子集"
+            f = ctda_ops.fold_operator(c["op"] >> 5, c["cmp"])
+            if f is None:
+                return None, "运算符不可折叠"
+            return f, None
 
-        self_want1 = any(is_progress(c) and c["p1"] == quest and c["cmp"] == 1.0 for c in conds)
-        self_want0 = any(is_progress(c) and c["p1"] == quest and c["cmp"] == 0.0 for c in conds)
+        def self_dir(c):
+            """自引用条件的**折叠方向**：1 = 要求「进行中」（推进类）；0 = 要求「未开始」
+            （入口类）；None = 不参与分类（非进度类 / 外键 / 常量）。
+
+            ★ 第 128 轮：方向按**运算符折叠结果**读（不再只看 cmp）—— 例如
+            `GetStageDone(自己, X) != 1` 折叠成 want=0 = 「该 stage 还没完成」= 入口类；
+            旧实现只看 cmp（=1）⇒ 误判成「推进类」而把这类对话整个排除。
+            """
+            if not is_progress(c) or c["p1"] != quest:
+                return None
+            f = ctda_ops.fold_operator(c["op"] >> 5, c["cmp"])
+            if not f or f[0] != ctda_ops.WANT:
+                return None
+            return int(f[1])
+
+        self_want1 = any(self_dir(c) == 1 for c in conds)
+        self_want0 = any(self_dir(c) == 0 for c in conds)
         if self_want1:
             kind = "推进"   # 任务已在某阶段/已完成 ⇒ 进行中的对话
         elif self_want0:
@@ -237,11 +262,18 @@ def main() -> int:
                 prog_hist[(c["op"] >> 5, c["op"] & 0x1F)] += 1
 
         def note_pending(c, reason):
-            """「进度类 + 外键」但**不能作为门槛** ⇒ 记入仍放行清单（监控/文档用）。"""
+            """「进度类 + 外键」但**不能作为门槛** ⇒ 记入仍放行清单（监控/文档用）。
+
+            ★ 第 128 轮：`want` 写**折叠结果**（能折叠时）—— 与门栏数据同源；
+            不可折叠时才退回 cmp 直读（只作展示）。
+            """
             p1 = c["p1"]
             if not (is_progress(c) and p1 not in (0, quest)):
                 return
             rp = resolve_pre(p1)
+            f, _ = fold_of(c)
+            want = (int(f[1]) if f and f[0] == ctda_ops.WANT
+                    else (1 if c["cmp"] == 1.0 else 0))
             pending.append({
                 "info": info_id, "quest": quest,
                 "questEDID": quest_edid.get(quest, ""),
@@ -251,61 +283,61 @@ def main() -> int:
                 "pre": rp[1] if rp else (p1 & 0xFFFFFF),
                 "preMaster": rp[0] if rp else "",
                 "preEDID": rp[2] if rp else "",
-                "want": 1 if c["cmp"] == 1.0 else 0,
+                "want": want,
                 "stage": (c["p2"] & 0xFFFF) if c["func"] == 0x003B else 0,
                 "resolved": bool(rp),
             })
 
-        # ★ 第 106 轮：按 **OR 组语义**提取「外键进度类」条件（与记录级 build_gates 同款）——
-        #   组 = 从带 OR 位的条件起，到**第一条不带 OR 位的条件（含）**或列表末尾；
-        #   组里只要有一条「不能作为门槛」（非进度类 / 自引用 / 含其它 flags /
-        #   引用解析不了）⇒ **整组放弃**（不倒半组 —— 那样会把 OR 语义算错）。
+        # ★★★ 第 128 轮（operator 二期）：提取 = 折叠内核组装（与记录级
+        #   analyze_ctda.py::build_gates **同一套**组语义与常量处置）：
+        #     · 独立条件：want ⇒ 收；不可门槛 / 常量 ⇒ 不收；
+        #     · OR 组：任一成员不可门槛 / 恒假 ⇒ 整组放弃；任一成员恒真 ⇒ 整组丢弃
+        #       （`A OR TRUE = TRUE` ⇒ 无约束）；全部 want ⇒ 整组收（orBit 原样保留）。
+        #   自引用 / 无引用（p1 ∈ {0, quest}）与「前置解析不了」在这里排除。
+        or_bits = [bool(c["op"] & 0x01) for c in conds]
+        folds: list = []
+        for c in conds:
+            f, why = fold_of(c)
+            if f is not None and c["p1"] in (0, quest):
+                f, why = None, "自引用"
+            if f is not None and not resolve_pre(c["p1"]):
+                f, why = None, "引用解析不了"
+            folds.append((f, why))
+        keep = ctda_ops.assemble_gates([f for f, _ in folds], or_bits)
         others = []
-        i, ncond = 0, len(conds)
-        while i < ncond:
-            c = conds[i]
-            if not (c["op"] & 0x01):
-                if is_gateable(c) and c["p1"] not in (0, quest):
-                    rp = resolve_pre(c["p1"])
-                    if rp:
-                        others.append((c, *rp))
-                    else:
-                        note_pending(c, "引用解析不了")
-                elif is_progress(c):
-                    note_pending(c, "运算符/flags 不在门槛子集")
-                i += 1
-                continue
-            j = i
-            while j < ncond and (conds[j]["op"] & 0x01):
-                j += 1
-            if j < ncond:
-                j += 1   # 含关闭组的那个条件
-            group = conds[i:j]
-            tmp = []
-            ok = True
-            for gc in group:
-                if not is_gateable(gc):
-                    ok = False
-                    break
-                if gc["p1"] in (0, quest):
-                    ok = False
-                    break
-                rp = resolve_pre(gc["p1"])
-                if not rp:
-                    ok = False
-                    break
-                tmp.append((gc, *rp))
-            if ok and tmp:
-                others.extend(tmp)
-            else:
+        for idx, want in keep:
+            c = conds[idx]
+            others.append((c, *resolve_pre(c["p1"]), want))
+
+        # 诊断（pending）：未产出门槛的「外键进度类」条件逐条留痕 ——
+        #   组级阻断标「OR 组放弃 / OR 组恒真（丢弃）」，独立条件标具体原因。
+        kept_idx = {idx for idx, _ in keep}
+        for start, end in ctda_ops.group_spans(or_bits):
+            if end - start > 1:
+                if all(k in kept_idx for k in range(start, end)):
+                    continue
+                hard = False
+                const_true = False
+                for k in range(start, end):
+                    f = folds[k][0]
+                    if f is None or (f[0] == ctda_ops.CONST and not f[1]):
+                        hard = True
+                    elif f[0] == ctda_ops.CONST:
+                        const_true = True
+                reason = "OR 组放弃" if hard else ("OR 组恒真（丢弃）" if const_true else "OR 组放弃")
                 n_drop_group += 1
-                for gc in group:
-                    note_pending(gc, "OR 组放弃")
-            i = j
+                for gc in conds[start:end]:
+                    note_pending(gc, reason)
+                continue
+            f, why = folds[start]
+            if f is None:
+                note_pending(conds[start], why)
+            elif f[0] == ctda_ops.CONST:
+                note_pending(conds[start], "常量折叠（无约束）")
 
         if others:
             kind_hist[kind] += 1
-            for (c, pre_master, pre_local, pre_edid) in others:
+            for (c, pre_master, pre_local, pre_edid, want) in others:
                 g = {
                     "info": info_id,
                     "quest": quest,
@@ -315,7 +347,8 @@ def main() -> int:
                     "pre": pre_local,
                     "preMaster": pre_master,
                     "preEDID": pre_edid,
-                    "want": 1 if c["cmp"] == 1.0 else 0,
+                    # ★ 第 128 轮：want = **折叠结果**（!= / >= 等不再直读 cmp）
+                    "want": int(want),
                     "stage": (c["p2"] & 0xFFFF) if c["func"] == 0x003B else 0,
                     # ★ 第 106 轮：OR 位（组语义与记录级一致，运行时见 SAQ_QuestCond.cpp）
                     "orBit": 1 if (c["op"] & 0x01) else 0,
@@ -330,10 +363,10 @@ def main() -> int:
             "others": [{"func": GATE_FUNCS[c["func"]], "pre": pre_local,
                         "preMaster": pre_master,
                         "preEDID": pre_edid,
-                        "want": 1 if c["cmp"] == 1.0 else 0,
+                        "want": int(want),
                         "orBit": 1 if (c["op"] & 0x01) else 0,
                         "stage": (c["p2"] & 0xFFFF) if c["func"] == 0x003B else 0}
-                       for (c, pre_master, pre_local, pre_edid) in others],
+                       for (c, pre_master, pre_local, pre_edid, want) in others],
         })
 
     print(f"├─ 带 CTDA 的 INFO：{n_ctda}")
@@ -350,8 +383,8 @@ def main() -> int:
     print(f"进度类形态（三函数 + Subject + cmp∈{{0,1}}）{sum(prog_hist.values())} 条：")
     for (op, fl), n in sorted(prog_hist.items()):
         print(f"  {OPS.get(op, f'op{op}'):<2} flags=0x{fl:02X}: {n}")
-    print(f"OR 组放弃 {n_drop_group} 组（组内有不可门槛/自引用/解析不了的条件）")
-    print(f"外键进度类、但仍放行（不可门槛）{len(pending)} 条：")
+    print(f"OR 组未产出门槛 {n_drop_group} 组（组内有不可门槛 / 常量 / 自引用 / 解析不了的条件）")
+    print(f"外键进度类、但仍不可门槛（含常量）{len(pending)} 条：")
     for g in pending[:80]:
         extra = f" stage {g['stage']}" if g["func"] == "GetStageDone" else ""
         pre = (f"{g['preEDID']}(0x{g['pre']:06X})" if g["resolved"]

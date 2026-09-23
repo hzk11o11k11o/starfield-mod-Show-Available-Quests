@@ -443,8 +443,11 @@ def load_gates(path: Path) -> dict[int, list[dict]]:
     """进度门槛表（tools/esm/analyze_ctda.py 生成；没有 ⇒ 不做条件过滤）。
 
     ★ 第 35 轮：「游戏进度还不能让玩家接到 ⇒ 不显示」的离线判据。
-    只有「引用别的任务」的 GetQuestRunning/GetQuestCompleted/GetStageDone（等于比较）
-    才算门槛（自引用是引擎启动守卫，不算 —— 见 analyze_ctda.py 头注释）。
+    只有「引用别的任务」的 GetQuestRunning/GetQuestCompleted/GetStageDone 才算门槛
+    （自引用是引擎启动守卫，不算 —— 见 analyze_ctda.py 头注释）。
+    ★★★ 第 128 轮（operator 二期）：比较运算符（`==` / `!=` / `>` / `>=` / `<` / `<=`）
+    在生成期就被折叠成静态期望值 `want ∈ {0,1}`（恒真/恒假按组语义丢弃 ——
+    折叠内核 tools/esm/ctda_ops.py）⇒ 这里的 `want` 已经是折叠结果。
     """
     if not path.exists():
         print(f"（没有 {path} —— 进度门槛为空，先跑 tools/esm/analyze_ctda.py）")
@@ -1206,7 +1209,9 @@ def main() -> int:
     lines.append("")
     lines.append("\t// 进度门槛（第 35 轮，「游戏进度还不能让玩家接到 ⇒ 不显示」）：")
     lines.append("\t//   任务记录级条件（CTDA）里「引用别的任务」的进度检查，")
-    lines.append("\t//   只收 GetQuestRunning / GetQuestCompleted / GetStageDone（等于比较、Run On=Subject）。")
+    lines.append("\t//   只收 GetQuestRunning / GetQuestCompleted / GetStageDone（Run On=Subject；")
+    lines.append("\t//   ★★★ 第 128 轮 operator 二期：比较运算符 `==`/`!=`/`>`/`>=`/`<`/`<=` 在生成期")
+    lines.append("\t//   折叠成 want（tools/esm/ctda_ops.py —— 三函数都返回 0/1 布尔，折叠是精确的）。")
     lines.append("\t//   自引用条件（GetQuestRunning(自己)==0 之类）是引擎启动流程的防重入守卫，")
     lines.append("\t//   **不算门槛**（第 11 轮教训：RAD05 引擎提前 started、条件为假但玩家仍能接到）。")
     lines.append("\t//   数据链：xEdit dump → tools/esm/analyze_ctda.py（ctda_gates.json）→ 本表。")
