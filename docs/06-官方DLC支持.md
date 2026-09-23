@@ -272,7 +272,7 @@ GetQuestCompleted(自己)` 这种自引用按既有约定**不算门槛**（`doc
 `ref/*.json` 的约定是**文件内 FormID**（带该文件自己的 master 前缀，DLC 即 `0x01xxxxxx`），
 与 `quest_chain.json` / INFO 门槛一致；记录号只用在 `host_local` 一侧。
 
-**harness 用例（已写好，待实机）**：`[case:r98_dlc_chain]`（A：空进度 ⇒ 六条后续里
+**harness 用例（已写好 ⇒ 第 100 轮 29/29 实测收口）**：`[case:r98_dlc_chain]`（A：空进度 ⇒ 六条后续里
 **任一**进「链式没到」名单）+ `[case:r98_dlc_chain_pass]`（B：`quest.start/stage` MQ01@10000
 ⇒「虚妄的得诺者」不再被链式藏）—— 设计说明见 `docs/09` 十四·补二十四；跑完即为
 「DLC 收口」实机验收（随后 0.1.10 打包）。
