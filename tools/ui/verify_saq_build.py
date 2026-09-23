@@ -605,6 +605,15 @@ HARNESS_STRINGS = (
     ("harness GFx 探针3 产品行（可被 assert.log 取证）", "界面研究探针3 {}"),
     ("harness GFx 探针3 · 扩展 tab 判据标记（扩tab=）", "｜扩tab="),
     ("harness GFx 探针3 · 列表注入判据标记（注入=）", "｜注入="),
+    # ★★★ 第 121 轮实机判读的修复（2026-09-23 15:15 P2 首跑 `注入=fail（entryCount 1→0）`）：
+    #   真因 = 注入条目初版只设了 uID/sName/iType/iFaction/bComplete/bFailed，**没带
+    #   `aObjectives`** —— 原版 `FilterRootEntries` 的第一道门 `IsRootEntry` =
+    #   `MissionsListEntry.IsMission(param1)` = `param1.hasOwnProperty("aObjectives")`
+    #   （原版没有我们 SWF 的 `bSaqAvailable` 分支）⇒ 条目收进 rawEntries 但
+    #   entryList 一条不留 ⇒ entryCount 0。修复 = 每条注入条目补空 aObjectives 数组。
+    #   这条特征串钉住「注入条目带 aObjectives」，防「改回只设 iType」再犯
+    #   （dev 正向；发布构建一条都不见，本表反向覆盖）。
+    ("harness GFx 探针3 · 注入条目 aObjectives 字段（原版 IsMission 判定）", "aObjectives"),
 )
 
 

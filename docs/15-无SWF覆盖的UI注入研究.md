@@ -10,7 +10,9 @@
 > （第九·补二节）** + **探针 v2 实测判读（第九·补三节：五段全 ok = 拦截 + 哨兵写 + U2
 > 补测全成立 ⇒ 绕过路径实机确认，下一步 P2 = 原版 SWF 完整 PoC）** + **P2 落地
 > （第九·补四节：`ui.research3` = 扩 tab 7→8 / 切 7 拦截哨兵 / `InitializeEntries`
-> 列表注入；`build-saq.ps1 -P2` 部署开关 + verify `--p2`；待实机判读）**。
+> 列表注入；`build-saq.ps1 -P2` 部署开关 + verify `--p2`）** + **P2 首跑实测判读与修复
+> （第九·补五节：五段 ok / 注入段 fail —— 真因 = 注入条目缺 `aObjectives`（原版
+> `IsMission` = `hasOwnProperty("aObjectives")` 判定），已修 + verify 加防回归串，待复跑）**。
 
 ## 一、问题定义与成功判据
 
@@ -327,6 +329,45 @@ SWF 禁用）⇒ 判读 `界面研究探针3 …` 一行（六段同现 = ok）+
 出现第 8 个 tab「SAQ-PoC」、列表被替换成 3 条「SAQ-PoC-Item i」（破坏性副作用，
 `menu.close` 收尾）。六段全 ok ⇒ 「无 SWF 覆盖」目标形态成立（**P2 通过**），
 再评估功能迁移（第七节）与产品形态（建议「兼容模式」，默认仍走 SWF）。
+
+### 九·补五、P2 首跑实测判读与修复（2026-09-23 · 第 122 轮）
+**五段 ok / 注入段 fail（真因已离线取证并修复，待复跑）**
+
+会话 15:15（`Plan=SAQ_TestPlan_p2.txt`、SWF 已禁用、开发 DLL 1078784 B / `stamp=65`）——
+用例 `r120_gfx_poc` FAIL（一条断言 = 六段同现正则）；实测行：
+
+```
+界面研究探针3 Menu_mc=ok｜环境=(numTabs 7,entryCount 1,mask 0xFFFFFFFF)｜扩tab=ok（7→8）
+｜切3=ok（mask 0xFFFFFFFF→0x00000008）｜切7=ok（拦截 1 次,mask→0x20000000）
+｜切0=ok（mask→0xFFFFFFFF）｜回调=3 次（末次 idx=0）｜清理=ok｜注入=fail（entryCount 1→0，期望 3）
+```
+
+| 段 | 实测 | 判读 |
+| --- | --- | --- |
+| 环境 | `numTabs 7` | ✅ **原版 SWF 生效**（P2 部署正确；我们的 SWF 是 8） |
+| 扩tab（7→8） | ok | ✅ `SetTabsData` 在原版 `BSTabbedSelection` 上生效 |
+| 切3（对照） | ok | ✅ 原版 `onFilterChanged` 正常执行（读自己的 `FilterInfoA[3]`） |
+| 切7（拦截 + 哨兵） | ok（拦截 1 次，`mask→0x20000000`） | ✅ **拦截 + 写双成立**（原版直接切 idx 7 会越界 TypeError —— 第 8 个 tab 必须拦截的硬证据，与 P1.5 一致） |
+| 切0（放行） | ok | ✅ 不越权 |
+| 清理 | ok | ✅ `removeEventListener` |
+| **注入** | **fail（entryCount 1→0）** | ❌ 真因见下（已修） |
+
+**注入失败真因（离线取证）**：原版 `MissionsList.FilterRootEntries`
+（`_tmp_ffdec_base/scripts/MissionsList.as:157`）的第一道门是
+`IsRootEntry(param1) = MissionsListEntry.IsMission(param1) || param1.bIsDivider === true`，
+而 `IsMission`（`MissionsListEntry.as:42`）= **`param1.hasOwnProperty("aObjectives")`** ——
+初版注入条目只设了 `uID/sName/iType/iFaction/bComplete/bFailed`，**没带 `aObjectives`**
+⇒ 3 条全部被过滤（`rawEntries` 收下、`entryList` 一条不留 ⇒ entryCount 0；起点 1 =
+原版菜单里那条真任务被这次注入整体替换掉）。我们 SWF 版的产品条目**本来就带**该字段
+（靠自加的 `bSaqAvailable` 分支放行）；原版没有该分支 ⇒ **运行时注入必须在字段上
+模拟 mission 条目**。第二道门 `EntryFilterCompare_Impl`（`MissionsList.as:202`，
+`(filterMask & 1 << iType) != 0`）本来就满足（iType=6 + mask=1<<6）。
+
+**修复（第 122 轮）**：每条注入条目补 `aObjectives`（空数组 ⇒ `GetChildrenOfEntry`
+返回空数组、行照常渲染、展开无子项）+ 渲染路径防御字段 `bActive=false` /
+`iRemainingTime=-1`（不设会走 `GlobalFunc.GetQuestTimeRemainingString(undefined)`；
+iType=6 的图标标签 = `default "None"`，帧存在、安全）；verify 新增特征串
+`aObjectives`（dev 正向 / 发布反向）防「改回只设 iType」再犯。**已重建部署（P2 态），待复跑**。
 
 ## 附：复现命令（离线证据）
 

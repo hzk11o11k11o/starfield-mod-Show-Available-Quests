@@ -2424,9 +2424,16 @@ namespace SAQ::UI
 		}
 
 		// ---- R9：列表数据注入（构造条目数组 → InitializeEntries → entryCount 读回）----
-		//   条目字段 = 原版 QuestData 的最小集（uID / sName / iType / iFaction /
-		//   bComplete / bFailed）；iType=6 + mask=1<<6 ⇒ 通过列表过滤（产品形态
-		//   注入列表时走的正是这条路）。
+		//   条目字段 = 原版 QuestData 的最小集 + **过原版两道门的必需字段**：
+		//   ① `IsRootEntry` = `MissionsListEntry.IsMission(param1)`
+		//      = `param1.hasOwnProperty("aObjectives")`（原版 FilterRootEntries 的第一道
+		//      门 —— 缺它整批被过滤：第 121 轮 P2 首跑实测 `注入=fail（entryCount 1→0）`，
+		//      真因就是初版注入条目没带 aObjectives；我们 SWF 版的产品条目本来就带，
+		//      靠 `bSaqAvailable` 分支放行，原版没有该分支 ⇒ 注入形态必须在字段上模拟
+		//      mission 条目）；
+		//   ② `EntryFilterCompare_Impl` = `(filterMask & 1 << iType) != 0`
+		//      ⇒ iType=6 + mask=1<<6 通过（R8 已设 mask）。
+		//   其余为渲染路径的防御字段（bActive / iRemainingTime —— 见 buildEntries 内注释）。
 		auto buildEntries = [&](std::uint32_t a_count) -> bool {
 			RE::Scaleform::GFx::Value arr;
 			if (!(VtableSlotInModule(root, kSlotAsRootCreateArray) && SafeCreateArray(root, &arr))) {
@@ -2448,6 +2455,25 @@ namespace SAQ::UI
 				RE::Scaleform::GFx::Value bFalse(false);
 				(void)SafeValueSetMember(&item, "bComplete", bFalse);
 				(void)SafeValueSetMember(&item, "bFailed", bFalse);
+				// ★★★ 第 121 轮实机判读的修复（P2 首跑 `注入=fail（entryCount 1→0）`）：
+				//   原版 `FilterRootEntries` 的第一道门 = `IsRootEntry` =
+				//   `MissionsListEntry.IsMission(param1)` = `param1.hasOwnProperty("aObjectives")`
+				//   —— 没带 aObjectives 的条目会被整批丢掉（rawEntries 收下了，entryList 里
+				//   一条都不留 ⇒ entryCount 0）。原版没有我们 SWF 的 `bSaqAvailable` 分支，
+				//   所以运行时注入必须把条目做成「像原版 mission 条目」：空 aObjectives 数组
+				//   即可（`GetChildrenOfEntry` 返回空数组 ⇒ 行照常渲染、展开无子项）。
+				RE::Scaleform::GFx::Value objs;
+				if (VtableSlotInModule(root, kSlotAsRootCreateArray) && SafeCreateArray(root, &objs)) {
+					(void)SafeValueSetMember(&item, "aObjectives", objs);
+				}
+				// 渲染路径防御：`SetMissionTracked` 读 bActive（不设走 Inactive 分支，
+				//   显式给 false 更可控）；`UpdateTimeRemainingText(iRemainingTime, …)`
+				//   在 `iRemainingTime < 0` 时隐藏时间标签 —— 不设会走
+				//   `GetQuestTimeRemainingString(undefined)` 那条渲染路径。
+				RE::Scaleform::GFx::Value fActive(false);
+				(void)SafeValueSetMember(&item, "bActive", fActive);
+				RE::Scaleform::GFx::Value remain(static_cast<std::int32_t>(-1));
+				(void)SafeValueSetMember(&item, "iRemainingTime", remain);
 				RE::Scaleform::GFx::Value name;
 				if (SafeCreateString(root, &name, std::format("SAQ-PoC-Item {}", i).c_str())) {
 					(void)SafeValueSetMember(&item, "sName", name);
