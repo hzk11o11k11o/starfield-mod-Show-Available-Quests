@@ -12,3 +12,22 @@
 1，很多任务在游戏代码层面是“可接”的，但实际上游戏会用额外方式防止你接到，比如NPC所在场景的入口封闭，你与相关势力关系还不够导致他们会攻击你之类，这种情况本MOD仍会显示，但“可接”这个探测可能不会很准确
 2，这个MOD更多的像是一个“内置攻略”MOD，可以帮助你知道还有哪些任务未完成，实际上我个人建议还是按照正常流程玩，自己去发现，这个MOD参考意义更大
 3，这是一个非常复杂的mod，任务之间的条件太多，关联关系复杂，仅靠我一人之力能达到的效果有限，因此这个mod可能永远没有“完美”形态
+
+
+============================================================
+English
+============================================================
+A mod that detects which quests you haven't finished yet, and shows the quests you can currently pick up based on your progress.
+
+Supports showing faction quests, side quests, activities and other quest types.
+Supports showing every mission board (the pickup point for radiant quests), as well as NPCs that keep handing out repeatable jobs - these NPC entries are tagged "(Repeatable)" in front of the name.
+"Repeatable" quests (quests you can take again after finishing them once, e.g. the repeatable side quests in each city, or the contracts at the DLC anchorpoint star stations) also carry the "(Repeatable)" tag, and they will NOT disappear from the list after you finish them once; the first line of the description tells you how to take them again (who to find / where to go). For the random space-encounter kind (ones you can't actually go and accept), the description explains how they trigger instead.
+Supports quest navigation: the nav marker (blue dot) and the scanner path line both work normally. Some quests cannot be navigated (for example, many quests started by listening to a broadcast, or by chatting with random NPCs); these entries are tagged "(Not navigable)" in front of the name, and the description gives a hint as well.
+Quests you cannot accept yet at your current progress, quests already accepted, and quests already completed are not shown in the list (except "repeatable" quests - see the entry above).
+Supports Shattered Space, Earth Fleet (including its prerequisite update "Free Lanes"), and the Trackers Alliance (free official update).
+
+
+Notes: (must read)
+1. Many quests are "available" at the code level, but the game still stops you from accepting them in other ways - for example, the entrance to the scene the NPC is in is sealed, or your standing with the related faction is not high enough so they attack you on sight. In those cases this mod still shows them, so the "available" detection may not be perfectly accurate.
+2. This mod is more like a "built-in walkthrough" mod: it helps you see which quests you still haven't finished. Personally I'd still recommend playing the normal way and discovering things yourself - this mod is more of a reference.
+3. This is a very complex mod. There are too many conditions between quests and the relationships are complicated; with only one person behind it, what can be achieved is limited, so this mod may never reach a "perfect" form.
