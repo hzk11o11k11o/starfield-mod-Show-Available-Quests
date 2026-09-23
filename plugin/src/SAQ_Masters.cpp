@@ -23,10 +23,13 @@ namespace SAQ::Masters
 {
 	namespace
 	{
+		constexpr std::uint32_t kMediumPrefix = 0xFD000000u; // ★★ 第 110 轮：medium(ESH) 插件
 		constexpr std::uint32_t kLightPrefix = 0xFE000000u;  // light(ESL) 插件的 FormID 前缀
 		constexpr std::uint32_t kLocalMaskPlain = 0x00FFFFFFu;
-		constexpr std::uint32_t kLocalMaskSmall = 0x00000FFFu;
-		constexpr std::uint32_t kMaxFullPrefix = 0xFDu;      // 0xFE 留给 light；0xFF 没有插件
+		constexpr std::uint32_t kLocalMaskMedium = 0x0000FFFFu;  // medium 记录号 = 16 位
+		constexpr std::uint32_t kLocalMaskSmall = 0x00000FFFu;   // light 记录号 = 12 位
+		constexpr std::uint32_t kMaxFullPrefix = 0xFCu;      // ★ 第 110 轮：0xFD 留给 medium；0xFE 留给 light
+		constexpr std::uint32_t kMaxMediumIndex = 0xFFu;     // medium 插件序号是 8 位
 		constexpr std::uint32_t kMaxLightIndex = 0xFFFu;     // light 插件序号是 12 位
 		constexpr std::size_t   kProbeSamples = 6;           // 阶段 1 最多换这么多条样本扫（一命中即停）
 		constexpr unsigned      kAcceptPercent = 90;         // 认定阈值：全量确认命中率 ≥ 90%
@@ -42,25 +45,55 @@ namespace SAQ::Masters
 			return form != nullptr && ReadQuestRuntimeState(form).vtableKnown;
 		}
 
-		// 候选：full 插件用 prefix(0x00..0xFD)；light 插件用 smallIndex(0x000..0xFFF)。
+		// 候选：full 插件用 prefix(0x00..0xFC)；medium 用 mediumIndex(0x00..0xFF)；
+		// light 用 smallIndex(0x000..0xFFF)。
+		enum class Tier : std::uint8_t
+		{
+			Full = 0,
+			Medium = 1,   // ★★ 第 110 轮
+			Light = 2,
+		};
+
 		struct Candidate
 		{
-			bool          small{};
+			Tier          tier{ Tier::Full };
 			std::uint32_t index{};
 		};
 
+		const char* TierName(Tier a_tier)
+		{
+			switch (a_tier) {
+			case Tier::Medium:
+				return "medium";
+			case Tier::Light:
+				return "light";
+			default:
+				return "full";
+			}
+		}
+
 		std::uint32_t CandidateFormID(const Candidate& a_candidate, std::uint32_t a_local)
 		{
-			return a_candidate.small
-				? (kLightPrefix | (a_candidate.index << 12) | (a_local & kLocalMaskSmall))
-				: ((a_candidate.index << 24) | (a_local & kLocalMaskPlain));
+			switch (a_candidate.tier) {
+			case Tier::Medium:
+				return kMediumPrefix | (a_candidate.index << 16) | (a_local & kLocalMaskMedium);
+			case Tier::Light:
+				return kLightPrefix | (a_candidate.index << 12) | (a_local & kLocalMaskSmall);
+			default:
+				return (a_candidate.index << 24) | (a_local & kLocalMaskPlain);
+			}
 		}
 
 		std::uint32_t CandidatePrefix(const Candidate& a_candidate)
 		{
-			return a_candidate.small
-				? (kLightPrefix | (a_candidate.index << 12))
-				: (a_candidate.index << 24);
+			switch (a_candidate.tier) {
+			case Tier::Medium:
+				return kMediumPrefix | (a_candidate.index << 16);
+			case Tier::Light:
+				return kLightPrefix | (a_candidate.index << 12);
+			default:
+				return a_candidate.index << 24;
+			}
 		}
 
 		// 该 master 在静态表里的记录号：去重 + 等距取 ≤ kProbeSamples 条（首尾都覆盖）。
@@ -111,6 +144,7 @@ namespace SAQ::Masters
 		{
 			a_master.loaded = false;
 			a_master.small = false;
+			a_master.medium = false;
 			a_master.index = 0;
 			a_master.prefix = 0;
 			a_master.sampleOk = 0;
@@ -129,18 +163,25 @@ namespace SAQ::Masters
 				if (!candidates.empty()) {
 					break;
 				}
+				const auto before = candidates.size();
 				for (std::uint32_t prefix = 0; prefix <= kMaxFullPrefix; ++prefix) {
 					if (ProbeForm((prefix << 24) | (local & kLocalMaskPlain))) {
-						candidates.push_back(Candidate{ false, prefix });
+						candidates.push_back(Candidate{ Tier::Full, prefix });
 					}
 				}
-				if (candidates.empty()) {
-					// full 段一个都没命中，才扫 light 空间（0xFE | smallIndex<<12）。
-					// 本机四个 master 都是 full 插件 —— 这一步是为「以后表里加 light
-					// master」留的（算法来自 docs/06，尚未有真实样本可验）。
+				// ★★ 第 110 轮：medium 空间**与 full 段同一样本一起扫** —— medium 的记录号
+				//   只有 16 位，在别的 full 插件里可能撞号（误命中）⇒ 只凭 full 命中不能
+				//   判定「未加载」；两个 tier 都收候选，交给阶段 2 的全量命中率区分。
+				for (std::uint32_t idx = 0; idx <= kMaxMediumIndex; ++idx) {
+					if (ProbeForm(kMediumPrefix | (idx << 16) | (local & kLocalMaskMedium))) {
+						candidates.push_back(Candidate{ Tier::Medium, idx });
+					}
+				}
+				if (candidates.size() == before) {
+					// full/medium 一个都没命中，才扫 light 空间（0xFE | smallIndex<<12）。
 					for (std::uint32_t idx = 0; idx <= kMaxLightIndex; ++idx) {
 						if (ProbeForm(kLightPrefix | (idx << 12) | (local & kLocalMaskSmall))) {
-							candidates.push_back(Candidate{ true, idx });
+							candidates.push_back(Candidate{ Tier::Light, idx });
 						}
 					}
 				}
@@ -178,7 +219,8 @@ namespace SAQ::Masters
 			}
 
 			a_master.loaded = true;
-			a_master.small = best->small;
+			a_master.small = (best->tier == Tier::Light);
+			a_master.medium = (best->tier == Tier::Medium);
 			a_master.index = best->index;
 			a_master.prefix = CandidatePrefix(*best);
 			a_master.sampleOk = bestHits;
@@ -189,7 +231,7 @@ namespace SAQ::Masters
 				// 已按全量命中率选出最高者，留一条证据即可。
 				REX::INFO("前缀探测：{} 有 {} 个候选前缀，按全量命中率取 0x{:08X}（{} 命中 {}/{}）",
 					a_master.name, candidates.size(), a_master.prefix,
-					a_master.small ? "light" : "full", a_master.sampleOk, a_master.sampleTry);
+					TierName(best->tier), a_master.sampleOk, a_master.sampleTry);
 			}
 		}
 	}
@@ -210,7 +252,8 @@ namespace SAQ::Masters
 		// 自检锚点：Starfield.esm 必须解析出 0x00（基础游戏永远是第一个 master）。
 		// 不符 ⇒ 探测法本身可能有问题，或「游戏尚未就绪」——留 WARN 作证据，且
 		// **不缓存**结果（下次打开菜单重试），避免把瞬时状态钉死成「表里什么都没有」。
-		const bool baseOk = !g_masters.empty() && g_masters[0].loaded && !g_masters[0].small &&
+		const bool baseOk = !g_masters.empty() && g_masters[0].loaded &&
+		                    !g_masters[0].small && !g_masters[0].medium &&
 		                    g_masters[0].index == 0;
 		if (baseOk) {
 			g_sessionResolved = true;
@@ -218,9 +261,10 @@ namespace SAQ::Masters
 		}
 		NoteFailure(g_masters.empty()
 				? std::string{ "master 表为空（生成器问题？）" }
-				: std::format("自检未通过：Starfield.esm 未解析出 0x00（loaded={} small={} 序号=0x{:02X}）"
+				: std::format("自检未通过：Starfield.esm 未解析出 0x00（loaded={} small={} medium={} 序号=0x{:02X}）"
 							  "—— 本次不缓存，下次打开菜单重试",
-					  g_masters[0].loaded, g_masters[0].small, g_masters[0].index));
+					  g_masters[0].loaded, g_masters[0].small, g_masters[0].medium,
+					  g_masters[0].index));
 	}
 
 	// ★ 第 33 轮：本会话解析成功？（逐字见 SAQ_Masters.h 的说明）
@@ -249,7 +293,10 @@ namespace SAQ::Masters
 		if (!m.loaded) {
 			return 0;  // 没装 / 没启用 ⇒ 这条任务当「不存在」
 		}
-		const auto local = m.small ? (a_local & kLocalMaskSmall) : (a_local & kLocalMaskPlain);
+		// ★★ 第 110 轮：记录号位宽按档位取 —— full 24 位 / medium 16 位 / light 12 位。
+		const auto local = m.medium ? (a_local & kLocalMaskMedium)
+		                 : m.small  ? (a_local & kLocalMaskSmall)
+		                            : (a_local & kLocalMaskPlain);
 		return m.prefix | local;
 	}
 
@@ -263,6 +310,9 @@ namespace SAQ::Masters
 			}
 			if (!m.loaded) {
 				out += std::format("{} 未加载（或档位不支持，跳过其任务）", m.name);
+			} else if (m.medium) {
+				out += std::format("{} 序号=0x{:02X}(medium) 前缀=0xFD|0x{:02X}<<16 记录命中 {}/{}",
+					m.name, m.index, m.index, m.sampleOk, m.sampleTry);
 			} else if (m.small) {
 				out += std::format("{} 序号=0x{:03X}(light) 前缀=0xFE|0x{:03X}<<12 记录命中 {}/{}",
 					m.name, m.index, m.index, m.sampleOk, m.sampleTry);

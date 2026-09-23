@@ -105,6 +105,12 @@ def filter_reason(row: dict, raw_en: str, raw_zh: str, is_landmark: bool = False
         return "方括号"               # [BE - xxx] / [杂项目标提示] 等开发标记
     if edid.startswith("MB_"):
         return "任务板生成"           # 任务板上的无限生成任务（入口另行处理）
+    # ★★ 第 110 轮（追踪者联盟）：BountyScannerQuest 是 Story Manager 交替 spin up 的
+    #   「城市赏金」——5 条同名同结构（主条 SFBGS003_BountyScannerQuest + 副本 00~03），
+    #   任务本身是无限生成（无固定接取点）。只保留**主条**（作可重复 + noPickup 展示，
+    #   见 ref/repeatable_quests.json），副本排除（否则列表里会出现 5 条「赏金狩猎」）。
+    if edid_l.startswith("sfbgs003_bountyscannerquest0"):
+        return "无限生成副本"
     if "pointer" in edid_l or "pointer" in en_l or "指示器" in zh or "指示器" in en:
         return "指示器"               # Misc pointer 系统
     if not is_landmark and ("landmark" in edid_l or "地标任务" in zh or "地标任务" in en):
@@ -589,7 +595,13 @@ def main() -> int:
     # 老格式（没有 master 字段）当成全是 Starfield.esm —— 兼容第 17 轮以前的 quests.json
     for q in quests:
         q.setdefault("master", "Starfield.esm")
-        mask = 0xFFF if q.get("small") else 0xFFFFFF
+        # ★★ 第 110 轮：位宽按档位分三种 —— full 24 位 / medium 16 位（0xFD）/ light 12 位（0xFE）
+        if q.get("medium"):
+            mask = 0xFFFF
+        elif q.get("small"):
+            mask = 0xFFF
+        else:
+            mask = 0xFFFFFF
         q["local"] = int(q.get("local", q["formid"])) & mask
 
     # master 列表：Starfield.esm 永远排 0（表里 master 下标越小越基础），其余按名字排序
@@ -676,6 +688,7 @@ def main() -> int:
             "master": q["master"],      # 记录来自哪个插件
             "local": q["local"],        # 记录号（运行期 = (加载序号 << 24) | local）
             "small": bool(q.get("small")),
+            "medium": bool(q.get("medium")),  # ★★ 第 110 轮：medium 档（0xFD | idx<<16 | local）
             "edid": edid,
             "itype": itype,
             "qtype": QTYPE_NAMES.get(qtyp, ""),
@@ -897,7 +910,14 @@ def main() -> int:
             n_guide += 1
         for c in ok_cands:
             cm = c.get("refrMaster") or r["master"]
-            local = int(c["refr"]) & (0xFFF if c.get("refrSmall") else 0xFFFFFF)
+            # ★★ 第 110 轮：候选引用同样按档位取位宽（medium 也来了）
+            if c.get("refrMedium"):
+                cand_mask = 0xFFFF
+            elif c.get("refrSmall"):
+                cand_mask = 0xFFF
+            else:
+                cand_mask = 0xFFFFFF
+            local = int(c["refr"]) & cand_mask
             cand_name = (c.get("nameZh") or c.get("nameEn") or "").strip()
             cand_flat.append((local, master_by_lower[cm.lower()], 1 if c.get("persistent") else 0, cand_name))
     if unknown_guide_master:

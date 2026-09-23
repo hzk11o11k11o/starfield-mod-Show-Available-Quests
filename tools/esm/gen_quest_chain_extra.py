@@ -218,6 +218,15 @@ EDGES: list[tuple[str, str, int, str, int, str]] = [
      "误报：防御措施@200 fragment 原文 City_Akila_Ashta02.SetStage(10)"),
     ("City_Akila_Ashta03", "City_Akila_Ashta02", 200, "SetStage", 5,
      "兽群领袖：误报@200 fragment 原文 City_Akila_Ashta03.SetStage(5)"),
+    # ---- ★★★ 第 110 轮（追踪者联盟 · SFBGS003，medium 档）：随免费更新自带 ----
+    #   起因：这 28 条（进表 2 条）任务由 SFBGS003.esm 提供 —— 官方「追踪者联盟」，
+    #   所有升级到最新版的玩家都有。SFTA00（悬赏罪犯：星际盗贼）的唯一启动边 =
+    #   `SFBGS003_MiscPointer@1000`（玩家在总部展示柜取走第一张通缉海报 = 接受悬赏，
+    #   fragment 原文 `CompleteAllObjectives() + SFBGS003_SFTA00.Start()`）；
+    #   MiscPointer（追踪者联盟）自己是 SGE 自动启动的引导任务、**不进列表** ——
+    #   空进度存档里 SFTA00 不该显示（与 CF02「菜鸟觐见」同一问题类别）。
+    ("SFTA00", "SFBGS003_MiscPointer", 1000, "Start", 0,
+     "星际盗贼：追踪者联盟@1000 fragment 原文 CompleteAllObjectives + SFBGS003_SFTA00.Start()"),
 ]
 
 # ============================================================================
@@ -274,12 +283,31 @@ EDGES: list[tuple[str, str, int, str, int, str]] = [
 
 
 def resolve_host_file(src: Path, host_edid: str, host_local: int) -> Path | None:
-    """按记录号找宿主的 QF 脚本（文件名里的 EDID 可能被截断，如 TheKin 前缀）。"""
-    for f in (src / "Fragments" / "Quests").glob("QF_*_*.psc"):
+    """按记录号找宿主的 QF 脚本（文件名里的 EDID 可能是历史名/截断）。
+
+    ★★ 第 110 轮：
+      ① 扫**全部子目录**（`DLC03/Fragments/Quests`、`SFBGS003/Fragments/Quests` …）：
+         DLC 兼容补丁会把任务的 fragment 重新导出到自己的目录下；
+      ② 文件名里的 8 位 hex 可能带 **override 前缀**（实测 SFBGS003 的 MiscPointer 在
+         `Fragments/Quests/QF_SFBGS003_MiscPointer_02000CF2.psc`）⇒ 取**低 24 位**比较；
+      ③ 先返回「EDID 对得上」的候选（互含即可），没有就退回**只按记录号**的第一个 ——
+         官方文件名与 EDID 未必一致（实测 CF01 的 fragment 叫 `QF_BF01_00009136`，
+         旧代码只按记录号匹配才过得去），所以不能强制 EDID 匹配。
+    """
+    want = host_edid.lower()
+    fallback = None
+    for f in src.rglob("QF_*_*.psc"):
         m = QF_FILE.match(f.name)
-        if m and int(m.group(2), 16) == host_local:
+        if not m:
+            continue
+        if int(m.group(2), 16) & 0xFFFFFF != (host_local & 0xFFFFFF):
+            continue
+        name = m.group(1).lower()
+        if name == want or want in name or name in want:
             return f
-    return None
+        if fallback is None:
+            fallback = f
+    return fallback
 
 
 def main() -> int:
@@ -294,12 +322,13 @@ def main() -> int:
     quests = json.loads(Path(a.quests).read_text(encoding="utf-8"))
     table = json.loads(Path(a.table).read_text(encoding="utf-8"))
 
+    # ★★ 第 110 轮：edid→任务 不再限定 Starfield.esm（SFBGS003 的边走同一流程）；
+    #    「在表内」的判据改成 (master, local) 对 —— 跨 master 的 local 会重号。
     edid2q: dict[str, dict] = {}
     for q in quests:
-        if q.get("edid") and (q.get("master") or "Starfield.esm") == "Starfield.esm":
+        if q.get("edid"):
             edid2q.setdefault(q["edid"], q)
-    by_local = {q["local"]: q for q in edid2q.values()}
-    table_locals = {t["local"] for t in table}
+    table_keys = {(t.get("master", "Starfield.esm"), t["local"]) for t in table}
 
     if a.list:
         for (tgt, host, stage, op, arg, note) in EDGES:
@@ -323,7 +352,7 @@ def main() -> int:
         if host is None:
             problems.append(f"宿主任务不存在：{host_edid}")
             continue
-        if tgt["local"] not in table_locals:
+        if (tgt.get("master", "Starfield.esm"), tgt["local"]) not in table_keys:
             problems.append(f"目标不在「可接任务」表里（加了也没用）：{tgt_edid}")
             continue
 
@@ -350,8 +379,10 @@ def main() -> int:
                 rf"\b{re.escape(tgt_edid)}_QuestStartKeyword\s*\.\s*SendStoryEvent\s*\(\s*\)")
         else:
             arg_pat = "" if (op == "Start" and arg == 0) else rf"{arg}\s*"
+            # ★★ 第 110 轮：源码里的属性名可能带**插件前缀**（实测 SFTA00 在 fragment 里
+            #   写作 `SFBGS003_SFTA00`）⇒ 允许一个「字母数字 + 下划线」的可选前缀。
             call_pat = re.compile(
-                rf"\b{re.escape(tgt_edid)}\s*\.\s*{op}\s*\(\s*{arg_pat}\)")
+                rf"\b(?:[A-Za-z0-9]+_)?{re.escape(tgt_edid)}\s*\.\s*{op}\s*\(\s*{arg_pat}\)")
 
         def frag_stage_of(line_no: int) -> tuple[str | None, int | None, int | None]:
             """从 line_no 往上找最近的 Fragment_Stage_<n>_Item_* 函数定义。
@@ -390,7 +421,11 @@ def main() -> int:
             continue
 
         entry = out_by_target.setdefault(tgt_edid, {
-            "formid": tgt["local"],
+            # ★★ 第 110 轮：与 ref/*.json 的约定一致 = **文件内 FormID**（带该文件自己的
+            #   master 前缀）—— 旧实现写的是 local；基础游戏里两者恰好相同（前缀 0x00），
+            #   medium（SFBGS003 = 0xFD 前缀）才暴露（gen_quest_table 按文件内 FormID 匹配，
+            #   写 local 会让这条边静默丢失：SFTA00 的 chain_count 一直是 0）。
+            "formid": int(tgt["formid"]),
             "edid": tgt_edid,
             "edges": [],
         })

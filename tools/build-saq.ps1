@@ -90,6 +90,7 @@ if (-not $SkipTable) {
     #   （刷新：删掉 ref\info_gates*.json 再跑；或按脚本头的参数手动跑）。
     $infoScans = @(
         @{ esm = (Join-Path $dataDir 'Starfield.esm');       master = 'Starfield.esm';      out = 'info_gates.json' },
+        @{ esm = (Join-Path $dataDir 'SFBGS003.esm');        master = 'SFBGS003.esm';       out = 'info_gates_sfbgs003.json' },
         @{ esm = (Join-Path $dataDir 'SFBGS00D.esm');        master = 'SFBGS00D.esm';       out = 'info_gates_sfbgs00d.json' },
         @{ esm = (Join-Path $dataDir 'SFBGS050.esm');        master = 'SFBGS050.esm';       out = 'info_gates_sfbgs050.json' },
         @{ esm = (Join-Path $dataDir 'ShatteredSpace.esm');  master = 'ShatteredSpace.esm'; out = 'info_gates_shatteredspace.json' }
@@ -157,6 +158,16 @@ if (-not $SkipTable) {
     Step '1/6' '生成地球地标任务表（gen_landmark_quests.py → ref\landmark_quests.json）'
     & python (Join-Path $root 'tools\esm\gen_landmark_quests.py') | Write-Host
     if ($LASTEXITCODE -ne 0) { throw "gen_landmark_quests.py 失败（exit $LASTEXITCODE）" }
+    # ★★★ 第 110 轮：补进构建流程的两个「人工核实名单」产物（此前靠手动跑，漏跑会
+    #   让 gen_quest_table 用旧名单、数据悄悄不同步）。它们的核验对象是**上一轮的**
+    #   quest_table_debug.json —— 新增条目时的正确顺序是：
+    #     gen_quest_table（新任务先进表）→ 本两步 → gen_quest_table（应用名单）。
+    Step '1/6' '生成四大势力开头任务表（gen_faction_entry_quests.py → ref\faction_entry_quests.json）'
+    & python (Join-Path $root 'tools\esm\gen_faction_entry_quests.py') | Write-Host
+    if ($LASTEXITCODE -ne 0) { throw "gen_faction_entry_quests.py 失败（exit $LASTEXITCODE）" }
+    Step '1/6' '生成可重复任务表（gen_repeatable_quests.py → ref\repeatable_quests.json）'
+    & python (Join-Path $root 'tools\esm\gen_repeatable_quests.py') | Write-Host
+    if ($LASTEXITCODE -ne 0) { throw "gen_repeatable_quests.py 失败（exit $LASTEXITCODE）" }
     Step '1/6' '生成静态任务表（gen_quest_table.py）'
     & python (Join-Path $root 'tools\esm\gen_quest_table.py') | Write-Host
     if ($LASTEXITCODE -ne 0) { throw "gen_quest_table.py 失败（exit $LASTEXITCODE）" }

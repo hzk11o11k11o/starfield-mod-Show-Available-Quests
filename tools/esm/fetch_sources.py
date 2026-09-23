@@ -15,6 +15,7 @@
   ShatteredSpace.esm ShatteredSpace - Main02.ba2       破碎空间（官方 DLC）
   SFBGS00D.esm      SFBGS00D - Main.ba2                自由航道更新（地球舰队的前置 master）
   SFBGS050.esm      SFBGS050 - Main.ba2                地球舰队（官方 DLC）
+  SFBGS003.esm      SFBGS003 - Main.ba2                ★★ 第 110 轮：追踪者联盟（免费更新 · medium 档）
 
 用法：
     python tools/esm/fetch_sources.py                 # 只补缺失的（秒级）
@@ -41,6 +42,8 @@ SOURCES: list[tuple[str, str, str]] = [
     ("ShatteredSpace.esm", "ShatteredSpace - Main02.ba2", "破碎空间（官方 DLC）"),
     ("SFBGS00D.esm", "SFBGS00D - Main.ba2", "自由航道更新（地球舰队的前置 master）"),
     ("SFBGS050.esm", "SFBGS050 - Main.ba2", "地球舰队（官方 DLC）"),
+    # ★★ 第 110 轮：追踪者联盟 —— 随免费更新自带（人人都有），medium 档（0xFD 前缀）
+    ("SFBGS003.esm", "SFBGS003 - Main.ba2", "追踪者联盟（免费更新 · medium）"),
 ]
 LANGS = ("en", "zhhans")
 
@@ -110,10 +113,17 @@ def main() -> int:
         meta = quest_dump.read_tes4(buf)
         meta["file"] = path.name
         n0 = len(quests)
+        skipped = 0
         for formid, flags, payload in quest_dump.walk_quests(buf):
+            # ★★ 第 110 轮：override（改某个 master 的记录）不算本插件的任务 —— 否则它会以
+            #   本插件身份进表（运行期解析成错误 FormID）。light/medium 的记录也是自己的。
+            if not quest_dump.is_own_record(formid, meta):
+                skipped += 1
+                continue
             quests.append(quest_dump.parse_quest(formid, flags, payload, meta))
+        skip_txt = f"，跳过 override {skipped} 条" if skipped else ""
         print(f"  {path.name}: QUST {len(quests) - n0} 条（master={meta['masters']}，"
-              f"自己的记录前缀=0x{meta['self_index']:02X}）")
+              f"自己的记录前缀=0x{meta['self_index']:02X}{skip_txt}）")
     quests_out.parent.mkdir(parents=True, exist_ok=True)
     import json
     quests_out.write_text(json.dumps(quests, indent=1), encoding="utf-8")

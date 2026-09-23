@@ -21,10 +21,14 @@
 //
 //    算法（详见 SAQ_Masters.cpp）：
 //      1. 从静态表取属于该 master 的记录号（去重 + 等距采样 ≤6 条）；
-//      2. 阶段 1：用第 1 条样本扫全空间找候选 ——
-//           full  插件：FormID = prefix << 24（prefix 0x00..0xFD）；
+//      2. 阶段 1：用样本扫全空间找候选 ——
+//           full  插件：FormID = prefix << 24（prefix 0x00..0xFC）；
+//           medium 插件：FormID = 0xFD000000 | (mediumIndex << 16) | local16
+//                        （0x000..0xFF；★★ 第 110 轮，样本 = SFBGS003 追踪者联盟）——
+//                        与 full 段**同一样本一起扫**（medium 的 16 位记录号在别的 full
+//                        插件里可能撞号，单靠 full 命中会误判 ⇒ 两个 tier 都收候选）；
 //           light 插件：FormID = 0xFE000000 | (smallIndex << 12)（0x000..0xFFF，
-//                        只在 full 段一个都没命中时才扫）；
+//                        只在前两段一个都没命中时才扫）；
 //         能查到且虚表是 TESQuest ⇒ 候选（先命中的样本即停）；
 //      3. 阶段 2：把该 master 的**全部**记录按候选前缀数一遍命中率，
 //         取最高者；≥90% ⇒ 认定（序号/命中率写进日志，如 `记录命中 22/22`），
@@ -37,9 +41,9 @@
 //  没装 / 没启用的 DLC：探测不到 ⇒ 那批条目**整批跳过**（日志里注明条数），
 //  玩家没有那个 DLC 时什么都不会发生。
 //
-//  成本：已加载的 full master ≈ 254 次扫描 + 全量确认（≤261 次）LookupByID；
-//  未加载的 master 最多再扫 light 空间（4096 次）—— 都在毫秒级以内；
-//  且一次游戏运行内加载顺序不会变 ⇒ 解析成功后做会话级缓存，之后零成本。
+//  成本：已加载的 full master ≈ 253 次扫描 + 全量确认（≤261 次）LookupByID；
+//  未加载的 master 最多再扫 medium（256 次）+ light 空间（4096 次）—— 都在
+//  毫秒级以内；且一次游戏运行内加载顺序不会变 ⇒ 解析成功后做会话级缓存。
 // ============================================================================
 
 #include <cstddef>
@@ -53,8 +57,9 @@ namespace SAQ::Masters
 		const char*   name{};          // kQuestMasters[] 里的名字
 		bool          loaded{};        // 探测到了（当前加载顺序里有它）
 		bool          small{};         // light / ESL 类插件（前缀 0xFE000000 | idx<<12）
-		std::uint32_t index{};         // 序号（fullIndex 或 smallIndex，日志用）
-		std::uint32_t prefix{};        // 前缀（full：idx<<24；light：0xFE000000|idx<<12）
+		bool          medium{};        // ★★ 第 110 轮：medium / ESH 类（0xFD000000 | idx<<16）
+		std::uint32_t index{};         // 序号（fullIndex / mediumIndex / smallIndex，日志用）
+		std::uint32_t prefix{};        // 前缀（full：idx<<24；medium：0xFD|idx<<16；light：0xFE|idx<<12）
 		std::uint32_t sampleOk{};      // 探测确认：全量记录里的命中数
 		std::uint32_t sampleTry{};     // 探测确认：全量记录条数
 	};

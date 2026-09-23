@@ -91,6 +91,7 @@ def read_tes4(buf: bytes) -> dict:
         "masters": masters,
         "self_index": len(masters),
         "small": bool(flags & 0x100),
+        "medium": bool(flags & 0x400),   # ★★ 第 110 轮：medium（0xFD 前缀 + 16 位记录号）
     }
 
 
@@ -119,8 +120,13 @@ def parse_kydd_local_names(path: Path) -> dict[int, str]:
     """
     buf = path.read_bytes()
     meta = read_tes4(buf)
-    mask = 0xFFF if meta["small"] else 0xFFFFFF
-    own_prefix = meta["self_index"]
+    # ★★ 第 110 轮：位宽与「自己的记录」判定按档位分三种（medium 0xFD / light 0xFE / full 序号）
+    if meta["medium"]:
+        mask, own_prefix = 0xFFFF, 0xFD
+    elif meta["small"]:
+        mask, own_prefix = 0xFFF, 0xFE
+    else:
+        mask, own_prefix = 0xFFFFFF, meta["self_index"]
     out: dict[int, str] = {}
     for pos, gsize, glabel, gtype in iter_groups(buf):
         if glabel != b"KYWD":
@@ -158,6 +164,8 @@ class PluginIndex:
         self.data_dir = data_dir
         self.masters: dict[str, list[str]] = {}
         self.kydd: dict[str, dict[int, str]] = {}
+        self.medium: dict[str, bool] = {}   # ★★ 第 110 轮
+        self.small: dict[str, bool] = {}
 
     def ensure(self, fname: str) -> bool:
         if fname in self.masters:
@@ -167,16 +175,28 @@ class PluginIndex:
             print(f"  !! 找不到 {path} —— {fname} 的 FTYP 无法解析")
             return False
         buf = path.read_bytes()
-        self.masters[fname] = read_tes4(buf)["masters"]
+        meta = read_tes4(buf)
+        self.masters[fname] = meta["masters"]
+        self.medium[fname] = meta["medium"]
+        self.small[fname] = meta["small"]
         self.kydd[fname] = parse_kydd_local_names(path)
         return True
 
     def resolve_ftyp(self, src_file: str, ftyp: int) -> tuple[str, int] | None:
-        """文件内 FTYP -> (关键字所属文件, 记录号)。解析失败返回 None。"""
+        """文件内 FTYP -> (关键字所属文件, 记录号)。解析失败返回 None。
+
+        ★★ 第 110 轮：medium / light 文件里的**自己空间**引用直接落在 0xFD / 0xFE 段
+        （实测 SFBGS003 的 FTYP = 0xFD000EF5 = FactionTypeTrackersAlliance）——
+        idx 不是 master 序号，先按档位短路，再走原来的 master 下标逻辑。
+        """
         if not self.ensure(src_file):
             return None
         masters = self.masters[src_file]
         idx = (ftyp >> 24) & 0xFF
+        if idx == 0xFD and self.medium.get(src_file):
+            return src_file, ftyp & 0xFFFF
+        if idx == 0xFE and self.small.get(src_file):
+            return src_file, ftyp & 0xFFF
         local = ftyp & 0xFFFFFF
         if idx == len(masters):
             target = src_file

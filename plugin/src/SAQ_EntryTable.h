@@ -3,14 +3,15 @@
 //
 // 「无限任务入口」条目（AGENTS.md 需求 —— 无限生成任务本身不显示，但「接取入口」
 // 作为一条数据显示在列表里，点了就引导到它的位置）。两类：
-//   kind=0（任务板，12 条）：ACTIVATOR `MissionBoardConsole*`，名字「任务板 · <地点>」；
+//   kind=0（任务板，13 条）：ACTIVATOR `MissionBoardConsole*`，名字「任务板 · <地点>」；
+//     ★★ 第 110 轮 +1：追踪者联盟总部（SFBGS003.esm · medium 档手工条目，见 EXTRA_ENTRIES）；
 //   kind=1（可重复 NPC，8 条）：贸易管理局商人 / 追踪者联盟探员（第 80 轮），
 //     名字自带「（可重复）」前缀 —— 数据 ref/repeatable_givers.json。
 //
 // 字段说明（★ 第 30 轮起，引导目标是**候选链**：DLL 依次 LookupByID 取第一个命中的）——
 //   refLocal   条目引用的记录号（任务板 ACTIVATOR / NPC 的 ACHR）—— 同时是界面条目的
 //              uID（运行期 FormID）。
-//   master     所属 master 下标（kQuestMasters[]；目前全部在 Starfield.esm）。
+//   master     所属 master 下标（kQuestMasters[]；第 110 轮起含 SFBGS003.esm=medium）。
 //   persistent 条目引用自身是否**原生常驻**（20 条里只有阿基拉城任务板是）。
 //   markerLocal ① 本插件（ESM 记录号：任务板 0x900~0x90A、NPC 0x90B~0x911）新建的
 //              **常驻 XMarker**，位置 = 条目坐标：常驻引用在 cell 未加载时依然存在
@@ -73,6 +74,7 @@ namespace SAQ
 		{ 0x001d8bd1u, 0u, false, 0x0000090fu, 0x0024afd2u, 0x0024afd1u, 1u, "(Repeatable) Trackers Alliance Agent - Cydonia", "（可重复）追踪者联盟探员 · 赛多尼亚" },
 		{ 0x001d8bceu, 0u, false, 0x0000090eu, 0x0010cac4u, 0x0010cac5u, 1u, "(Repeatable) Trackers Alliance Agent - Neon", "（可重复）追踪者联盟探员 · 霓虹城" },
 		{ 0x001b20b3u, 0u, false, 0x0000090du, 0x001ebffdu, 0x001ebffbu, 1u, "(Repeatable) Trackers Alliance Agent - New Atlantis", "（可重复）追踪者联盟探员 · 新亚特兰蒂斯城" },
+		{ 0xfd0024adu, 1u, false, 0x00000000u, 0xfd00f9ceu, 0xfd000033u, 0u, "Mission Board - Trackers Alliance HQ", "任务板 · 追踪者联盟总部" },
 	};
-	inline constexpr std::size_t kEntryTableSize = 20;
+	inline constexpr std::size_t kEntryTableSize = 21;
 }

@@ -24,7 +24,7 @@ r"""gen_repeatable_quests.py - 第 89 轮：**可重复任务表**（做完一�
          （否则「已接/已完成」会被 AS3 侧再丢一次，C++ 豁免就白做了）；
          载荷第 11 列 = 可重复标记（bSaqRepeatable）。
 
-## 清单（20 条 = 基础游戏 15 + DLC 5；证据逐条见 `evidence`）
+## 清单（21 条 = 基础游戏 15 + DLC 5 + 追踪者联盟 1；证据逐条见 `evidence`）
 
 | EDID | 任务 | 提供者 | 地点 | 可重复证据 |
 | --- | --- | --- | --- | --- |
@@ -48,10 +48,14 @@ r"""gen_repeatable_quests.py - 第 89 轮：**可重复任务表**（做完一�
 | SFFL_AnchorpointZ04 | 回收行动 | 基利安·布莱斯 | 锚点星际站（Anchorpoint） | RepeatGlobal + 重复管理器（2 小时计时） |
 | SFFL_R01 | 危险材料 | （随机太空遭遇）② | 太空 | PlaythroughCount + 时间戳 GLOB（1~2 游戏日） |
 | SFFL_R03 | 紧急救援 | （随机太空遭遇）② | 太空 | SEScript.SetCooldown（太空遭遇冷却）|
+| SFBGS003_BountyScannerQuest | 赏金狩猎 | （随机通缉犯）③ | 主要城市 | SMQN 冷却 + 概率（Timestamp / CooldownNextBounty / SpawnChance）|
 
 ① 米奇·本杰明在赛多尼亚的摊位（官方数据 UC_CY_MitchBenjamin，别名 Vendor / BookMarker）。
 ② **无固定接取点**（`noPickup`）：太空巡航时随机遇到，没有可以去"找"的 NPC ⇒
    文案不带「去找谁」，改为说清触发方式（见文件末尾的核验规则）。
+③ ★★ 第 110 轮（追踪者联盟）：城市赏金由 **Story Manager 交替 spin up**（5 条同名
+   副本只收主条）—— 无固定接取点（在主要城市扫描通缉犯）= `noPickup`；形态词走
+   `formZh` / `formEn`（「随机悬赏」/ "random bounty"），核验不再是硬编码的「太空遭遇」。
 
 **不收**（第 90 轮定案 —— 三条都**没有**任何重启机制；详见 `docs/11` 第 90 轮一节）：
   Rad01_LIST 独立盟之巅（一次性教学：CQ@900 + `Rad01_RecruitTutorialComplete=1`；
@@ -286,6 +290,27 @@ ENTRIES: list[dict] = [
         "noteEn": "(Repeatable) A random space encounter - you may run into it again in space "
                   "some time after finishing it (there is no fixed pickup point).",
     },
+    {
+        # ★★★ 第 110 轮（追踪者联盟 · SFBGS003）：城市赏金 —— Story Manager 交替 spin up
+        #   （5 条同名副本：主条 + 00~03；任务本身是无限生成 ⇒ 只收主条、标可重复，
+        #   副本被 gen_quest_table 的「无限生成副本」规则排除）。
+        #   接取方式 = 在主要城市用扫描仪扫描通缉犯（无固定接取点）⇒ noPickup + 专用文案。
+        "key": "SFBGS003_BountyScannerQuest", "expectedEn": "Bounty Hunting",
+        "noPickup": True,
+        "giverZh": "", "giverEn": "",
+        "whereZh": "主要城市（随机通缉犯）", "whereEn": "major cities (random bounties)",
+        "formZh": "随机悬赏", "formEn": "random bounty",
+        "evidence": "官方 SFBGS003_SQ_Bounty_QuestScript：SFBGS003_BountyScanner_Timestamp"
+                    "（\"the time when a bounty quest last ran successfully. Used by StoryManager"
+                    " conditions\"）+ SFBGS003_CooldownNextBounty（冷却，StoryManager 条件）+"
+                    " SFBGS003_Global_BountySpawnChance（下次 spin up 概率）⇒ 冷却后可再刷；"
+                    "完成 = RewardBountyCredits + SFBGS003_Bounties_Total.Mod(1)",
+        "noteZh": "（可重复）随机悬赏 —— 在主要城市里用扫描仪扫描通缉犯就能接取；"
+                  "完成一次后过一段时间还会再刷出新的（没有固定的接取地点）。",
+        "noteEn": "(Repeatable) A random bounty - scan for wanted criminals in major cities to "
+                  "pick it up; new bounties appear again some time after you finish one "
+                  "(there is no fixed pickup point).",
+    },
 ]
 
 DEFAULT_NOTE_ZH = "（可重复）完成一次后还能再次接取 —— 去找{giverZh}（{whereZh}）即可。"
@@ -330,7 +355,10 @@ def main() -> int:
         if q is None:
             problems.append(f"{key}: quests_all.json 里没有")
             continue
-        local = int(q["formid"]) & 0xFFFFFF
+        # ★★ 第 110 轮：用 quest_dump 已算好的 local（full 24 位 / medium 16 位 /
+        #   light 12 位都已按档位取好）—— 旧写法 & 0xFFFFFF 对 medium/light 恰好也对
+        #   （高字节被 mask 掉），但不严谨。
+        local = int(q.get("local", int(q["formid"]) & 0xFFFFFF))
         tab = table.get(key)
         if tab is None:
             problems.append(f"{key}: 不在静态表（quest_table_debug.json）里 —— 豁免无意义")
@@ -357,10 +385,14 @@ def main() -> int:
                 problems.append(f"{key}: 标记 noPickup，却有 {cand_n} 个引导候选 —— 复核")
             if not e.get("noteZh") or not e.get("noteEn"):
                 problems.append(f"{key}: noPickup 条目必须自带 noteZh / noteEn")
-            if "太空遭遇" not in (e.get("noteZh") or ""):
-                problems.append(f"{key}: noPickup 的中文说明必须写明「太空遭遇」形态")
-            if "space encounter" not in (e.get("noteEn") or "").lower():
-                problems.append(f"{key}: noPickup 的英文说明必须写明 \"space encounter\" 形态")
+            # ★★ 第 110 轮：形态词可自定义（缺省仍是「太空遭遇」）—— 追踪者联盟的城市
+            #   赏金形态是「随机悬赏」，跟着 note 一起写明。
+            form_zh = e.get("formZh") or "太空遭遇"
+            form_en = e.get("formEn") or "space encounter"
+            if form_zh not in (e.get("noteZh") or ""):
+                problems.append(f"{key}: noPickup 的中文说明必须写明「{form_zh}」形态")
+            if form_en not in (e.get("noteEn") or "").lower():
+                problems.append(f"{key}: noPickup 的英文说明必须写明 \"{form_en}\" 形态")
             if "去找" in (e.get("noteZh") or ""):
                 problems.append(f"{key}: noPickup 条目不该出现「去找」（没有可找的对象）")
             if e.get("giverZh") or e.get("giverEn"):

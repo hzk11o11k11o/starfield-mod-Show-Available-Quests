@@ -152,6 +152,51 @@ ENTRIES = [
     (0x00197D22, "StationTheKeyInterior", "Mission Board - The Key", "任务板 · 星钥站"),
 ]
 
+# ★★★ 第 110 轮（追踪者联盟 · SFBGS003，medium 档）：**手工条目** —— 数据不在 Starfield.esm 里，
+#   不走上面的扫描白名单，直接写死（每条都对照 ESM 实录核实）：
+#
+#   条目 = 追踪者联盟总部的「悬赏信息台」（任务板 `SFBGS003_MissionBoardConsole_TA_REF`）——
+#   玩家从总部展示柜取通缉海报接大任务、在任务板上接精英赏金（都是无限生成玩法 ⇒ 只显示入口）。
+#   候选链沿用 C++ 的三槽位语义（精确优先 + 常驻兜底）：
+#     ② 任务板自身（非常驻 —— 玩家在总部时精确指向它）
+#     ③ fallback1 = 展示柜 `SFBGS003_BountyBoard01_`（**常驻**、同 cell —— 远处点引导就落这里）
+#     ③ fallback2 = 总部外 marker `SFBGS003_MiscPointer_InevitableTAHQExtMarkerREF`（**常驻**，阿基拉城）
+#
+#   local 一律写**文件内 FormID 的低位**（medium = 16 位）；运行期由
+#   `Masters::MakeFormID(kQuestMasters 下标, local)` 拼出（SFBGS003 是 medium 档，
+#   前缀 0xFD | idx<<16 —— 探测见 SAQ_Masters.cpp 的 Tier::Medium）。
+EXTRA_ENTRIES: list[dict] = [
+    {
+        "master": "SFBGS003.esm",
+        "refLocal": 0xFD0024AD,          # SFBGS003_MissionBoardConsole_TA_REF
+        "persistent": False,
+        "base": "SFBGS003_MissionBoardConsole_Activator",
+        "cell": "SFBGS003TrackersAllianceHQ",
+        "markerLocal": 0,                # 不新建 marker（常驻展示柜兜底已够）
+        "fallback1": 0xFD00F9CE,         # 展示柜 SFBGS003_BountyBoard01_（常驻）
+        "fallback2": 0xFD000033,         # 总部外 marker（常驻，阿基拉城）
+        "kind": KIND_BOARD,
+        "nameEn": "Mission Board - Trackers Alliance HQ",
+        "nameZh": "任务板 · 追踪者联盟总部",
+    },
+]
+
+
+def master_index_map() -> dict[str, int]:
+    """kQuestMasters[] 的顺序（与 gen_quest_table.py 一致：Starfield.esm 固定 0，其余按名字排序）。
+
+    ★ 第 110 轮：EXTRA_ENTRIES 要写 master 下标（SFBGS003 = 1）；从任务表产物读，
+    避免两处各维护一份顺序。
+    """
+    qpath = Path("ref/quest_table_debug.json")
+    if not qpath.exists():
+        print(f"!! 缺少 {qpath} —— EXTRA_ENTRIES 的 master 下标算不出来（先跑 gen_quest_table.py）")
+        return {"Starfield.esm": 0}
+    rows = json.loads(qpath.read_text(encoding="utf-8"))
+    masters = sorted({r.get("master", "Starfield.esm") for r in rows},
+                     key=lambda m: (m.lower() != "starfield.esm", m.lower()))
+    return {m: i for i, m in enumerate(masters)}
+
 
 def c_escape(s: str) -> str:
     return s.replace("\\", "\\\\").replace('"', '\\"')
@@ -234,6 +279,21 @@ def main() -> int:
             "nameZh": g["nameZh"],
         })
 
+    # ★★★ 第 110 轮：手工条目（追踪者联盟悬赏信息台）—— master 下标从任务表产物解析。
+    master_idx = master_index_map()
+    for extra in EXTRA_ENTRIES:
+        m = extra["master"]
+        if m not in master_idx:
+            problems.append(f"EXTRA_ENTRIES：{m} 不在 kQuestMasters 里（先把它的任务加进表）")
+            continue
+        if not extra.get("fallback1"):
+            problems.append(f"EXTRA_ENTRIES：{extra['nameZh']} 没有兜底候选（远处将不可导航）")
+        rows.append({
+            **extra,
+            "master": master_idx[m],
+            "refHex": f"0x{extra['refLocal']:08X}",
+        })
+
     if problems:
         print("!! 入口数据校验失败：")
         for p in problems:
@@ -262,14 +322,15 @@ def main() -> int:
     lines.append("//")
     lines.append("// 「无限任务入口」条目（AGENTS.md 需求 —— 无限生成任务本身不显示，但「接取入口」")
     lines.append("// 作为一条数据显示在列表里，点了就引导到它的位置）。两类：")
-    lines.append("//   kind=0（任务板，12 条）：ACTIVATOR `MissionBoardConsole*`，名字「任务板 · <地点>」；")
+    lines.append("//   kind=0（任务板，13 条）：ACTIVATOR `MissionBoardConsole*`，名字「任务板 · <地点>」；")
+    lines.append("//     ★★ 第 110 轮 +1：追踪者联盟总部（SFBGS003.esm · medium 档手工条目，见 EXTRA_ENTRIES）；")
     lines.append("//   kind=1（可重复 NPC，8 条）：贸易管理局商人 / 追踪者联盟探员（第 80 轮），")
     lines.append("//     名字自带「（可重复）」前缀 —— 数据 ref/repeatable_givers.json。")
     lines.append("//")
     lines.append("// 字段说明（★ 第 30 轮起，引导目标是**候选链**：DLL 依次 LookupByID 取第一个命中的）——")
     lines.append("//   refLocal   条目引用的记录号（任务板 ACTIVATOR / NPC 的 ACHR）—— 同时是界面条目的")
     lines.append("//              uID（运行期 FormID）。")
-    lines.append("//   master     所属 master 下标（kQuestMasters[]；目前全部在 Starfield.esm）。")
+    lines.append("//   master     所属 master 下标（kQuestMasters[]；第 110 轮起含 SFBGS003.esm=medium）。")
     lines.append("//   persistent 条目引用自身是否**原生常驻**（20 条里只有阿基拉城任务板是）。")
     lines.append("//   markerLocal ① 本插件（ESM 记录号：任务板 0x900~0x90A、NPC 0x90B~0x911）新建的")
     lines.append("//              **常驻 XMarker**，位置 = 条目坐标：常驻引用在 cell 未加载时依然存在")

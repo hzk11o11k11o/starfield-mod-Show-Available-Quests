@@ -475,7 +475,11 @@ def main() -> int:
         #   它们走下面的 npc_need（判据不同：外景条目不建档；且防止同一 refLocal 重复建档）。
         board_need = [{"refLocal": e["refLocal"], "refHex": e["refHex"], "nameZh": e["nameZh"],
                        "cell": e["cell"]} for e in entries
-                      if e.get("kind", 0) == 0 and not e["persistent"]]
+                      if e.get("kind", 0) == 0 and not e["persistent"]
+                      # ★★ 第 110 轮：只建档**基础游戏**的条目（master=0）—— SFBGS003 的
+                      #   追踪者联盟条目不在 Starfield.esm 里、也不需要 marker（候选链的
+                      #   常驻兜底是它自己的展示柜，gen_entry_table 的 EXTRA_ENTRIES 已给）。
+                      and int(e.get("master", 0)) == 0]
         board_need.sort(key=lambda e: e["refLocal"])
     pending_scan = not board_need   # True ⇒ 需要读 Starfield.esm 才知道哪些任务板要建档
 

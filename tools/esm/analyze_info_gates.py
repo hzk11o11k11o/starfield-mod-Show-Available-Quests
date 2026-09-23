@@ -3,6 +3,7 @@
 
 数据来源（scan_info_gates.py 逐 master 扫描的产物）：
     ref/info_gates.json                 基础游戏（Starfield.esm）
+    ref/info_gates_sfbgs003.json        SFBGS003.esm（追踪者联盟 · ★ 第 110 轮）
     ref/info_gates_sfbgs00d.json        SFBGS00D.esm（自由航道更新）
     ref/info_gates_sfbgs050.json        SFBGS050.esm（地球舰队）
     ref/info_gates_shatteredspace.json  ShatteredSpace.esm（破碎空间）
@@ -42,8 +43,10 @@ ALLOWED_KINDS = ("入口", "中性")
 FUNC_TO_CHECK = {"GetQuestRunning": 0, "GetQuestCompleted": 1, "GetStageDone": 2}
 
 # ★★ 第 78 轮：四个 master 的扫描产物（缺文件 ⇒ 跳过）
+# ★★★ 第 110 轮：+ 追踪者联盟（SFBGS003.esm，medium 档）
 SCAN_FILES = (
     "info_gates.json",
+    "info_gates_sfbgs003.json",
     "info_gates_sfbgs00d.json",
     "info_gates_sfbgs050.json",
     "info_gates_shatteredspace.json",

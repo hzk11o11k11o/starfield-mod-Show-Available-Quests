@@ -70,6 +70,17 @@ def read_tes4(buf: bytes) -> dict:
     另：flags 位含义见 commonlibsf `TESFile::Flags`：
         0x01=kMaster 0x04=kEnabled 0x80=kLocalized 0x100=kSmall 0x200=? 0x400=kMedium 0x800=kBlueprint
       kSmall（light）插件的 FormID 是 12 位局部号 + 前缀 0xFE，读表时要按位宽区分。
+
+    ★★ 第 110 轮（medium 档 · SFBGS003 / 追踪者联盟）：
+      kMedium（0x400）插件的**记录在文件里就写 0xFD 前缀**：
+          FormID = 0xFD000000 | (mediumIndex << 16) | local(16 位)
+      文件内 mediumIndex = 0（占位），运行期由引擎按加载顺序分配（8 位、最多 256 个）。
+      实测证据（SFBGS003.esm）：自己的记录 0xFD00004A / 0xFD00492D（local < 0x10000）、
+      cross-ref 0xFD000EF5（FTYP 引用自己空间的关键字）；而**override 记录仍写 0x00 前缀**
+      （改 starfield.esm 的记录，共 9 条）—— 所以 dump 时必须过滤「不是自己的」记录，
+      否则 override 会以本插件的身份进表（运行期解析成错误 FormID）。
+      同理 light（0xFE 前缀）也按「前缀 == 0xFE」判自己（此前靠 self_index 判，
+      对 light/medium 都不成立 —— 本机第 110 轮才第一次有这两种样本）。
     """
     if buf[0:4] != b"TES4":
         raise ValueError("not a plugin")
@@ -82,10 +93,25 @@ def read_tes4(buf: bytes) -> dict:
     return {
         "flags": flags,
         "masters": masters,
-        "self_index": len(masters),          # 自己的记录用的前缀
-        "small": bool(flags & 0x100),        # light（ESL 类）
+        "self_index": len(masters),          # full 插件：自己的记录用的前缀
+        "small": bool(flags & 0x100),        # light（ESL 类）—— 前缀 0xFE
+        "medium": bool(flags & 0x400),       # ★★ 第 110 轮：medium（ESH 类）—— 前缀 0xFD
         "localized": bool(flags & 0x80),
     }
+
+
+def is_own_record(formid: int, meta: dict) -> bool:
+    """★★ 第 110 轮：这条记录是不是**本插件自己的**（而不是对 master 的 override）。
+
+    full：前缀 == self_index（文件内序号）；medium：0xFD；light：0xFE。
+    override 的前缀指向被覆盖记录的宿主 master（通常 0x00 = starfield.esm）⇒ False。
+    """
+    prefix = (formid >> 24) & 0xFF
+    if meta.get("medium"):
+        return prefix == 0xFD
+    if meta.get("small"):
+        return prefix == 0xFE
+    return prefix == meta.get("self_index", 0)
 
 
 def walk_quests(buf: bytes):
@@ -132,14 +158,23 @@ def parse_quest(formid: int, flags: int, payload: bytes, meta: dict | None = Non
         local     记录号（已经去掉文件内的 master 前缀）——运行期 FormID = (序号<<24)|local
         small     是否是 light 插件（前缀 0xFE + 12 位局部号）
       老字段 formid 保留（= 文件里的原始 FormID），便于和 xEdit/日志对照。
+
+    ★★ 第 110 轮：再加 medium（0xFD 前缀 + 16 位局部号）——
+        medium ⇒ local = formid & 0xFFFF；运行期 = 0xFD000000 | (mediumIndex<<16) | local。
     """
-    meta = meta or {"self_index": 0, "small": False, "file": ""}
-    mask = 0xFFF if meta.get("small") else 0xFFFFFF
+    meta = meta or {"self_index": 0, "small": False, "medium": False, "file": ""}
+    if meta.get("medium"):
+        mask = 0xFFFF
+    elif meta.get("small"):
+        mask = 0xFFF
+    else:
+        mask = 0xFFFFFF
     rec = {
         "formid": formid,
         "master": meta.get("file", "Starfield.esm"),
         "self_index": meta.get("self_index", 0),
         "small": bool(meta.get("small")),
+        "medium": bool(meta.get("medium")),
         "local": formid & mask,
         "rec_flags": flags,
         "edid": None,
@@ -197,7 +232,13 @@ def main() -> int:
         meta = read_tes4(buf)
         meta["file"] = path.name
         n0 = len(quests)
+        skipped = 0
         for formid, flags, payload in walk_quests(buf):
+            # ★★ 第 110 轮：只收「本插件自己的」记录 —— override（改某个 master 的记录）
+            #   在文件里写的是**被覆盖 master 的前缀**，以本插件身份进表会在运行期解析错。
+            if not is_own_record(formid, meta):
+                skipped += 1
+                continue
             quests.append(parse_quest(formid, flags, payload, meta))
         extra = ""
         if meta["flags"] & 0x100:
@@ -206,7 +247,8 @@ def main() -> int:
             extra += " kMedium"
         if meta["flags"] & 0x800:
             extra += " kBlueprint"
-        print(f"{path.name}: QUST {len(quests) - n0} 条；"
+        skip_txt = f"（跳过 override {skipped} 条）" if skipped else ""
+        print(f"{path.name}: QUST {len(quests) - n0} 条{skip_txt}；"
               f"master={meta['masters']}；自己的记录前缀=0x{meta['self_index']:02X}{extra}")
 
     print(f"QUST records: {len(quests)}")

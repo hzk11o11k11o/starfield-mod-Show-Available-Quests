@@ -157,8 +157,18 @@ def load_meta(path: Path) -> dict:
 
 
 def owner_of(formid: int, meta: dict) -> str:
-    """记录属于哪个插件：FormID 前缀 = 该插件自己的 master 列表下标；== self_index 就是它自己。"""
+    """记录属于哪个插件：FormID 前缀 = 该插件自己的 master 列表下标；== self_index 就是它自己。
+
+    ★★ 第 110 轮：medium（0xFD）/ light（0xFE）文件里，**自己空间**的引用直接落在
+    那两段（不是 master 下标）—— 先按档位短路，否则 0xFD 会被当成越界前缀
+    （所有 SFBGS003 的引用都会失去 owner ⇒ 候选全部作废）。
+    对这两类文件里的 override 引用（前缀 0x00 = starfield.esm）走原来的逻辑。
+    """
     prefix = (formid >> 24) & 0xFF
+    if prefix == 0xFD and meta.get("medium"):
+        return meta["file"]
+    if prefix == 0xFE and meta.get("small"):
+        return meta["file"]
     masters = meta["masters"]
     if prefix < len(masters):
         return masters[prefix]
@@ -230,13 +240,16 @@ def scan_world(mm: mmap.mmap, meta: dict, wanted_npc: set[int], wanted_refr: set
                         acc["npc_names"][formid] = u32(sp)
                         break
         elif sig == b"CELL":
-            info = {"edid": "", "full": 0}
+            # ★★ 第 110 轮：**非空才覆盖** —— override 记录（如 SFBGS003 的 5.5 万条
+            #   CELL）可能不带 EDID/FULL；无条件覆盖会把基础游戏 cell 的名字清空
+            #   （实测：13 条任务的「目标所在地」从城市名变成空串）。
+            cur = acc["cells"].setdefault(formid, {"edid": "", "full": 0})
             for s, sp in subrecords(payload):
                 if s == b"EDID":
-                    info["edid"] = ascii_z(sp)
+                    if sp:
+                        cur["edid"] = ascii_z(sp)
                 elif s == b"FULL" and len(sp) >= 4:
-                    info["full"] = u32(sp)
-            acc["cells"][formid] = info
+                    cur["full"] = u32(sp)
         elif sig == b"WRLD":
             for s, sp in subrecords(payload):
                 if s == b"FULL" and len(sp) >= 4:
@@ -379,11 +392,19 @@ def collect_candidates(fid: int, info: dict, acc: dict, quest_lctn: dict, meta: 
     """
     cands: list[dict] = []
 
-    def owner_fields(refr_id: int, fallback_meta: dict) -> tuple[str, bool]:
+    def owner_fields(refr_id: int, fallback_meta: dict) -> tuple[str, int, bool, bool]:
+        """→ (master 文件名, 记录号, isSmall, isMedium)。
+
+        ★★ 第 110 轮：候选引用的位宽按所属插件的档位取 ——
+        full 24 位 / medium 16 位（SFBGS003 的引用 = 0xFDxxxxxx）/ light 12 位。
+        """
         owner = owner_of(refr_id, fallback_meta) or fallback_meta["file"]
         om = meta_by_lower.get(owner.lower(), fallback_meta)
-        local = refr_id & (0xFFF if om.get("small") else 0xFFFFFF)
-        return om["file"], local, bool(om.get("small"))
+        if om.get("medium"):
+            return om["file"], refr_id & 0xFFFF, False, True
+        if om.get("small"):
+            return om["file"], refr_id & 0xFFF, True, False
+        return om["file"], refr_id & 0xFFFFFF, False, False
 
     def bad_cell(cell_id: int) -> bool:
         return bool(BAD_CELL_RE.search(acc["cells"].get(cell_id, {}).get("edid", "")))
@@ -404,9 +425,10 @@ def collect_candidates(fid: int, info: dict, acc: dict, quest_lctn: dict, meta: 
         name = ri.get("edid", "") or where_en
         if name.lower() in ("", "xmarker", "xmarkerheading", "mapmarker"):
             name = where_en or name
-        owner, local, small = owner_fields(refr, meta)
+        owner, local, small, medium = owner_fields(refr, meta)
         cands.append({
             "kind": "ref", "refr": local, "refrMaster": owner, "refrSmall": small,
+            "refrMedium": medium,
             "persistent": ri.get("persistent", False),
             "nameEn": name, "nameZh": name,
             "whereEn": where_en, "whereZh": where_zh,
@@ -426,9 +448,10 @@ def collect_candidates(fid: int, info: dict, acc: dict, quest_lctn: dict, meta: 
             if bad_cell(pl["cell"]):
                 continue
             where_en, where_zh = cell_desc(pl["cell"], pl["world"])
-            owner, local, small = owner_fields(pl["refr"], meta)
+            owner, local, small, medium = owner_fields(pl["refr"], meta)
             cands.append({
                 "kind": "actor", "refr": local, "refrMaster": owner, "refrSmall": small,
+                "refrMedium": medium,
                 "persistent": pl["persistent"],
                 "nameEn": name_en, "nameZh": name_zh,
                 "whereEn": where_en, "whereZh": where_zh,
@@ -455,10 +478,11 @@ def collect_candidates(fid: int, info: dict, acc: dict, quest_lctn: dict, meta: 
                     return name_of(li["parent"], depth + 1)
                 return "", ""
             n_en, n_zh = name_of(lctn)
-            owner, local, small = owner_fields(marker, meta)
+            owner, local, small, medium = owner_fields(marker, meta)
             mi = acc["refr_info"].get(marker, {})
             cands.append({
                 "kind": "loc", "refr": local, "refrMaster": owner, "refrSmall": small,
+                "refrMedium": medium,
                 "persistent": mi.get("persistent", False),
                 "nameEn": n_en, "nameZh": n_zh, "whereEn": n_en, "whereZh": n_zh,
                 "src": lsrc, "tier": 2, "generic": 0, "order": 0,
@@ -477,10 +501,11 @@ def collect_candidates(fid: int, info: dict, acc: dict, quest_lctn: dict, meta: 
     #   名字强制内部名质量（nameq=1 ⇒ grade 4）：它只是「就近落脚点」，不该在
     #   排序上压过任何真正的候选；但同 grade 内常驻优先 ⇒ 仍排在「非常驻内部名」之前。
     if fallback:
-        owner, local, small = owner_fields(fallback["refr"], meta)
+        owner, local, small, medium = owner_fields(fallback["refr"], meta)
         fname = fallback.get("edid") or f"Ref_{local:06X}"
         cands.append({
             "kind": "ref", "refr": local, "refrMaster": owner, "refrSmall": small,
+            "refrMedium": medium,
             "persistent": True,
             "nameEn": fname, "nameZh": fname, "nameq": 1,
             "whereEn": "", "whereZh": "",

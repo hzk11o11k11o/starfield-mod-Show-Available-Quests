@@ -979,6 +979,9 @@ def main() -> int:
             "入口认领日志": "认领已有引导（任务板入口）".encode(),
             # ★ 第 28 轮修正：中文名用游戏官中译名（"任务板 · 陋室" = The Lodge）
             "入口条目数据": "任务板 · 陋室".encode(),
+            # ★★★ 第 110 轮（追踪者联盟 · medium 档）：探测日志的 medium 形态
+            #   （SAQ_Masters.cpp 的 Describe：`序号=0x{:02X}(medium) 前缀=0xFD|…`）。
+            "medium 探测(文案)": "medium) 前缀=0xFD|0x".encode(),
             # ★★ 第 80 轮（可重复 NPC 入口）：入口表两类的计数日志 + NPC 名字前缀
             #   （数据真的进了 DLL 的静态表 —— 不只是生成脚本写对了文件）。
             "入口两类计数(日志)": "（任务板 {} + 可重复 NPC {}）".encode(),
@@ -2158,9 +2161,12 @@ def main() -> int:
         #   伦敦那条只给说明 ⇒ 0 候选 —— 所以有目标数是 +9 而不是 +10）。
         #   ★★★ 第 109 轮（大项 A②）：7 条补收任务（第 106 轮进表时没有引导候选）
         #   重新生成候选池 ⇒ 候选 960 → **996**、有目标任务 217 → **224**（+7）。
-        ok = cand_total > 200 and n_with == 224 and n_oob == 0
+        #   ★★★★ 第 110 轮（追踪者联盟）：SFTA00 带来 5 个候选（1 号特工领衔 +
+        #   汉尼拔/蟑螂哥 + 同 cell 常驻兜底）⇒ 候选 **1001**、有目标任务 **225**（+1）；
+        #   「赏金狩猎」是 noPickup（0 候选）—— 不增。
+        ok = cand_total > 200 and n_with == 225 and n_oob == 0
         print(("OK  " if ok else "MISS") +
-              f" 静态表 · 候选池完整（候选 {cand_total} 条 / 有目标任务 {n_with}（第 109 轮起 224）"
+              f" 静态表 · 候选池完整（候选 {cand_total} 条 / 有目标任务 {n_with}（第 110 轮起 225）"
               f" / 切片越界 {n_oob}）")
         all_ok &= ok
         def c_rows_of(text: str):
@@ -2337,12 +2343,14 @@ def main() -> int:
               " 静态表 · 大器晚成 INFO 门槛（孤立无援 0x0027071B 完成）")
         all_ok &= ok_bot
         # ★★ 第 78 轮（DLC 的 INFO 门槛）：两个跨 master 样本 ——
-        #   ① 失踪的华庭号（SFTER_MQ01）← 地球舰队侵袭（SFTER_MQIntro，master 2）@75 完成；
-        #   ② 栉比堡垒（SFBGS001_MQ06）← 破碎空间 LC06（master 3）@940 完成。
+        #   ① 失踪的华庭号（SFTER_MQ01）← 地球舰队侵袭（SFTER_MQIntro）@75 完成；
+        #   ② 栉比堡垒（SFBGS001_MQ06）← 破碎空间 LC06@940 完成。
         #   （这两条就在 kInfoConds 里，形态 = { 记录号, master, check, want, stage, orBit }。）
+        #   ★★★ 第 110 轮：SFBGS003.esm 插进 kQuestMasters 下标 1 ⇒ **全部后续
+        #   master 后移一位** —— SFBGS050 2 → 3、ShatteredSpace 3 → 4（样本同步）。
         for label, needle in (
-                ("失踪的华庭号 ← 地球舰队侵袭@75（master 2）", "{ 0x0000599Fu, 2u, 2u, 1u, 75u, 0u },"),
-                ("栉比堡垒 ← 破碎空间 LC06@940（master 3）", "{ 0x0001D3C6u, 3u, 2u, 1u, 940u, 0u },"),
+                ("失踪的华庭号 ← 地球舰队侵袭@75（master 3）", "{ 0x0000599Fu, 3u, 2u, 1u, 75u, 0u },"),
+                ("栉比堡垒 ← 破碎空间 LC06@940（master 4）", "{ 0x0001D3C6u, 4u, 2u, 1u, 940u, 0u },"),
         ):
             hit = needle in blob
             print(("OK  " if hit else "MISS") + f" 静态表 · DLC INFO 门槛样本（{label}）")
@@ -2734,9 +2742,11 @@ def main() -> int:
             region)
         table_size = _num_after(blob, "kQuestTableSize = ")
         n_with_fac = sum(1 for _l, v, _c, _p, _fe, _lm, _rp in fac_rows if int(v) >= 0)
+        #   ★★★ 第 110 轮（追踪者联盟）：+2 条（SFTA00 / 赏金狩猎都带
+        #   `FactionTypeTrackersAlliance` = 7）⇒ 有阵营 74 → **76**。
         fac_ok = (len(fac_rows) == table_size and table_size > 0
                   and all(-1 <= int(v) <= 9 for _l, v, _c, _p, _fe, _lm, _rp in fac_rows)
-                  and n_with_fac == 74)
+                  and n_with_fac == 76)
         print(("OK  " if fac_ok else "MISS") +
               f" 静态表 · 阵营列完整（行 {len(fac_rows)}/{table_size} / 有阵营 {n_with_fac} /"
               f" 值域 -1..9）")
@@ -2748,6 +2758,29 @@ def main() -> int:
         print(("OK  " if ok_fac else "MISS") +
               " 静态表 · 样本「深藏不露」阵营（Crimson Fleet = 5）")
         all_ok &= ok_fac
+
+        # ★★★ 第 110 轮（追踪者联盟 · SFBGS003，medium 档）：三条数据侧完整性 ——
+        #   ① kQuestMasters 里含 SFBGS003.esm（下标 1；运行期由 SAQ_Masters 的
+        #      medium 探测解析出 `0xFD | idx<<16` 前缀）；
+        #   ② 两条任务在表里且 master 列 = 1：
+        #      SFTA00「悬赏罪犯：星际盗贼」= Factions(2)、
+        #      SFBGS003_BountyScannerQuest「赏金狩猎」= Misc(3)；
+        #   ③ SFTA00 的链式边（kChainGates 的 `{ 0x00000CF2u, 1u, 1000u },` ——
+        #      追踪者联盟@1000「取走第一张通缉海报 ⇒ SFTA00.Start()」，官方
+        #      fragment 原文核验；这是它「进度没到不显示」的唯一启动边）。
+        sf_master = '"SFBGS003.esm"' in blob
+        print(("OK  " if sf_master else "MISS") +
+              " 静态表 · 追踪者联盟 master（SFBGS003.esm，第 110 轮）")
+        all_ok &= sf_master
+        sf_ok = (re.search(r"\{\s*0x0000492Du,\s*1u,\s*2u,", blob) is not None
+                 and re.search(r"\{\s*0x0000556Eu,\s*1u,\s*3u,", blob) is not None)
+        print(("OK  " if sf_ok else "MISS") +
+              " 静态表 · 追踪者联盟两条（星际盗贼=Factions / 赏金狩猎=Misc，master=1）")
+        all_ok &= sf_ok
+        ok_sfta_chain = "{ 0x00000CF2u, 1u, 1000u }," in blob
+        print(("OK  " if ok_sfta_chain else "MISS") +
+              " 静态表 · SFTA00 链式边（追踪者联盟@1000，第 110 轮）")
+        all_ok &= ok_sfta_chain
 
         # ★★ 第 74 轮（同伴好感度任务）：同伴列完整性 —— 数据侧（不只是特征串）：
         #   ① 表里恰好 8 条 COM_Quest_ 任务带 companion ≥ 0（4 位同伴 × 入口/后续）；
@@ -2901,7 +2934,9 @@ def main() -> int:
         #     见本文件后面的「可重复任务豁免链」段。）
         rp_rows = [(l, int(rp)) for (l, _f, _c, _p, _fe, _lm, rp) in fac_rows if int(rp) >= 0]
         rp_json = ROOT / "ref" / "repeatable_quests.json"
-        rp_ok = len(rp_rows) == 20 and sorted(v for _f, v in rp_rows) == list(range(20))
+        #   ★★★ 第 110 轮：+1 条（SFBGS003_BountyScannerQuest「赏金狩猎」——
+        #   追踪者联盟的城市赏金，Story Manager 可重复 spin up）⇒ 20 → **21**。
+        rp_ok = len(rp_rows) == 21 and sorted(v for _f, v in rp_rows) == list(range(21))
         if rp_json.exists():
             rpj = json.loads(rp_json.read_text(encoding="utf-8"))
 
@@ -2918,7 +2953,7 @@ def main() -> int:
                     break
             rp_ok = rp_ok and _num_after(blob, "kRepeatableCount = ") == len(rpj)
         print(("OK  " if rp_ok else "MISS") +
-              f" 静态表 · 可重复任务完整（标记 {len(rp_rows)}/20"
+              f" 静态表 · 可重复任务完整（标记 {len(rp_rows)}/21"
               + ("、与 ref 逐项一致" if rp_json.exists() else "（缺 ref/repeatable_quests.json）")
               + "）")
         all_ok &= rp_ok
@@ -3095,12 +3130,24 @@ def main() -> int:
         bad_prefix = [r_[0] for r_ in ent_rows
                       if (r_[6] == "1") != (r_[8].startswith("（可重复）")
                                             and r_[7].startswith("(Repeatable)"))]
-        ent_ok = (len(ent_rows) == 20 == ent_size and n_board == 12 and n_npc == 8
+        #   ★★★ 第 110 轮：+1 条任务板（追踪者联盟悬赏信息台，SFBGS003.esm · medium）
+        #   ⇒ 20 → **21**（任务板 12 → 13）。
+        ent_ok = (len(ent_rows) == 21 == ent_size and n_board == 13 and n_npc == 8
                   and not bad_prefix)
         print(("OK  " if ent_ok else "MISS") +
-              f" 入口表 · 20 条（任务板 {n_board} + 可重复 NPC {n_npc}；"
+              f" 入口表 · 21 条（任务板 {n_board} + 可重复 NPC {n_npc}；"
               f"「（可重复）」前缀只在 NPC 上={not bad_prefix}）")
         all_ok &= ent_ok
+
+        # ★★★ 第 110 轮：追踪者联盟悬赏信息台（第 21 条）—— master=1 +
+        #   兜底 = 常驻展示柜 0xFD00F9CE / 总部外 marker 0xFD000033（候选链三槽位语义：
+        #   远处引导落常驻展示柜，走近后升级为任务板自身）。
+        ok_tr = any(int(r_[0], 16) == 0xFD0024AD and r_[1] == "1"
+                    and int(r_[4], 16) == 0xFD00F9CE and int(r_[5], 16) == 0xFD000033
+                    for r_ in ent_rows)
+        print(("OK  " if ok_tr else "MISS") +
+              " 入口表 · 追踪者联盟悬赏信息台（master=1 + 展示柜/总部 marker 兜底）")
+        all_ok &= ok_tr
 
         by_local = {int(r_[0], 16): r_ for r_ in ent_rows}
         gv_json = ROOT / "ref" / "repeatable_givers.json"

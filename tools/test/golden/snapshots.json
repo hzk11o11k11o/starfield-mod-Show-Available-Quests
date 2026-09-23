@@ -8,13 +8,13 @@
     },
     "ref/info_gates_final.json": {
       "desc": "INFO 门槛数据（analyze_info_gates.py）",
-      "sha256": "a50d4d37d7bfd3770ab471296aa9b6b583fbb8220561468d9b7618eeccfc5d61",
-      "summary": "任务 80 / 对话 415 / 条件 501"
+      "sha256": "9b6a8d133b5ac92df317ad3f2bb619b55d985883271ab739e6eb261a7853bfac",
+      "summary": "任务 84 / 对话 425 / 条件 512"
     },
     "ref/guide_targets.json": {
       "desc": "引导目标候选池（gen_guide_targets.py）",
-      "sha256": "d455bf568979eb4bb6e8e9c7d464ea92bcd64f540f85c7c559883061d519ee08",
-      "summary": "任务 216 / 候选 967"
+      "sha256": "406e0d3881a94a8bd0b3479923e70fb3023151b15dc2f08bcef0403ec00e9ae7",
+      "summary": "任务 217 / 候选 972"
     },
     "ref/repeatable_givers.json": {
       "desc": "可重复任务 NPC 入口（gen_repeatable_givers.py）",
@@ -23,8 +23,8 @@
     },
     "ref/entry_targets.json": {
       "desc": "任务板入口表（gen_entry_table.py）",
-      "sha256": "0e97f56edc03aeebb563b9f57f4c3c1da09bbceffc835552f879525b1c94d3f1",
-      "summary": "条目 20"
+      "sha256": "0b59a4c5583568f7c6529433dd0e95546af327a908ce08b0c73a10ac1c310e66",
+      "summary": "条目 21"
     },
     "ref/board_markers.json": {
       "desc": "新建常驻 marker（create_board_markers.py）",
@@ -48,8 +48,8 @@
     },
     "ref/repeatable_quests.json": {
       "desc": "可重复任务（gen_repeatable_quests.py）",
-      "sha256": "5509839890cb85c773ee4c9beddcfccc8040078750eb7b2419ca850e0a565ecf",
-      "summary": "可重复 20（有引导 18 / 无接取点 2）"
+      "sha256": "9ab0ad586fe5c8a7f9276b096a4a253816afcc284f1e7dbd07b556c715279d21",
+      "summary": "可重复 21（有引导 18 / 无接取点 3）"
     },
     "ref/quest_chain_dlc.json": {
       "desc": "DLC 链式启动边（gen_dlc_chain.py）",
@@ -58,13 +58,13 @@
     },
     "ref/gate_coverage.json": {
       "desc": "门槛覆盖盘点（survey_gate_coverage.py）",
-      "sha256": "3959305eb3ee85734532a9faa52c85abbf7b191d6894b8c2fb9ff175ea44ca46",
+      "sha256": "f0d22e06b1c7750332539112e702fc53b8e66caa4234e6e4b40cfc28a4b812c5",
       "summary": "键 6"
     },
     "plugin/src/SAQ_QuestTable.h": {
       "desc": "静态任务表（gen_quest_table.py，DLL 编译进去）",
-      "sha256": "43d9a75fc265deae1482067f2a2a213333bf2667b4d9e5219919bcc23c8c9974",
-      "summary": "任务 278 / 候选 996 / 进度门槛 11 / INFO对话 415 / INFO条件 501 / 链式边 89 / 同伴 4 / 势力入口 4 / 地标 10 / 可重复 20"
+      "sha256": "4c88955c59c48664b45cc0da3e174ef687346d316915e1773203067d01beb1ea",
+      "summary": "任务 280 / 候选 1001 / 进度门槛 11 / INFO对话 425 / INFO条件 512 / 链式边 90 / 同伴 4 / 势力入口 4 / 地标 10 / 可重复 21"
     },
     "ui/missionmenu/saqdata/SaqEmbeddedPayload.inc": {
       "desc": "内嵌回退载荷（gen_quest_table.py）",
@@ -73,8 +73,8 @@
     },
     "plugin/src/SAQ_EntryTable.h": {
       "desc": "入口条目表（gen_entry_table.py，DLL 编译进去）",
-      "sha256": "3ebc674540f35f373ca3db63892e9976d73ba03ef726de347ed45abbbf805c10",
-      "summary": "入口 20"
+      "sha256": "1b6862f433f935361c63434922e7e6e8cc7d4ef89776b9902c4aa74e1b2f4064",
+      "summary": "入口 21"
     },
     "esm/SAQ_ShowAvailableQuests.esm": {
       "desc": "代理任务 ESM（patch_saq_esm.py 等，幂等补丁）",

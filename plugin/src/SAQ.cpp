@@ -780,9 +780,13 @@ namespace SAQ
 			tryCand(boardID, EntryGuideSource::exactBoard, "原板");
 			tryCand(e.markerLocal ? (markerPrefix | e.markerLocal) : 0,
 				EntryGuideSource::exactMarker, "marker");
-			tryCand(e.fallback1 ? Masters::MakeFormID(0, e.fallback1) : 0,
+			// ★★ 第 110 轮：兜底候选的 master **跟条目走**（旧写法硬编码 master 0）——
+			//   SFBGS003 条目（追踪者联盟悬赏信息台）的兜底也在它自己的 medium 空间里
+			//   （展示柜 0xFD00F9CE / 总部外 marker 0xFD000033），必须用 e.master 解析。
+			//   对基础游戏的 12 条板无行为变化（e.master = 0）。
+			tryCand(e.fallback1 ? Masters::MakeFormID(e.master, e.fallback1) : 0,
 				EntryGuideSource::fallback, "兜底1");
-			tryCand(e.fallback2 ? Masters::MakeFormID(0, e.fallback2) : 0,
+			tryCand(e.fallback2 ? Masters::MakeFormID(e.master, e.fallback2) : 0,
 				EntryGuideSource::fallback, "兜底2");
 			return st;
 		}
