@@ -7,7 +7,9 @@
 本工具做三件事（只读探测 + 产出一份原始数据）：
   1. 统计 INFO 规模（总数 / 带 CTDA / 带 VMAD）；
   2. 提取「引用**别的任务**」的进度类条件（GetQuestRunning/GetStageDone/GetQuestCompleted；
-     ★★★ 第 128 轮起 = **运算符折叠**后的期望值，`!= / > / >= / < / <=` 都在内 ——
+     ★★★ 第 128 轮起 = **运算符折叠**后的期望值，`!= / > / >= / < / <=` 都在内；
+     ★★★★ 第 145 轮（operator 三期）起 **cmp 任意数值常量**也可折叠（`== 1510` 之类，
+     不可折叠的只剩 flags 非 OR：GLOB / 别名 / Pack / 交换）——
      折叠内核见 tools/esm/ctda_ops.py）—— 这是「接取前置」在对话侧的表达，作为大项 D 的候选门槛；
   3. 输出 ref/info_gates.json 供后续分析（另附函数索引分布，方便以后扩子集）。
 
@@ -46,11 +48,12 @@ GATE_FUNCS = {
 def parse_ctda_raw(b: bytes) -> dict | None:
     if len(b) < 32:
         return None
-    # ★ 第 106 轮（operator 全量产品化）：op 改读 **u32** —— 与 analyze_ctda.py 同款位域
-    #   解析（运算符 = op >> 5、flags = op & 0x1F；第 86 轮反汇编实证见 docs/08 4.3）。
-    #   旧实现只读 b[0]（低字节）：实测数据恰好都 < 0x100 所以没出错，但不严谨。
+    # ★★★ 第 145 轮（operator 三期）：op 只取 **低字节** —— 与 analyze_ctda.py 同款
+    #   （数据侧取证见 docs/08 4.8：+0 是 4 字节 = 低字节 type + 高 3 字节 unused；
+    #   stage / log entry 条件的 unused 非零 ⇒ 读 u32 会算出越界运算符）。
+    #   位域：运算符 = op >> 5、flags = op & 0x1F（第 86 轮反汇编实证）。
     return {
-        "op": struct.unpack_from("<I", b, 0)[0],
+        "op": struct.unpack_from("<I", b, 0)[0] & 0xFF,
         "cmp": round(struct.unpack_from("<f", b, 4)[0], 6),
         "func": struct.unpack_from("<H", b, 8)[0],
         "p1": struct.unpack_from("<I", b, 12)[0],
@@ -200,19 +203,33 @@ def main() -> int:
         # ★ 第 106 轮（operator 全量产品化）判据拆两层；★★★ 第 128 轮（operator 二期）
         #   判定与折叠全部走共享内核 `ctda_ops`（真值表 / 组语义见 tools/esm/ctda_ops.py，
         #   有 `--self-test`）：
-        #   · is_progress = 「进度类形态」（三函数 + Run On=Subject + cmp∈{0,1}），
-        #     **不含 op/flags 要求**：用于对话分类（入口/推进/中性）；
-        #   · fold_of = 进度类 + flags 只允许 OR + 运算符可折叠 ⇒
-        #     ("want", 0/1) / ("const", True/False)；不可门槛 ⇒ None + 诊断原因。
+        #   · is_gate_func = 「进度类形态的内核」（三函数 + Run On=Subject），
+        #     **不含 cmp / flags 要求**：折叠判定（fold_of）用它；
+        #   · is_progress = is_gate_func + cmp∈{0,1}：用于**对话分类**与盘点统计口径
+        #     （第 106/128 轮口径不动，便于历史对比）；
+        #   · ★★★★ 第 145 轮（operator 三期）：fold_of = is_gate_func + flags 无
+        #     GLOB/别名/Pack/交换 + 运算符与 **cmp 任意数值常量**可折叠 ⇒
+        #     ("want", 0/1) / ("const", True/False)；不可门槛 ⇒ None + 细分诊断原因。
+        def is_gate_func(c):
+            return c["runOn"] == 0 and c["func"] in GATE_FUNCS
+
         def is_progress(c):
-            return (c["runOn"] == 0 and c["cmp"] in (0.0, 1.0)
-                    and c["func"] in GATE_FUNCS)
+            return is_gate_func(c) and c["cmp"] in (0.0, 1.0)
 
         def fold_of(c):
-            if not is_progress(c):
+            if not is_gate_func(c):
                 return None, "非进度类"
-            if (c["op"] & 0x1F) & ~0x01:            # 别名 / GLOB / Pack Data / 交换主客体
-                return None, "flags 不在门槛子集"
+            # ★ 第 145 轮：flags 非 OR 的四类逐项诊断（都是「折叠管不到」）——
+            #   GLOB = cmp 字段是 FormID（需运行期读 TESGlobal）；别名 = p1 是别名索引；
+            #   Pack / 交换 = 参数语义未取证。一律放行（tripwire 盯着，见 docs/08 4.8）。
+            if c["op"] & 0x04:
+                return None, "GLOB 比较值"
+            if c["op"] & 0x02:
+                return None, "别名位"
+            if c["op"] & 0x08:
+                return None, "Pack Data"
+            if c["op"] & 0x10:
+                return None, "交换主客体"
             f = ctda_ops.fold_operator(c["op"] >> 5, c["cmp"])
             if f is None:
                 return None, "运算符不可折叠"

@@ -1,25 +1,28 @@
 #!/usr/bin/env python3
 """survey_gate_coverage.py - 「进度没到不显示」的门槛覆盖盘点（第 109 轮 · 大项 B；
-★★★ 第 128 轮随 **operator 二期**升级）。
+★★★ 第 128 轮随 **operator 二期**升级；★★★★ 第 145 轮随 **operator 三期**升级）。
 
-背景（docs/99「下一步大项候选」第 ③ 项 / docs/08 4.3~4.6 / 4.7）：
+背景（docs/99「下一步大项候选」第 ③ 项 / docs/08 4.3~4.8）：
   第 86 轮把 CTDA 的 operator 语义全解（运算符 = type >> 5、flags = type & 0x1F）；
-  第 87/106 轮产品化到「`==` + OR 位」；**第 128 轮把余下的运算符（`!=` / `>` /
-  `>=` / `<` / `<=`）也折叠产品化**（`tools/esm/ctda_ops.py`，真值表 + 组语义）——
-  折叠后**只剩 flags（别名 / GLOB / Pack Data / 交换主客体）与 cmp∉{0,1} 管不到**。
+  第 87/106 轮产品化到「`==` + OR 位」；第 128 轮把余下运算符（`!=` / `>` /
+  `>=` / `<` / `<=`）折叠产品化；**第 145 轮把 cmp∉{0,1} 也折叠产品化**并使
+  type 解析改回低字节（+0 的 4 字节里只有低字节是 type）——
+  折叠后**只剩 flags 非 OR（GLOB / 别名 / Pack Data / 交换主客体）管不到**
+  （表内外外键形态当前实测 0 条，见 docs/08 4.8）。
 
 本工具回答：「数据侧还剩多少条能收？」并按 (原因 / 前置 / 表内/表外 / 运算符·flags) 摊开。
-第 128 轮的两类判据（`--check` 的报红条件）：
-  * **折叠已覆盖却仍 pending**（进度类 + 外键 + 前置已解析 + flags 只允许 OR +
-    cmp∈{0,1} + 运算符 ∈ 1..5）⇒ 说明**扫描没重跑 / 折叠逻辑退化**（数据管线问题）；
-  * **折叠管不到的形态在表内**（flags 非 OR / cmp∉{0,1}）⇒ 需要「后续阶段」产品化
-    （GLOB 比较值 / 别名解析 —— 与运算符无关）。
+第 145 轮的两类判据（`--check` 的报红条件）：
+  * **应已被折叠收进门槛却仍 pending**（进度类 + 外键 + 前置已解析 + flags 无 GLOB/别名/
+    Pack/交换 + 折叠结果 = `want`）⇒ 说明**扫描没重跑 / 折叠逻辑退化**（数据管线问题）；
+    ★ 折叠成常量（恒真/恒假）的条件被保守处置丢弃 —— pending 留痕是设计，不报红；
+  * **折叠管不到的形态在表内**（flags 非 OR：GLOB 比较值 / 别名 / Pack / 交换）⇒
+    「后续阶段」的对象（GLOB 需运行期读 TESGlobal；别名需解析别名表）。
 
-结论（第 109 轮盘点 + 第 128 轮落地的实测）：
+结论（第 109 轮盘点 + 第 128 轮落地 + 第 145 轮普查的实测）：
   * 表内 12 条「OR 组放弃」的阻断项**不是运算符** —— 是同一组里混着
-    **自引用条件**或**非进度类条件**（脚本/终端检查等）⇒ 整组放弃（两轮都一致）；
-  * 7 条运算符形态全在**非表内**任务（对话容器 / 人群闲聊 / DLC 对话任务）上
-    ⇒ 折叠收进门槛后对「可接任务列表」零影响（表内对象 = 0）；
+    **自引用条件**或**非进度类条件**（脚本/终端检查等）⇒ 整组放弃（三轮都一致）；
+  * 运算符 / cmp∉{0,1} 形态全在**非表内**任务上 ⇒ 折叠收进门槛后对「可接任务列表」
+    零影响（表内对象 = 0）；唯一表内样本 = SFTA00 的 `== 1510`（自引用 ⇒ 不算门槛）；
   * 记录级（QUST CTDA）：表内 11 条全是 `==`（结构扫描实测）⇒ 折叠后表内 0 变化。
 
 用法：
@@ -37,8 +40,18 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 REF = ROOT / "ref"
+sys.path.insert(0, str(Path(__file__).parent))
+import ctda_ops  # noqa: E402  （第 145 轮：tripwire 用折叠结果判「应收未收」）
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
+#: ★ 第 145 轮：flags 非 OR 的四类（折叠管不到）—— 用于细分诊断文案
+FLAG_NAMES = [(0x04, "GLOB 比较值"), (0x02, "别名位"), (0x08, "Pack Data"), (0x10, "交换主客体")]
+
+
+def flags_reason(fl: int) -> str:
+    names = [n for bit, n in FLAG_NAMES if fl & bit]
+    return " / ".join(names) if names else f"flags=0x{fl:02X}"
 
 OPS = {0: "==", 1: "!=", 2: ">", 3: ">=", 4: "<", 5: "<="}
 PENDING_FILES = [
@@ -60,12 +73,13 @@ def load_table() -> tuple[set[tuple[str, int]], int]:
 def scan_pending(in_table: set[tuple[str, int]]) -> dict:
     """按 (master, 原因, 前置是否解析, 表内/表外, 运算符/flags) 分类。
 
-    ★★★ 第 128 轮（operator 二期）新增两档判据（均只对**表内**报红，见 main）：
-      * `foldCovered`：「折叠已覆盖」形态 —— 进度类 + 外键 + 前置已解析 +
-        flags 只允许 OR + cmp∈{0,1} + 运算符 ∈ 1..5。这些**本应已折叠收进门槛**；
-        还出现在 pending 里 ⇒ 数据管线退化（扫描没重跑 / 折叠逻辑坏了）。
-      * `uncovered`：「折叠管不到」形态 —— flags 非 OR（别名 / GLOB / Pack Data /
-        交换主客体）或 cmp∉{0,1}：与运算符无关，属后续阶段（GLOB/别名）的对象。
+    ★★★★ 第 145 轮（operator 三期）的两档判据（均只对**表内**报红，见 main）：
+      * `foldCovered`：「应已被折叠收进门槛」形态 —— 进度类 + 外键 + 前置已解析 +
+        flags 只允许 OR + 折叠结果 = `want`。这些**本应已折叠收进门槛**；还出现在
+        pending 里 ⇒ 数据管线退化（扫描没重跑 / 折叠逻辑坏了）。
+        （折叠成常量（恒真/恒假）的条件被保守处置丢弃 —— pending 留痕是设计，不报红。）
+      * `uncovered`：「折叠管不到」形态 —— flags 非 OR（GLOB 比较值 / 别名 /
+        Pack Data / 交换主客体）：属后续阶段的对象（GLOB 需运行期读 TESGlobal）。
     """
     per_class: collections.Counter = collections.Counter()
     per_master: dict[str, dict] = {}
@@ -96,10 +110,18 @@ def scan_pending(in_table: set[tuple[str, int]]) -> dict:
             if it:
                 in_table_rows.append(row)
             resolved = bool(g.get("resolved"))
-            if resolved and (fl & ~0x01) == 0 and cmpv in (0.0, 1.0) and op in (1, 2, 3, 4, 5):
-                fold_covered.append(row + ("  ← 表内！数据管线疑似退化" if it else ""))
-            elif resolved and ((fl & ~0x01) != 0 or cmpv not in (0.0, 1.0)):
-                uncovered.append(row + ("  ← 表内！后续阶段对象" if it else ""))
+            # ★★★★ 第 145 轮（operator 三期）：用折叠内核判「应收未收」——
+            #   flags 非 OR ⇒ 折叠管不到（细分原因）；否则看折叠结果：
+            #   want ⇒ 本应收进门槛（仍 pending = 管线退化）；常量 ⇒ 保守丢弃（设计）。
+            #   ★ 组级阻断（reason 以「OR 组」开头：组内混着自引用 / 非进度类 ⇒ 整组
+            #     放弃）是第 106/128 轮的设计行为（不倒半组）——不报红。
+            if resolved and (fl & ~0x01) != 0:
+                uncovered.append(f"{row} [{flags_reason(fl)}]"
+                                 + ("  ← 表内！后续阶段对象" if it else ""))
+            elif resolved and not str(g.get("reason", "")).startswith("OR 组"):
+                fold = ctda_ops.fold_operator(op, cmpv)
+                if fold and fold[0] == ctda_ops.WANT:
+                    fold_covered.append(row + ("  ← 表内！数据管线疑似退化" if it else ""))
         per_master[sm] = {"file": fn, "total": len(d["pending"]),
                           "classes": {"/".join(k): v for k, v in hist.items()}}
     # ★ perClass 用**元组键**（打印时按下标取列）；写 JSON 时再 join（见 main）。
@@ -116,7 +138,12 @@ def record_scan() -> dict:
 
     ★★★ 第 128 轮：除「可门槛形态」（`gateableShapes`：flags⊆OR + cmp∈{0,1}）外，
     另记「**折叠管不到**」的形态（`uncoveredShapes`：flags 非 OR / cmp∉{0,1}）——
-    后者是「后续阶段（GLOB / 别名）」的对象，表内出现就该有人看一眼（本轮实测 0 条）。
+    后者是「后续阶段（GLOB / 别名）」的对象，表内出现就该有人看一眼。
+    ★★★★ 第 145 轮（operator 三期）：
+      * type 改读**低字节**（+0 的 4 字节里只有低字节是 type —— stage 条件的 unused 非零）；
+      * masters 补 **SFBGS003**（第 110 轮新 master，此前记录级扫描漏了它）；
+      * `gateableShapes` 改按「**折叠内核能折叠**」（cmp 任意数值常量 ✅）；
+      * `uncoveredShapes` 按 flags 四类**细分**（GLOB / 别名 / Pack / 交换），实测表内 0 条。
     """
     import mmap
     import struct
@@ -124,7 +151,8 @@ def record_scan() -> dict:
     from esm_probe import subrecords  # noqa: E402
 
     data = Path(r"D:\SteamLibrary\steamapps\common\Starfield\Data")
-    masters = ["Starfield.esm", "ShatteredSpace.esm", "SFBGS00D.esm", "SFBGS050.esm"]
+    masters = ["Starfield.esm", "ShatteredSpace.esm", "SFBGS00D.esm", "SFBGS050.esm",
+               "SFBGS003.esm"]  # ★ 第 145 轮补：第 110 轮新 master
     gate_funcs = {0x0038: "Running", 0x003B: "StageDone", 0x021F: "Completed"}
     sections = {b"INDX", b"ALST", b"ALED", b"QOBJ", b"QSTA", b"FNAM", b"QNOD", b"QNPC",
                 b"QMDP", b"QSRD", b"SCEN", b"ANAM"}
@@ -181,7 +209,7 @@ def record_scan() -> dict:
                                 if s in sections:
                                     section = "OTHER"
                                 if s == b"CTDA" and section == "RECORD" and len(sp) >= 32:
-                                    t = struct.unpack_from("<I", sp, 0)[0]
+                                    t = struct.unpack_from("<I", sp, 0)[0] & 0xFF
                                     conds.append((t >> 5, t & 0x1F,
                                                   struct.unpack_from("<f", sp, 4)[0],
                                                   struct.unpack_from("<H", sp, 8)[0],
@@ -197,21 +225,25 @@ def record_scan() -> dict:
                                     continue
                                 cmptxt = "cmp∈{0,1}" if cmpv in (0.0, 1.0) else f"cmp={cmpv}"
                                 shape = f"{OPS.get(op, op)}/flags=0x{fl:02X} {cmptxt}"
-                                gateable = (fl & ~0x01) == 0 and cmpv in (0.0, 1.0)
-                                if gateable:
+                                # ★ 第 145 轮：可收形态 = flags 无 GLOB/别名/Pack/交换
+                                #   且折叠内核能吃下（cmp 任意数值常量 ✅ / NaN ❌）
+                                foldable = ((fl & ~0x01) == 0
+                                            and ctda_ops.fold_operator(op, cmpv) is not None)
+                                if foldable:
                                     hist[f"{OPS.get(op, op)}/flags=0x{fl:02X}"] += 1
                                     if (m, local) in in_table and len(samples) < 20:
                                         samples.append(
                                             f"{edid}(0x{local:06X}) {gate_funcs[func]} "
                                             f"pre=0x{p1 & 0xFFFFFF:06X} cmp={cmpv} {shape}")
                                 else:
-                                    # ★ 第 128 轮：折叠管不到的形态（flags / cmp）——
-                                    #   记录级里若有，就是「后续阶段」的对象。
-                                    uncov[shape] += 1
+                                    # ★ 第 145 轮：折叠管不到 —— 按 flags 四类细分
+                                    why = (flags_reason(fl) if (fl & ~0x01)
+                                           else "不可折叠（cmp 异常）")
+                                    uncov[f"{shape} [{why}]"] += 1
                                     if (m, local) in in_table and len(uncov_samples) < 20:
                                         uncov_samples.append(
                                             f"{edid}(0x{local:06X}) {gate_funcs[func]} "
-                                            f"pre=0x{p1 & 0xFFFFFF:06X} {shape}")
+                                            f"pre=0x{p1 & 0xFFFFFF:06X} {shape} [{why}]")
                         p += 24 + size
                     break
             finally:
@@ -266,13 +298,14 @@ def main() -> int:
     for s in pend["inTableRows"]:
         out("  · " + s)
     out("")
-    out(f"折叠已覆盖形态 {len(pend['foldCovered'])} 条（`!=`/`>`/`>=`/`<`/`<=` + cmp∈{{0,1}}"
-        f" + 前置已解析 —— 第 128 轮起应已被折叠收进门槛；标「表内」= 数据管线疑似退化）：")
+    out(f"应已被折叠收进门槛的形态 {len(pend['foldCovered'])} 条（**独立条件**：运算符全解 +"
+        f" cmp 任意数值常量 + 前置已解析 —— 第 145 轮起应已被收进门槛；标「表内」= "
+        f"数据管线疑似退化；组级阻断（OR 组放弃）是设计行为、不计入）：")
     for s in pend["foldCovered"]:
         out("  · " + s)
     out("")
-    out(f"折叠管不到的形态 {len(pend['uncovered'])} 条（flags 非 OR / cmp∉{{0,1}} —— "
-        f"与运算符无关，属后续阶段；标「表内」= 后续阶段对象）：")
+    out(f"折叠管不到的形态 {len(pend['uncovered'])} 条（flags 非 OR：GLOB / 别名 / Pack / 交换 —— "
+        f"属后续阶段；标「表内」= 后续阶段对象）：")
     for s in pend["uncovered"]:
         out("  · " + s)
 
@@ -286,10 +319,11 @@ def main() -> int:
                         "inTableConds": in_table_gate_conds},
         "infoPending": {**pend,
                         "perClass": {"/".join(k): v for k, v in pend["perClass"].items()}},
-        "conclusion": ("第 128 轮把 `!=`/`>`/`>=`/`<`/`<=` 折叠产品化（tools/esm/ctda_ops.py）"
-                       "后，表内任务上仍无可收对象：12 条 pending 全部因「同组含自引用/"
-                       "非进度类条件」放弃（与运算符无关）；7 条运算符形态都在非表内任务上"
-                       "（折叠已收，表内零变化）；记录级表内 11 条已全是 `==`。"),
+        "conclusion": ("第 145 轮（operator 三期）把 cmp∉{0,1} 折叠产品化、并把 type 解析改回"
+                       "低字节后，表内任务上仍无可收对象：pending 的阻断项全部是「同组含自引用/"
+                       "非进度类条件」（与运算符 / cmp 无关）；运算符与 cmp 形态都在非表内任务上"
+                       "（表内零变化）；记录级表内 11 条已全是 `==`，唯一特殊样本 = SFTA00 的"
+                       "`== 1510`（自引用 ⇒ 不算门槛）。"),
     }
     if a.record_scan:
         # ★ 记录级扫描写**单独文件**（约 1 分钟；主报告要能进黄金快照 ⇒ 必须只含
@@ -313,25 +347,44 @@ def main() -> int:
 
     if a.check:
         # tripwire 只读：不写报告（避免把完整报告覆盖成精简版）。
-        # ★★★ 第 128 轮：报红条件换成两类（见文件头注释）——
-        #   ① 折叠已覆盖却仍 pending（表内）⇒ 扫描没重跑 / 折叠退化；
-        #   ② 折叠管不到的形态在表内 ⇒ 后续阶段（GLOB / 别名）的对象。
+        # ★★★★ 第 145 轮：报红条件三类（见文件头注释）——
+        #   ① 应已被折叠收进门槛却仍 pending（表内）⇒ 扫描没重跑 / 折叠退化；
+        #   ② 折叠管不到的形态在表内（flags 非 OR：GLOB / 别名 / Pack / 交换）⇒
+        #     后续阶段对象；
+        #   ③ 记录级记录文件（`*_record.json`，`--record-scan` 产物）里的表内 uncovered
+        #     样本（若有）—— 记录级只有结构扫描能看见，靠定期重跑维护该文件。
         stale = [s for s in pend["foldCovered"] if "表内" in s]
         uncovered = [s for s in pend["uncovered"] if "表内" in s]
+        rec_uncovered: list[str] = []
+        rec_path = Path(a.out).with_name(Path(a.out).stem + "_record.json")
+        if rec_path.exists():
+            try:
+                rec = json.loads(rec_path.read_text(encoding="utf-8"))
+                for mname, d in rec.items():
+                    for s in d.get("inTableUncoveredSamples", []):
+                        rec_uncovered.append(f"{mname} {s}")
+            except (ValueError, OSError):
+                pass
         if stale:
-            print(f"[tripwire] 表内出现 {len(stale)} 条「折叠已覆盖」形态（应已被收进门槛）⇒ "
-                  f"数据管线疑似退化：重跑 scan_info_gates.py；折叠规则见 docs/08 4.7：")
+            print(f"[tripwire] 表内出现 {len(stale)} 条「应已被折叠收进门槛」形态 ⇒ "
+                  f"数据管线疑似退化：重跑 scan_info_gates.py；折叠规则见 docs/08 4.8：")
             for s in stale:
                 print("  " + s)
             return 1
         if uncovered:
-            print(f"[tripwire] 表内出现 {len(uncovered)} 条「折叠管不到」形态（flags/cmp）⇒ "
-                  f"后续阶段对象（GLOB / 别名 解析）：")
+            print(f"[tripwire] 表内出现 {len(uncovered)} 条「折叠管不到」形态（flags 非 OR）⇒ "
+                  f"后续阶段对象（GLOB / 别名 / Pack / 交换）：")
             for s in uncovered:
                 print("  " + s)
             return 1
+        if rec_uncovered:
+            print(f"[tripwire] 记录级出现 {len(rec_uncovered)} 条「折叠管不到」形态（flags 非 OR）⇒ "
+                  f"后续阶段对象（重跑 --record-scan 核对）：")
+            for s in rec_uncovered:
+                print("  " + s)
+            return 1
         print("[tripwire] OK：表内任务没有漏收的进度类外键条件"
-              "（折叠已覆盖；flags/cmp 形态在表内也是 0 条）")
+              "（折叠已覆盖；flags 非 OR 形态在表内也是 0 条）")
         return 0
 
     Path(a.out).write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")

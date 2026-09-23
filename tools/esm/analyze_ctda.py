@@ -37,6 +37,9 @@
       `>=` / `<` / `<=` 在 cmp∈{0,1} 下交给 `ctda_ops.fold_operator` 精确折叠
       （want / 恒真 / 恒假），组级处置见 `build_gates` 与 `tools/esm/ctda_ops.py`
       头注释（真值表 + 有自检）。折叠不改动运行时（`want` 本来就是生成期字段）。
+    * ★★★★ 第 145 轮（**operator 三期**）：cmp 不再限定 {0,1}（任意数值常量可精确折叠）；
+      type 解析改回**低字节**（+0 的 4 字节里只有低字节是 type —— 见 parse_ctda）；
+      仍放行的只剩 flags 非 OR（别名 / GLOB / Pack Data / 交换主客体）。
     * Run On == Subject
     * 函数是 GetQuestRunning / GetQuestCompleted / GetStageDone 之一
     * 比较值 ∈ {0.0, 1.0}
@@ -102,26 +105,32 @@ def cond_to_gate(c: dict, self_formid: int) -> dict | None:
       `ctda_ops.fold_operator`（真值表 + 组语义见该文件；`!=` / `>` / `>=` / `<` / `<=`
       在 cmp∈{0,1} 下都能精确折叠）。返回 dict 的 `fold` ∈
       `("want", 0|1)` / `("const", True|False)`；常量的组级处置见 `build_gates`。
+    ★★★★ 第 145 轮（operator 三期）：**cmp 不再限定 {0,1}** —— 任意数值常量都交内核
+      精确折叠（`== 1510` 之类 ⇒ 恒假 ⇒ 保守处置；见 docs/08 4.8）。唯一例外 =
+      flags bit2（GLOB 比较值：cmp 字段是 FormID，需运行期读 `TESGlobal::value`）——
+      表内外当前 0 条外键形态 ⇒ 不实现（放行 + tripwire 盯着）。
     """
     t = c.get("op", 0)
     op, flags = t >> 5, t & 0x1F
-    if flags & ~0x01:                       # 只允许 OR 位
+    if flags & 0x04:                        # ★ 第 145 轮：GLOB 比较值（cmp 是 FormID）放行
+        return None
+    if flags & ~0x01:                       # 其余 flags（别名 / Pack Data / 交换主客体）放行
         return None
     if c.get("runOn") != 0:                 # Run On 必须是 Subject
         return None
     name = c.get("name")
     if name not in GATE_FUNCS:
         return None
+    # ★ 第 145 轮：cmp 由内核判定（任意数值常量可折叠；NaN ⇒ None）
     cmpv = c.get("cmp")
-    if cmpv not in (0.0, 1.0):
-        return None
     p1 = c.get("p1", 0)
     if p1 == self_formid:                   # 自引用 = 启动守卫，不是进度门槛
         return None
     if (p1 >> 24) != 0:                     # 只支持 base 游戏空间（Starfield.esm）的引用
         return None
+    # ★ 第 145 轮：cmp∉{0,1}（任意数值常量）也交给内核折叠（NaN ⇒ 内核返回 None）
     folded = ctda_ops.fold_operator(op, cmpv)
-    if folded is None:                      # 运算符越界（理论上不出现）
+    if folded is None:                      # 运算符越界 / cmp 是 NaN（理论上不出现）
         return None
     return {
         "fold": folded,                     # ("want", 0|1) / ("const", True|False)
@@ -169,9 +178,12 @@ def parse_ctda(raw_hex: str) -> dict:
     b = bytes.fromhex(raw_hex)
     if len(b) < 32:
         return {"raw": raw_hex, "len": len(b)}
-    # ★ 第 87 轮：type 是 u32（位域：运算符 = type >> 5、flags = type & 0x1F；
-    #   第 86 轮反汇编实证）—— 旧实现只读低字节 b[0]（实测数据恰好都 ≤ 0xFF）。
-    op = struct.unpack_from("<I", b, 0)[0]
+    # ★★★ 第 145 轮（operator 三期）：type 只取 **低字节** —— 数据侧取证（docs/08 4.8）：
+    #   CTDA 的 +0 是 4 字节 = 低字节 type（运算符 = type >> 5、flags = type & 0x1F）
+    #   + 高 3 字节 unused；stage / log entry 条件的 unused 非零（实测 300 条，如 55 4C 4C），
+    #   第 87 轮起的「读 u32」把它们算成越界运算符（方向保守，但统计失真、且漏收）。
+    #   低字节读法与第 86 轮反汇编一致（`and byte [rcx+0x38], 0x1f` —— type 是字节）。
+    op = struct.unpack_from("<I", b, 0)[0] & 0xFF
     cmp_val = struct.unpack_from("<f", b, 4)[0]
     func = struct.unpack_from("<H", b, 8)[0]
     p1 = struct.unpack_from("<I", b, 12)[0]

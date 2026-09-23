@@ -58,7 +58,7 @@
     },
     "ref/gate_coverage.json": {
       "desc": "门槛覆盖盘点（survey_gate_coverage.py）",
-      "sha256": "2dcfe13bf0b6087d1ab92660d5421f5e35148ed0dbe448c8c2f552ac4789e8bb",
+      "sha256": "fa3fc1d088211f9cf46b1448890ac4bbfc92e58140a095296acf46c8ffb91ca7",
       "summary": "表内 pending 12 / 折叠已覆盖 0 / 管不到 0"
     },
     "plugin/src/SAQ_QuestTable.h": {

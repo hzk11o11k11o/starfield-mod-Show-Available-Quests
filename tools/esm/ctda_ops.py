@@ -12,7 +12,14 @@
     比较运算符在 cmp∈{0,1} 时可以**精确**折叠成一个静态期望值 `want ∈ {0,1}`，
     或在少数组合下退化成常量（恒真 / 恒假）。
 
-真值表（value = 函数结果 ∈ {0,1}；cmp ∈ {0,1}；`.want` = 期望 value 等于它）：
+真值表（value = 函数结果 ∈ {0,1}；`.want` = 期望 value 等于它）——
+★★★ 第 145 轮（**operator 三期**）：cmp 不再限定 {0,1}（**任意数值常量**都能精确折叠）：
+把 value=0 / value=1 分别代入比较，结果 r0/r1：
+    r0 == r1       → 常量（恒真 / 恒假）
+    r0 != r1       → want = (r1 ? 1 : 0)      （条件在 value==1 时真 ⇒ 期望 value==1）
+cmp ∈ {0,1} 时与第 128 轮完全一致（逐条见 `--self-test` ①）；cmp=1510 之类 ⇒ 恒假（常量）。
+
+旧表（cmp ∈ {0,1}，第 128 轮 —— 通用实现的特例，保留作对照）：
 
     op==  : value == cmp   → want = (cmp == 1)
     op!=  : value != cmp   → want = (cmp == 0)          （取反）
@@ -20,6 +27,11 @@
     op>=  : value >= cmp   → cmp==0 ⇒ **恒真**（常量）；cmp==1 ⇒ want = 1
     op<   : value <  cmp   → cmp==0 ⇒ **恒假**（常量）；cmp==1 ⇒ want = 0
     op<=  : value <= cmp   → cmp==1 ⇒ **恒真**（常量）；cmp==0 ⇒ want = 0
+
+★ 第 145 轮的两条边界（取证见 docs/08 4.8）：
+  * **`cmp` 是 GLOB 引用（flags bit2）时不可折叠** —— 该字段是 FormID 而非数值，
+    折叠需要运行期读 `TESGlobal::value`（表内外当前 0 条外键形态 ⇒ 不实现，tripwire 盯着）；
+  * **NaN**（数据异常）⇒ 不可折叠（放行）—— 绝不用 NaN 参与比较。
 
 常量 / 不可折叠的处置（组语义，保守 —— **绝不引入误藏**，与 docs/08 4.6 的推演一致）：
 
@@ -52,27 +64,41 @@ WANT = "want"     # ("want", 0|1) —— 折叠成静态期望值
 CONST = "const"   # ("const", True|False) —— 恒真 / 恒假
 
 
+def _true_at(op: int, cmp_value: float, value: int) -> bool:
+    """把 `value` ∈ {0,1} 代入「value <op> cmp_value」（三函数都返回布尔）。"""
+    if op == 0:                       # ==
+        return value == cmp_value
+    if op == 1:                       # !=
+        return value != cmp_value
+    if op == 2:                       # >
+        return value > cmp_value
+    if op == 3:                       # >=
+        return value >= cmp_value
+    if op == 4:                       # <
+        return value < cmp_value
+    if op == 5:                       # <=
+        return value <= cmp_value
+    raise ValueError(f"op 越界：{op}")
+
+
 def fold_operator(op: int, cmp_value: float) -> tuple[str, int] | tuple[str, bool] | None:
     """把「(运算符, 比较值)」折叠成 `("want", 0|1)` / `("const", True|False)`。
 
-    不可折叠（运算符越界 / cmp 不是 0 或 1）⇒ None。
+    ★★★ 第 145 轮（operator 三期）：**任意数值常量**都能精确折叠（不再限定 cmp∈{0,1}）——
+    实现 = 把 value=0 / value=1 分别代入比较（`_true_at`），由 r0/r1 得出常量或 want。
+    （cmp 是 GLOB 的条件在两条管线里已被 flags bit2 挡在折叠之前，不会进到这里。）
+
+    不可折叠（运算符越界 / cmp 是 NaN）⇒ None。
     """
-    if op not in OPS or cmp_value not in (0.0, 1.0):
+    if op not in OPS:
         return None
-    c = 1 if cmp_value == 1.0 else 0
-    if op == 0:                       # ==
-        return (WANT, c)
-    if op == 1:                       # !=
-        return (WANT, 1 - c)
-    if op == 2:                       # >   （value > 1 永假 / value > 0 ⇒ value==1）
-        return (CONST, False) if c == 1 else (WANT, 1)
-    if op == 3:                       # >=  （value >= 0 永真 / value >= 1 ⇒ value==1）
-        return (CONST, True) if c == 0 else (WANT, 1)
-    if op == 4:                       # <   （value < 0 永假 / value < 1 ⇒ value==0）
-        return (CONST, False) if c == 0 else (WANT, 0)
-    if op == 5:                       # <=  （value <= 0 ⇒ value==0 / value <= 1 永真）
-        return (WANT, 0) if c == 0 else (CONST, True)
-    return None
+    if cmp_value != cmp_value:        # NaN：数据异常 ⇒ 不折叠（放行）
+        return None
+    r0 = _true_at(op, cmp_value, 0)
+    r1 = _true_at(op, cmp_value, 1)
+    if r0 == r1:
+        return (CONST, r0)
+    return (WANT, 1 if r1 else 0)
 
 
 def or_group_end(or_bits, start: int) -> int:
@@ -155,10 +181,23 @@ def _self_test() -> int:
     for (op, cmpv), want in table.items():
         eq(fold_operator(op, cmpv), want, f"真值表 op={OPS[op]} cmp={cmpv}")
 
-    # ② 不可折叠：运算符越界 / cmp 不是 0/1
+    # ② 不可折叠：运算符越界 / NaN
     eq(fold_operator(6, 0.0), None, "真值表 op=6（越界）")
-    eq(fold_operator(0, 2.0), None, "真值表 cmp=2.0")
-    eq(fold_operator(1, -1.0), None, "真值表 cmp=-1.0")
+    eq(fold_operator(0, float("nan")), None, "NaN ⇒ 不折叠（放行）")
+
+    # ③ ★ 第 145 轮（operator 三期）：cmp∉{0,1} 的精确折叠（通用实现 —— 把 value∈{0,1}
+    #    代入比较；`==` cmp=1510 是 SFTA00 的真实样本形状，折叠 = 恒假）
+    eq(fold_operator(0, 1510.0), (CONST, False), "== cmp=1510 ⇒ 恒假（SFTA00 形状）")
+    eq(fold_operator(0, 0.5), (CONST, False), "== cmp=0.5 ⇒ 恒假")
+    eq(fold_operator(1, 2.0), (CONST, True), "!= cmp=2 ⇒ 恒真")
+    eq(fold_operator(2, -1.0), (CONST, True), "> cmp=-1 ⇒ 恒真")
+    eq(fold_operator(2, 0.5), (WANT, 1), "> cmp=0.5 ⇒ want=1")
+    eq(fold_operator(3, -0.5), (CONST, True), ">= cmp=-0.5 ⇒ 恒真")
+    eq(fold_operator(3, 1.5), (CONST, False), ">= cmp=1.5 ⇒ 恒假")
+    eq(fold_operator(4, 2.0), (CONST, True), "< cmp=2 ⇒ 恒真")
+    eq(fold_operator(4, 0.5), (WANT, 0), "< cmp=0.5 ⇒ want=0")
+    eq(fold_operator(5, -1.0), (CONST, False), "<= cmp=-1 ⇒ 恒假")
+    eq(fold_operator(5, 1.5), (CONST, True), "<= cmp=1.5 ⇒ 恒真")
 
     # ③ OR 组边界：组 = OR 位连续段 + 关闭组的第一条无 OR 位条件
     eq(or_group_end([True, True, False, True], 0), 3, "OR 组 [T,T,F,T] @0")
@@ -196,7 +235,8 @@ def _self_test() -> int:
         for f in fails:
             print("  · " + f)
         return 1
-    print("[ctda_ops] 自检 OK：真值表 12 例 + 不可折叠 3 例 + 组边界 5 例 + 组装 10 例。")
+    print("[ctda_ops] 自检 OK：真值表 12 例 + 不可折叠 2 例 + cmp∉{0,1} 11 例"
+          " + 组边界 5 例 + 组装 10 例。")
     return 0
 
 

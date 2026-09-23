@@ -238,6 +238,13 @@
           本脚本检查：折叠内核在场（五个符号）+ 两条管线接线 + 离线测试含内核自检 +
           静态表 want 只含 0/1（进度门槛 + INFO 门槛）+ 反向检查（旧「只支持等于」
           实现/文案不得残留）。
+  第 145 轮（**operator 三期** · cmp∉{0,1} 折叠 + type 低字节解析）：
+          cmp 不再限定 {0,1}（任意数值常量精确折叠：`== 1510` ⇒ 恒假）；type 解析改回
+          **低字节**（第 87/106 轮的「读 u32」会把 stage 条件 3 字节 unused 算成越界
+          运算符 —— 见 docs/08 4.8）；GLOB 比较值（flags bit2）单独放行；tripwire 升级
+          （flags 四类细分 / 记录级记录文件纳入 / 记录级扫描补 SFBGS003）。
+          本脚本检查：内核任意 cmp 折叠 + NaN 保护 + 两条管线低字节 + GLOB 单独放行 +
+          tripwire 升级在场 + 反向检查（旧「读 u32 当 type」不得残留）。
 
 用法：python tools/ui/verify_saq_build.py [--release|--dev]
 """
@@ -3170,6 +3177,38 @@ def main() -> int:
         print(("OK  " if ok_rev else "MISS") +
               " operator 二期 · 旧「只支持等于」实现/文案已替换(反向检查)")
         all_ok &= ok_rev
+        # ★★★★ 第 145 轮（operator 三期）：cmp∉{0,1} 折叠 + type 低字节解析 + tripwire 升级。
+        #   ① 内核：任意常量 cmp（通用实现 `_true_at`）+ NaN 保护；
+        #   ② 两条管线的 type 解析只取**低字节**（+0 的 4 字节里只有低字节是 type ——
+        #      stage / log entry 条件的 3 字节 unused 非零，读 u32 会算出越界运算符）；
+        #   ③ GLOB 比较值（flags bit2）单独放行（需运行期读 TESGlobal）；
+        #   ④ tripwire 升级：flags 四类细分 + 记录级记录文件纳入 + 记录级扫描补 SFBGS003；
+        #   ⑤ 反向检查：旧「读 u32 当 type」实现不得残留（改回去就会红）。
+        ok_fold3 = all(k in fold_src for k in ("_true_at", "cmp_value != cmp_value",
+                                               "任意数值常量"))
+        print(("OK  " if ok_fold3 else "MISS") +
+              " operator 三期 · 折叠内核支持任意常量 cmp（+ NaN 保护）")
+        all_ok &= ok_fold3
+        ok_low = ('struct.unpack_from("<I", b, 0)[0] & 0xFF' in ac_src
+                  and '"op": struct.unpack_from("<I", b, 0)[0] & 0xFF' in si_src)
+        print(("OK  " if ok_low else "MISS") + " operator 三期 · 两条管线 type 只取低字节")
+        all_ok &= ok_low
+        ok_glob = ("flags & 0x04" in ac_src and 'c["op"] & 0x04' in si_src)
+        print(("OK  " if ok_glob else "MISS") +
+              " operator 三期 · GLOB 比较值单独放行（flags bit2）")
+        all_ok &= ok_glob
+        cov_path = ROOT / "tools" / "esm" / "survey_gate_coverage.py"
+        cov_src = cov_path.read_text(encoding="utf-8") if cov_path.exists() else ""
+        ok_cov = all(k in cov_src for k in ("flags_reason", "SFBGS003.esm",
+                                            "inTableUncoveredSamples", "ctda_ops"))
+        print(("OK  " if ok_cov else "MISS") +
+              " operator 三期 · tripwire 升级（flags 四类细分 / 记录级纳入 / 补 SFBGS003）")
+        all_ok &= ok_cov
+        ok_rev3 = ('op = struct.unpack_from("<I", b, 0)[0]\n' not in ac_src
+                   and '"op": struct.unpack_from("<I", b, 0)[0],' not in si_src)
+        print(("OK  " if ok_rev3 else "MISS") +
+              " operator 三期 · 旧「读 u32 当 type」实现已替换(反向检查)")
+        all_ok &= ok_rev3
 
         # ★★★ 第 106 轮（覆盖面全量复盘）：补收的 7 条「无 QTYP 但完整」漏收任务 ——
         #   ① ref/extra_quests.json 的每一条都在表里（按记录号 + itype 对齐）；
