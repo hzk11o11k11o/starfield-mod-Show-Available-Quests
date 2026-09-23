@@ -11,9 +11,9 @@
   系统（任务目标蓝点 + 扫描仪路径线）导航到接取地点。
   · 已经完成的、以及已在任务日志里的任务会自动隐藏（可重复任务例外：做完一次后
     仍会显示，描述里写明怎么再接）
-  · 汇总「无限任务」的接取入口（12 处任务板 + 8 位提供可重复任务的 NPC），点一下就能导航过去
+  · 汇总「无限任务」的接取入口（13 处任务板 + 8 位提供可重复任务的 NPC），点一下就能导航过去
   · 没有导航目标的任务会明确提示：条目名前面标注「（不可导航）」，按钮置灰，不会误导
-  · 中文 / 英文游戏都支持；自动适配官方 DLC（未安装的 DLC 不会显示其任务）
+  · 中文 / 英文游戏都支持；自动适配官方内容（追踪者联盟 / DLC —— 未安装的模块不会显示其任务）
 
 二、依赖
   · Starfield 1.16.244
@@ -52,16 +52,16 @@
   以及在 [Log] 段调整日志文件大小上限（MaxSizeMB，单位 MB，默认 1）。
 
 六、已知限制
-  · 少量任务（278 条中的 54 条）暂时没有可用的导航目标：条目名会标注
+  · 少量任务（280 条中的 55 条）暂时没有可用的导航目标：条目名会标注
     「（不可导航）」，界面如实提示，不会假装能引导。
-  · 无限生成任务本身不显示，但其接取入口（12 处任务板 + 8 位可重复任务 NPC）会作为独立条目列出；
+  · 无限生成任务本身不显示，但其接取入口（13 处任务板 + 8 位可重复任务 NPC）会作为独立条目列出；
     无论你在哪都能一键导航过去——远处先给大致方位，走到那块板所在的区域后
     蓝点会自动落到板上（读档/重启后也会自动校正）。
   · 少数任务的导航目标所在区域要**先靠近才会加载**：远处点引导会先落到附近
     位置（HUD 会提示「目标尚未加载」），走近后自动生效，不必重新点。
   · 「游戏进度还没到时应当不显示」覆盖两类条件：任务记录里「引用别的任务」的
     前置条件（7 条任务 / 11 条条件，含条件组里的「或」逻辑），以及任务对话
-    （INFO）里的同类条件（80 条任务 / 415 条对话 / 501 条条件，含官方 DLC，
+    （INFO）里的同类条件（84 条任务 / 425 条对话 / 512 条条件，含官方 DLC，
     例如「大器晚成」要「孤立无援」完成）；另有任务链门槛（后续任务在前置完成前
     不显示）；位置/遭遇类条件暂未覆盖。
   · 本 mod 会覆盖 Interface\missionmenu.swf 与 missionmenu_lrg.swf：
@@ -88,12 +88,12 @@
   · Already-completed quests and quests already in your log are hidden
     (repeatable quests are the exception: they stay listed after you finish
     them, and their description tells you how to take them again)
-  · Pickup points of radiant quests are included: 12 mission boards plus
+  · Pickup points of radiant quests are included: 13 mission boards plus
     8 repeatable-job NPCs, one click to navigate
   · Quests without a navigation target are clearly flagged (button greyed
     out) instead of silently failing
-  · Works with Chinese and English games; official DLC aware (quests from
-    DLC you don't own are never listed)
+  · Works with Chinese and English games; official content aware (Trackers
+    Alliance / DLC - quests from modules you don't own are never listed)
 
 2. Requirements
   · Starfield 1.16.244
@@ -142,10 +142,10 @@
   log file size limit (MaxSizeMB, in MB, default 1).
 
 6. Known limitations
-  · 54 of 278 quests currently have no usable navigation target; the UI
+  · 55 of 280 quests currently have no usable navigation target; the UI
     says so honestly instead of pretending.
   · Radiant (infinite) quests themselves are not listed, but their pickup
-    points (12 mission boards + 8 repeatable-job NPCs) are listed as
+    points (13 mission boards + 8 repeatable-job NPCs) are listed as
     entries; every entry can be navigated to from anywhere - far away you
     get the approximate direction, and once you reach the board's area the
     marker snaps onto the board itself (it also self-corrects after a save
@@ -156,8 +156,8 @@
   · "Not shown when your progress is not far enough" covers two layers of
     conditions: record-level preconditions that reference another quest
     (7 quests / 11 conditions, including "or" groups) and the same kind of
-    conditions inside a quest's dialogues (INFOs, 80 quests / 415 dialogues
-    / 501 conditions, official DLC included, e.g. "A House Divided" needs
+    conditions inside a quest's dialogues (INFOs, 84 quests / 425 dialogues
+    / 512 conditions, official DLC included, e.g. "A House Divided" needs
     "The Empty Nest" finished), plus a quest-chain gate (a follow-up quest
     stays hidden until its prerequisite is done); location/encounter based
     conditions are not covered yet.

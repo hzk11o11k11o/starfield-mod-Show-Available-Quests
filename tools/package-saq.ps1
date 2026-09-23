@@ -2,7 +2,7 @@
 #  Show Available Quests - 打包 Nexus 上传包
 #
 #  用法（pwsh 7）：
-#     & ".\tools\package-saq.ps1"                   # 默认按 v0.1.12 打包
+#     & ".\tools\package-saq.ps1"                   # 默认按 v0.1.13 打包
 #     & ".\tools\package-saq.ps1" -Version 0.2.0    # 指定版本号
 #     & ".\tools\package-saq.ps1" -SkipVerify       # 跳过产物特征校验
 #     & ".\tools\package-saq.ps1" -SkipBuild        # 不重新构建（用当前产物，调试用）
@@ -30,7 +30,7 @@
 #       & ".\tools\build-saq.ps1" -SkipTable -SkipSwf -SkipPapyrus -Harness
 # ============================================================================
 param(
-    [string]$Version = '0.1.12',
+    [string]$Version = '0.1.13',
     [switch]$SkipVerify,
     # ★ 第 53 轮：跳过「发布构建 + 部署」这一步（用当前产物打包 —— 只用于调试脚本本身；
     #   正常打包必须让它跑，否则可能把含 harness 的 DLL 打进包里）。

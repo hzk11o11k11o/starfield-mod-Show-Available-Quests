@@ -1,4 +1,4 @@
-# Nexus 上传素材（v0.1.12）
+# Nexus 上传素材（v0.1.13）
 
 > 用途：复制下面内容到 Nexus 的 mod 页。Summary 填「名称/摘要」栏，
 > Description 填「描述」栏（Nexus 描述框可用 BBCode，纯文本换行也正常）。
@@ -29,16 +29,16 @@ Starfield 从不告诉你去哪接任务，全靠自己撞见。这个 mod 在�
 [list]
 [*] 集中显示所有可接的非主线任务
 [*] 收录「地球地标」系列 10 条（阿波罗 / 开罗 / 迪拜 / 香港 / 伦敦 / 洛杉矶 / 纽约 / 大阪 / 上海 / 圣路易斯）：描述里写明**去哪拿哪本书**（对应的书被拾取 / 购买后任务即开始）；点一下即可导航到那本书（伦敦那条书在各大书店，描述里注明）
-[*] 汇总「无限任务」的接取入口（12 处任务板：新亚特兰蒂斯 / 阿基拉城 / 霓虹城 / 塞多尼亚 / 霍普镇 / 新家园 / 星船厂 / 星钥站…… + 8 位提供可重复任务的 NPC，条目带「（可重复）」标记），点一下就能导航过去
+[*] 汇总「无限任务」的接取入口（13 处任务板：新亚特兰蒂斯 / 阿基拉城 / 霓虹城 / 塞多尼亚 / 霍普镇 / 新家园 / 星船厂 / 星钥站 / 追踪者联盟总部…… + 8 位提供可重复任务的 NPC，条目带「（可重复）」标记），点一下就能导航过去
 [*] 选中即可调用游戏原生引导，导航到接取地点（蓝点 / 路径线）
 [*] 引导目标优先指向**有名字的任务发布者（NPC）**，而不是附近的路标 / 内部标记；你在远处时自动落到常驻目标，飞近后自动切回 NPC
-[*] 已完成的、已在任务日志里的任务自动隐藏（**可重复任务例外**：这类任务完成一次后仍留在列表里 —— 共 20 条，名字前同样带「（可重复）」标记并整组排在列表末尾，描述第一句写明「（可重复）怎么再接」）
+[*] 已完成的、已在任务日志里的任务自动隐藏（**可重复任务例外**：这类任务完成一次后仍留在列表里 —— 共 21 条，名字前同样带「（可重复）」标记并整组排在列表末尾，描述第一句写明「（可重复）怎么再接」）
 [*] **进度没到不会显示**：前置任务没做完、剧情还没推进到的任务不会出现在列表里（判据来自游戏数据里的任务条件 + 对话条件；列表里留下的都是你现在真能接的）
 [*] 没有导航目标的任务会明确提示：条目名字前面直接标注**「（不可导航）」**，描述里写明原因，不用点就知道它没法引导
 [*] 导航目标很远的任务：远处点引导会先落到**就近位置**（不再「点了没反应」），走近后自动切换到精确目标；极少数（20 条）连就近目标都取不到的任务，描述会**提前**写明「需要靠近」，HUD 会提示、引导保持待生效，靠近后自动生效（不必重新点）
 [*] 被引导的任务一旦接取，引导自动取消
 [*] 支持中文 / 英文
-[*] 支持官方 DLC（破碎空间 / 地球舰队等；未安装的 DLC 不会显示其任务）
+[*] 支持官方内容（追踪者联盟 / 破碎空间 / 地球舰队等；未安装的模块不会显示其任务）
 [*] 日志写在 mod 目录里，删 mod 不残留；日志不超过 1 MB 自动滚动
 [/list]
 
@@ -56,10 +56,10 @@ Starfield 从不告诉你去哪接任务，全靠自己撞见。这个 mod 在�
 
 [b]已知限制[/b]
 [list]
-[*] 278 条任务中有 54 条暂无导航目标：条目名会标注「（不可导航）」，界面如实提示，不会假装能引导
-[*] 无限生成任务本身不显示，但其接取入口（12 处任务板 + 8 位提供可重复任务的 NPC）作为独立条目列出；任何位置都能一键导航过去——在远处先给你一个大致方位，等你走到那块任务板所在的区域，蓝点会自动落到任务板上（不会停在几米外；读档或重启游戏后也会自动校正）
+[*] 280 条任务中有 55 条暂无导航目标：条目名会标注「（不可导航）」，界面如实提示，不会假装能引导
+[*] 无限生成任务本身不显示，但其接取入口（13 处任务板 + 8 位提供可重复任务的 NPC）作为独立条目列出；任何位置都能一键导航过去——在远处先给你一个大致方位，等你走到那块任务板所在的区域，蓝点会自动落到任务板上（不会停在几米外；读档或重启游戏后也会自动校正）
 [*] 引导在关闭任务菜单后生效（与原版一致：HUD 蓝点本来就要关菜单才可见）
-[*] 「进度没到就不显示」覆盖**两层条件**：任务记录级条件里「引用别的任务」的那一类（7 条任务 / 11 条条件，含条件组里的「或」逻辑，例如「要先完成 A 才能接到 B」），以及任务对话（INFO）里的同类条件（80 条任务 / 415 条对话 / 501 条条件，含官方 DLC，例如「大器晚成」要「孤立无援」完成）；另有**任务链门槛**（后续任务在前置完成前不显示，含官方 DLC）；位置/遭遇类条件暂未覆盖
+[*] 「进度没到就不显示」覆盖**两层条件**：任务记录级条件里「引用别的任务」的那一类（7 条任务 / 11 条条件，含条件组里的「或」逻辑，例如「要先完成 A 才能接到 B」），以及任务对话（INFO）里的同类条件（84 条任务 / 425 条对话 / 512 条条件，含官方 DLC，例如「大器晚成」要「孤立无援」完成）；另有**任务链门槛**（后续任务在前置完成前不显示，含官方 DLC）；位置/遭遇类条件暂未覆盖
 [*] 会覆盖任务菜单的 UI 文件（missionmenu.swf / missionmenu_lrg.swf），与其它改任务菜单的 mod 需要打补丁
 [/list]
 
@@ -81,16 +81,16 @@ Starfield never tells you where to pick up quests — you just have to stumble i
 [list]
 [*] Lists all available non-main quests in one place
 [*] Includes the 10 "Landmark" quests (Apollo / Cairo / Dubai / Hong Kong / London / Los Angeles / New York / Osaka / Shanghai / St. Louis): the description tells you which book to pick up (picking it up / buying it starts the quest), and one click navigates you to that book
-[*] Includes the pickup points of radiant quests: 12 mission boards (New Atlantis / Akila City / Neon / Cydonia / Hopetown / New Homestead / staryards / The Key...) plus 8 repeatable-job NPCs (4 Trade Authority merchants, 4 Trackers Alliance agents - their entries are tagged "(Repeatable)"), one click to navigate
+[*] Includes the pickup points of radiant quests: 13 mission boards (New Atlantis / Akila City / Neon / Cydonia / Hopetown / New Homestead / staryards / The Key / Trackers Alliance HQ...) plus 8 repeatable-job NPCs (4 Trade Authority merchants, 4 Trackers Alliance agents - their entries are tagged "(Repeatable)"), one click to navigate
 [*] Native guidance: quest marker + scanner route line to the quest giver
 [*] Guidance prefers the **named quest giver (NPC)** over nearby signposts / internal markers; from a distance it falls back to a persistent target and automatically upgrades back to the NPC once you get close
 [*] SET COURSE (R / X) goes one step further: it also opens the star map with the route plotted to the pickup location, exactly like a vanilla quest
-[*] Already-completed quests and quests already in your log are hidden (repeatable quests are the exception: they stay listed after you finish them - 20 of them - and are tagged "(Repeatable)" and grouped at the end of the list; their description tells you how to take them again)
+[*] Already-completed quests and quests already in your log are hidden (repeatable quests are the exception: they stay listed after you finish them - 21 of them - and are tagged "(Repeatable)" and grouped at the end of the list; their description tells you how to take them again)
 [*] Quests with no navigation target are clearly flagged (the description explains why) — no dead ends
 [*] Some pickup locations only load when you get near: the description says so in advance, and the HUD reminds you after you press guide; the guidance stays pending and activates automatically once you arrive (no need to press it again)
 [*] Guidance is cancelled automatically once you accept the quest
 [*] Chinese and English games supported
-[*] Official DLC aware (Shattered Space, Earth Fleet, …); quests from DLC you don't own are never listed
+[*] Official content aware (Trackers Alliance, Shattered Space, Earth Fleet, …); quests from modules you don't own are never listed
 [*] Log lives inside the mod folder (no leftovers), capped at 1 MB with auto-roll
 [/list]
 
@@ -108,10 +108,10 @@ Mission menu (TAB) -> "Available Quests" -> select an entry -> expand the "Go to
 
 [b]Known limitations[/b]
 [list]
-[*] 54 of 278 quests currently have no navigation target; the UI says so honestly
-[*] Radiant quests themselves are not listed, but their pickup points (12 mission boards + 8 repeatable-job NPCs) are listed as entries; every entry can be navigated to from anywhere — far away you get the approximate direction, and once you reach the board's area the marker automatically snaps onto the board itself (no more stopping a few metres short; it also self-corrects after a save reload or restart)
+[*] 55 of 280 quests currently have no navigation target; the UI says so honestly
+[*] Radiant quests themselves are not listed, but their pickup points (13 mission boards + 8 repeatable-job NPCs) are listed as entries; every entry can be navigated to from anywhere — far away you get the approximate direction, and once you reach the board's area the marker automatically snaps onto the board itself (no more stopping a few metres short; it also self-corrects after a save reload or restart)
 [*] Guidance applies after you close the mission menu (same as vanilla: the HUD marker only appears outside menus)
-[*] "Hidden when your progress isn't far enough" covers **two layers**: record-level preconditions that reference another quest (7 quests / 11 conditions, including "or" groups, e.g. "you must finish A before B shows up") and the same kind of conditions inside a quest's dialogues (INFOs: 80 quests / 415 dialogues / 501 conditions, official DLC included), plus a quest-chain gate (a follow-up quest stays hidden until its prerequisite is done, official DLC included); location/encounter based conditions are not covered yet
+[*] "Hidden when your progress isn't far enough" covers **two layers**: record-level preconditions that reference another quest (7 quests / 11 conditions, including "or" groups, e.g. "you must finish A before B shows up") and the same kind of conditions inside a quest's dialogues (INFOs: 84 quests / 425 dialogues / 512 conditions, official DLC included), plus a quest-chain gate (a follow-up quest stays hidden until its prerequisite is done, official DLC included); location/encounter based conditions are not covered yet
 [*] Overrides the mission menu UI (missionmenu.swf / missionmenu_lrg.swf): patching needed with other mission-menu mods
 [/list]
 
@@ -127,8 +127,9 @@ Please include SFSE\Plugins\SAQ_ShowAvailableQuests.log, install method (MO2 / m
 ## 更新日志（Changelog）
 
 ### v0.1.13（2026-09-23）
-- 改进：**7 条补收任务补上了导航目标**（v0.1.12 里它们还标注着「（不可导航）」）—— 巴雷特个人任务「阴阳两隔」会引导到巴雷特本人；新亚特兰蒂斯「搜查与扣押 / 双城传说」引导到 UC 安保办公室的由实中士；阿基拉城「防御措施 / 误报 / 兽群领袖」引导到阿基拉城广场的戴维斯·威尔逊；「登陆不顺」引导到 GalBank 的马尔科·詹森。现在这 7 条点「前往接取地点」和别的任务一样有 HUD 蓝点 / 扫描仪路径线；无可导航任务的条数 61 → 54
-- 其它：内部测试与验证设施更新（不影响游戏内行为；发布包仍不包含任何测试代码）
+- 新增：**支持「追踪者联盟」**（官方免费更新）—— 新增「任务板 · 追踪者联盟总部」（阿基拉城）入口与可重复的「赏金狩猎」条目；剧情任务（如「悬赏罪犯：星际盗贼」）随进度条件显示
+- 改进：**7 条补收任务补上了导航目标**（v0.1.12 里它们还标注着「（不可导航）」）—— 巴雷特个人任务「阴阳两隔」会引导到巴雷特本人；新亚特兰蒂斯「搜查与扣押 / 双城传说」引导到 UC 安保办公室的由实中士；阿基拉城「防御措施 / 误报 / 兽群领袖」引导到阿基拉城广场的戴维斯·威尔逊；「登陆不顺」引导到 GalBank 的马尔科·詹森。现在这 7 条点「前往接取地点」和别的任务一样有 HUD 蓝点 / 扫描仪路径线；无可导航任务的条数 61 → 55
+- 其它：可接任务总数 278 → 280、入口 20 → 21、可重复任务 20 → 21；日志文件大小上限现在可在 ini 里调整（`[Log] MaxSizeMB`，发布包默认 1 MB）；内部测试与验证设施更新（不影响游戏内行为；发布包仍不包含任何测试代码）
 
 ### v0.1.12（2026-09-23）
 - 新增：**补收 7 条此前漏掉的任务** —— 巴雷特个人任务「阴阳两隔」、新亚特兰蒂斯「搜查与扣押 / 双城传说」、阿基拉城阿什塔线「防御措施 / 误报 / 兽群领袖 / 登陆不顺」。这些任务没有任务类型标记，此前被过滤掉了；现在正常显示，并带完整的前置条件判定（进度没到不会出现）。这几条暂无可导航的接取点，条目名会标注「（不可导航）」
@@ -199,7 +200,7 @@ Please include SFSE\Plugins\SAQ_ShowAvailableQuests.log, install method (MO2 / m
 
 | 项 | 说明 |
 | --- | --- |
-| 上传包 | `dist\SAQ-ShowAvailableQuests-0.1.12.zip`（由 `tools\package-saq.ps1` 生成；会先以发布构建重编 DLL —— 包里不含任何 harness/测试代码） |
+| 上传包 | `dist\SAQ-ShowAvailableQuests-0.1.13.zip`（由 `tools\package-saq.ps1` 生成；会先以发布构建重编 DLL —— 包里不含任何 harness/测试代码） |
 | 测试功能 | 包内**不含任何测试资产**（用例文件 / 结果 JSON），配置强制为「正常玩」的默认值（ini `[Test] Mode=0 / Harness=0`）；发布 DLL 不含 harness 编译 —— 由打包脚本 + `verify_saq_build.py` 三层校验把守 |
 | 版本号 | 三处一致：`plugin\xmake.lua`、`plugin\src\main.cpp`、`meta.ini` |
 | 依赖声明 | Nexus 上标注 SFSE 为必需依赖（版本 0.2.21+） |
