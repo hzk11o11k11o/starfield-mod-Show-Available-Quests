@@ -1526,3 +1526,102 @@ step = note === 收尾：清场（让下一轮 / 下次会话从此状态可复�
 step = quest.reset ~0x00492D
 step = quest.reset ~1:0x00000CF2
 step = wait 1500
+
+; ----------------------------------------------------------------------------
+;  用例：第 114 轮 —— **待定 4 条任务的实机确认**（docs/12 六节遗留）
+;
+;  背景：第 106 轮覆盖面复盘留下 4 条「待定」任务，确认判据 = ① 玩家任务日志可见
+;  ② 有明确接取动作（NPC/终端/拾取物，光「路过触发」不算）③ 能做完（有收尾 stage）。
+;  本条把这 4 条的**现场事实**固化：跑一轮就有可复现的证据（日志 + 结果 JSON），
+;  判据结论再回写 `ref/extra_quests.json`（收）或 `docs/12`（不收）。
+;
+;  数据（第 114 轮调查，tools/esm/_tmp_r114_pending4b.py / _tmp_r114_find_points.py）：
+;    · **SG02「通讯失败」** Starfield.esm 0x1E7332（`~0:0x001E7332`）：
+;      VMAD = `defaultquestchangelocationscript`（**进入 DR019Location「翻新星际站」⇒
+;      SetStage**）；ALUA 三名 NPC 的放置引用在星站内景（0x001E106A AlbanLopezREF）。
+;    · **RL040Quest「异常求救信号」** Starfield.esm 0x25A9E2（`~0:0x0025A9E2`）：
+;      **无别名、无记录级 CTDA**；触发者 = `RL040RadioOnHitScript`（挂在某个无线电
+;      引用上，`Const`）——玩家**击中**它 ⇒ `RL040Quest.SetStage(30)`；太空随机遭遇
+;      形态（无固定接取点，与 SFFL 的 R01/R03 同类）。
+;    · **SFBGS001LC07_Quest01「精炼厂控制器任务」** ShatteredSpace.esm 0x097FC8
+;      （`~4:0x00097FC8`）：**SGE（DNAM 位0）**；地点 = 深谷精炼厂（LC07Int01/Int02，
+;      常驻引用 0x08AA34 = SFBGS001_ExitVentRef）。
+;    · **SFTER_MS02_INC_RelayStation01「小规模入侵：关闭地球舰队中继站」**
+;      SFBGS050.esm 0x07E73F（`~3:0x0007E73F`）：名字带 `<Alias=ChosenPlanet>`
+;      （**系统随机选星球的入侵事件**，辐射型）；地点 = Terran Relay Node
+;      （飞船内景 0x0AD143，常驻引用 0x0AD173 = SFTERRelayNodeDockingDoor02）。
+;
+;  ★ 判读方法（跑完看日志/结果 JSON 的两处）：
+;    · `quest.probe` 行给出的**状态词**（未开始 / 运行中 / 已开始）——现状；
+;    · `teleport` 之后那一行 probe：**变「运行中/已开始」= 进入地点真的启动了它**
+;      （判据②的硬证据）；没变 ⇒ 还有前置没满足，需要人工判读（列出 probe 状态即可）。
+;  ★ 这 4 条**只读 + 传送**（不 reset、不推 stage）—— 任务状态不因本用例改变，
+;    除非「进入地点」真的触发了它（那正是要观测的事实）；跑完自己读档回原处。
+;  ★ 表外直拼（第 110 轮能力）：`~<master>:0x…` —— 这 4 条都不在可接任务静态表里，
+;    master 下标 = kQuestMasters（0=Starfield / 3=SFBGS050 / 4=ShatteredSpace）。
+; ----------------------------------------------------------------------------
+[case:r114_pending_sg02]
+desc = 待定①SG02「通讯失败」：探针现状 + 传送到翻新星际站（DR019 内景），观察是否被引擎启动
+step = note === 预热：开一次菜单（master 解析 + 静态表就绪 —— `~0:` 表外直拼依赖它）===
+step = ping
+step = menu.open
+step = assert.log 推送成功 scope=prev timeout=12000
+step = menu.close
+step = note === 现状探针（只读）：记录「通讯失败」在引擎里的状态 ===
+step = quest.probe ~0:0x001E7332
+step = assert.log quest\.probe 0x001E7332： scope=case timeout=3000
+step = note === 传送到星站内景的 AlbanLopezREF（VMAD 的进入触发地点 = DR019Location）===
+step = teleport ~0:0x001E106A
+step = wait 5000
+step = note === 触发后状态（判读：变「运行中/已开始」= 进入地点真的启动了它）===
+step = quest.probe ~0:0x001E7332
+step = menu.close
+
+[case:r114_pending_rl040]
+desc = 待定②RL040Quest「异常求救信号」：探针现状（太空随机遭遇、无固定接取点）
+step = note === 预热（同上）===
+step = ping
+step = menu.open
+step = assert.log 推送成功 scope=prev timeout=12000
+step = menu.close
+step = note === 现状探针：引擎里存在这条任务 + 当前状态（触发者 = RL040RadioOnHitScript）===
+step = quest.probe ~0:0x0025A9E2
+step = assert.log quest\.probe 0x0025A9E2： scope=case timeout=3000
+step = note === 顺带：stage 30 = RadioOnHit 的 SetStage(30)，探它有没有被触发过（只读）===
+step = quest.probe ~0:0x0025A9E2 30
+step = assert.log quest\.probe 0x0025A9E2：.*stageDone\(30\)=[01] scope=case timeout=3000
+step = menu.close
+
+[case:r114_pending_lc07]
+desc = 待定③SFBGS001LC07_Quest01「精炼厂控制器任务」：探针现状 + 传送到深谷精炼厂（LC07 内景）
+step = note === 预热（同上）===
+step = ping
+step = menu.open
+step = assert.log 推送成功 scope=prev timeout=12000
+step = menu.close
+step = note === 现状探针：SGE 任务（DNAM 位0）——引擎启动即运行 ===
+step = quest.probe ~4:0x00097FC8
+step = assert.log quest\.probe 0x[0-9A-F]{2}097FC8： scope=case timeout=3000
+step = note === 传送到深谷精炼厂的常驻引用（SFBGS001_ExitVentRef，LC07Int02）===
+step = teleport ~4:0x0008AA34
+step = wait 5000
+step = note === 触发后状态（判读：进入精炼厂是否推进它）===
+step = quest.probe ~4:0x00097FC8
+step = menu.close
+
+[case:r114_pending_sfter]
+desc = 待定④SFTER_MS02_INC_RelayStation01「关闭地球舰队中继站」：探针现状（随机星球的入侵事件）
+step = note === 预热（同上）===
+step = ping
+step = menu.open
+step = assert.log 推送成功 scope=prev timeout=12000
+step = menu.close
+step = note === 现状探针：名字带 <Alias=ChosenPlanet>（系统随机选星球）——记录状态供判读 ===
+step = quest.probe ~3:0x0007E73F
+step = assert.log quest\.probe 0x[0-9A-F]{2}07E73F： scope=case timeout=3000
+step = note === 传送到 Terran Relay Node（SFTERMS02 飞船内景的门，常驻）===
+step = teleport ~3:0x000AD173
+step = wait 5000
+step = note === 触发后状态（判读：入侵事件是否被位置触发）===
+step = quest.probe ~3:0x0007E73F
+step = menu.close

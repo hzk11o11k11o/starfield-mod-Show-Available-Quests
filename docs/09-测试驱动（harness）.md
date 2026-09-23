@@ -1285,3 +1285,19 @@ if (line.find("harness：") != std::string::npos) { continue; }
 * ✅ 0.1.13 上传包已生成：`dist\SAQ-ShowAvailableQuests-0.1.13.zip`（1,849,574 B /
   SHA256 `5CD96E4C…B54D17`）；打包后补跑 `verify --release`（覆盖新包）+ 包内 7 文件
   哈希逐一致；打完后切回开发构建（1031168 B）+ MO2 ini `Harness=0`。
+
+## 十四·补三十五（第 114 轮）：待定 4 条任务的实机确认用例（用例集 35 → **39**）
+
+**新增 4 条只读用例**（`SAQ_TestPlan.txt`；缘起 = `docs/12` 六节的 4 条「待定」任务，
+判据 = 日志可见 / 有接取动作 / 能做完；详细调查见 `docs/14` 六节）：
+
+| 用例 | 任务（`~<master>:0x…` 表外直拼） | 关键步骤 |
+| --- | --- | --- |
+| `r114_pending_sg02` | `~0:0x001E7332`（通讯失败） | probe → `teleport ~0:0x001E106A`（星站内 NPC = VMAD 进入触发点）→ 再 probe |
+| `r114_pending_rl040` | `~0:0x0025A9E2`（异常求救信号） | probe + probe stage 30（`RL040RadioOnHitScript` 的 SetStage，只读） |
+| `r114_pending_lc07` | `~4:0x00097FC8`（精炼厂 / ShatteredSpace） | probe（SGE）→ `teleport ~4:0x0008AA34`（LC07Int02 常驻）→ 再 probe |
+| `r114_pending_sfter` | `~3:0x0007E73F`（中继站 / SFBGS050） | probe → `teleport ~3:0x000AD173`（中继站飞船内景常驻门）→ 再 probe |
+
+**纪律**（verify 正向 + 反向检查）：只读（不 reset / 不推 stage）+ 表外直拼；
+判读 = probe 状态词 + 传送后是否被启动（结论回写 `docs/12` / `ref/extra_quests.json`）。
+第 114 轮数据侧（两档常驻兜底：19 条任务远处点引导**立即生效**）见 `docs/14`。

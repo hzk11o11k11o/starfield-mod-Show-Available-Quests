@@ -207,6 +207,22 @@
           （开发「开发构建默认」/ 发布「发布构建默认」）+ 反向检查（main.cpp 旧硬编码
           `kLogMaxBytes` 已移除）+ ini 模板含 [Log] 段 + **MaxSizeMB 生效键**（发布默认 1；
           反向检查旧「; MaxSizeMB」注释示例写法已替换 —— 配置项必须看得见、能直接改）。
+  第 114 轮（引导质量 2.0 · 两档常驻兜底 + 待定 4 条任务实机确认用例）：
+          ① 数据侧（tools/esm/gen_guide_targets.py）：`find_fallbacks` 从「同 cell 一档」
+             扩成「同 cell → **world 级常驻引用**」两档 + 「任务相关名优先」（距离差
+             ≤30 米内才为相关性让路）。起因 = 20 条「全部候选都非常驻」的任务里，
+             同 cell 一条都找不到兜底（外景城市 cell 实测 0 条常驻：新亚特兰大商业区 /
+             加加林 / 天堂乐园 / 红英里 / 阿基拉贫民窟），而它们的常驻引用都在
+             world 层级（第 80 轮外景 NPC 条目的同一套）⇒ 19/20 条补到兜底，
+             距离 0.2~20.4 米；候选池 **1001 → 1020**、有目标任务 225 不变；
+             内嵌回退载荷 19 条的 `needsApproach` 1 → 0 ⇒ SWF 重编 **stamp=65**。
+          ② 用例侧：新增 4 条**待定任务实机确认**用例（`r114_pending_sg02` /
+             `_rl040` / `_lc07` / `_sfter`，用例集 35 → 39）—— 只读（不 reset / 不推
+             stage）+ 表外直拼探针 + 「进入地点触发」型传送到接取点观察；
+             这 4 条的结论回写 `ref/extra_quests.json`（收）或 `docs/12`（不收）。
+          本脚本检查：生成器两档标记 + 候选池精确计数 1020 + 3 条任务的 world 级兜底
+          候选在位（记录号钉死）+ 4 条新用例的段头/探针/传送/只读纪律 + stamp=65
+          （反向检查 stamp=64 不残留）。
 
 用法：python tools/ui/verify_saq_build.py [--release|--dev]
 """
@@ -776,7 +792,11 @@ def main() -> int:
         #     （载荷第 11 列 bSaqRepeatable）的显示名加「（可重复）」前缀
         #     （SaqRepeatablePrefix）+ `rq=` 探针（显示名证据）+ `order=` 的
         #     `|tail=` 段（末两行 —— 整组排列表末尾的运行期证据）。
-        "构建指纹 stamp=64": b"stamp=64",
+        #   ★★★ 第 114 轮（引导质量 2.0：两档常驻兜底）：stamp 65 —— 与第 81/109 轮
+        #     同款（AS3 代码本身没改）：19 条基础游戏任务新增「world 级常驻兜底」
+        #     ⇒ 内嵌回退载荷的 `needsApproach` 列由 1 → 0，内嵌数据与 C++ 载荷
+        #     重新逐条对齐（见 SaqEmbeddedPayload.inc）。
+        "构建指纹 stamp=65": b"stamp=65",
         # ★★ 第 80 轮（可重复 NPC 入口）：type 101 的界面链路 ——
         #   ① 常量与合并判据（SaqIsEntryType —— 子项/描述/不可导航提示统一用它）；
         #   ② 子项名与描述文案（中英各一段，证明不是只改了判据没接文案）；
@@ -896,9 +916,10 @@ def main() -> int:
         all_ok &= gone
         # 反向检查：★★ 第 96 轮 —— 旧构建指纹不许残留（同一份 SWF 只该带一个 stamp；
         #   起因同第 50 轮的教训：部署了但游戏加载的是旧 SWF 时，指纹是唯一判据）。
-        #   ★★★ 第 109 轮：stamp 63 → 64（7 条补收任务的引导候选进了内嵌载荷）。
-        gone = b"stamp=63" not in blob
-        print(("OK  " if gone else "MISS") + f" {p.name} · 旧构建指纹 stamp=63 已替换(反向检查)")
+        #   ★★★ 第 109 轮：stamp 63 → 64（7 条补收任务的引导候选进了内嵌载荷）；
+        #   ★★★★ 第 114 轮：64 → 65（19 条任务新增 world 级常驻兜底 ⇒ needsApproach 列变化）。
+        gone = b"stamp=64" not in blob
+        print(("OK  " if gone else "MISS") + f" {p.name} · 旧构建指纹 stamp=64 已替换(反向检查)")
         all_ok &= gone
 
     # ★★ 第 49 轮补丁③（复测复查）：**入口发布清单**检查 —— 新增 root 入口必须挂到 root。
@@ -1918,6 +1939,40 @@ def main() -> int:
                      "0xFD[0-9A-F]{2}492D".encode()),
                 ):
                     all_ok &= check(f"用例计划 · {label}", plan_text.encode(), needle)
+                # ★★★★★ 第 114 轮（待定 4 条任务的实机确认，docs/12 六节遗留）：
+                #   4 条只读用例 —— 每条都要有 ① 段头 `[case:r114_pending_*]`；
+                #   ② `quest.probe` 的**表外直拼**步骤（`~<master>:0x…` —— 这 4 条
+                #   不在可接任务静态表里）；③ 「进入地点触发」型的三条还要有传送步骤。
+                #   反向纪律：这 4 条**不得**出现 quest.reset / quest.stage（只读观测，
+                #   不改任务状态 —— 免得「实机确认」反而污染存档）。
+                for label, needle in (
+                    ("sg02 段头与探针",
+                     "[case:r114_pending_sg02]".encode()),
+                    ("sg02 表外直拼探针（~0:）",
+                     "quest.probe ~0:0x001E7332".encode()),
+                    ("sg02 传送到星站内 NPC",
+                     "teleport ~0:0x001E106A".encode()),
+                    ("rl040 段头与探针",
+                     "[case:r114_pending_rl040]".encode()),
+                    ("rl040 探针（stage 30 只读探）",
+                     "quest.probe ~0:0x0025A9E2 30".encode()),
+                    ("lc07 段头与探针（master 4 = ShatteredSpace）",
+                     "quest.probe ~4:0x00097FC8".encode()),
+                    ("lc07 传送到深谷精炼厂（LC07Int02 常驻引用）",
+                     "teleport ~4:0x0008AA34".encode()),
+                    ("sfter 段头与探针（master 3 = SFBGS050）",
+                     "quest.probe ~3:0x0007E73F".encode()),
+                    ("sfter 传送到中继站飞船内景",
+                     "teleport ~3:0x000AD173".encode()),
+                ):
+                    all_ok &= check(f"用例计划 · r114 {label}", plan_text.encode(), needle)
+                _i114 = plan_text.find("[case:r114_pending_sg02]")
+                if _i114 >= 0:
+                    _sec114 = plan_text[_i114:]
+                    _bad114 = ("quest.reset" in _sec114) or ("quest.stage " in _sec114)
+                    print(("MISS" if _bad114 else "OK  ") +
+                          " 用例计划 · r114 四条只读（无 reset / 无 stage 推送，反向检查）")
+                    all_ok &= not _bad114
                 # ★★ 第 62 轮（大项 I）：自动读档用例 —— ① 只允许用**用户指定的那个存档**
                 #   （子串 ★ 第 101 轮切到 Exit0 → ★★★ 第 103 轮切到 Save1）；② 读档步骤在；
                 #   ③ 存档列表诊断在；④ **与部署 ini 的 [Test] AutoLoad 一致**（见下）。
@@ -2240,11 +2295,55 @@ def main() -> int:
         #   ★★★★ 第 110 轮（追踪者联盟）：SFTA00 带来 5 个候选（1 号特工领衔 +
         #   汉尼拔/蟑螂哥 + 同 cell 常驻兜底）⇒ 候选 **1001**、有目标任务 **225**（+1）；
         #   「赏金狩猎」是 noPickup（0 候选）—— 不增。
-        ok = cand_total > 200 and n_with == 225 and n_oob == 0
+        #   ★★★★★ 第 114 轮（引导质量 2.0：两档常驻兜底）：19 条「全部候选都非常驻」
+        #   的任务新增 **world 级常驻兜底**（同 cell 找不到时用；第 80 轮外景 NPC 条目的
+        #   同一套口径）⇒ 候选 **1020**（+19）、有目标任务 **225** 不变（兜底加在已有
+        #   候选的任务上）。精确计数从本轮起钉死（`cand_total == 1020`）——
+        #   候选池是运行期引导质量的直接输入，数量漂移必须是「有意改动」。
+        ok = cand_total == 1020 and n_with == 225 and n_oob == 0
         print(("OK  " if ok else "MISS") +
-              f" 静态表 · 候选池完整（候选 {cand_total} 条 / 有目标任务 {n_with}（第 110 轮起 225）"
+              f" 静态表 · 候选池完整（候选 {cand_total} 条 / 有目标任务 {n_with}"
+              f"（第 110 轮起 225；第 114 轮起候选 1020）"
               f" / 切片越界 {n_oob}）")
         all_ok &= ok
+
+        # ★★★★★ 第 114 轮（引导质量 2.0 · 两档常驻兜底）数据侧三条 ——
+        #   ① 生成器里有 `collect_world_persistents`（world 级常驻引用收集）与两档
+        #      src 文案（「world 级常驻兜底」）；
+        #   ② 静态表里 world 级兜底真的进了候选池：取 3 条实测任务的**兜底候选**
+        #      （记录号来自 ref/guide_targets.json 第 114 轮输出 —— 蓝点落点随之精确到
+        #      0.2~20.4 米）：
+        #        UCR03（0x1E8FF7）⇒ 0x2928D3（UC_TualaTravelMaker，0.2 m）；
+        #        FFNewHomesteadR04（0x21B1FA）⇒ 0x04A178（FlickeringLights 启用标记，20.4 m）；
+        #        传播新闻（0x1145EE）⇒ 0x01531D（NewAtlantisMapMarkerWestEnd，2.5 m）。
+        #   ③ 反向检查：生成器的两档实现标记必须在（旧实现只有「同 cell」一档）。
+        gen_src = (ROOT / "tools" / "esm" / "gen_guide_targets.py").read_text(
+            encoding="utf-8")
+        ok_gen = ("collect_world_persistents" in gen_src
+                  and "world 级常驻兜底" in gen_src
+                  and "_REL_MAX_EXTRA_M" in gen_src)
+        print(("OK  " if ok_gen else "MISS") +
+              " 引导·生成器 world 级兜底（collect_world_persistents + 两档 src + 相关名阈值）")
+        all_ok &= ok_gen
+        cands_all = re.findall(
+            r"\{\s*0x([0-9A-F]+)u,\s*(\d+)u,\s*0x([0-9A-F]+)u,\s*(\d+)u,",
+            blob[blob.find("kGuideCandidates[] = {"):blob.find("kGuideCandidateCount")])
+        for q_local, fb_local, tag in [
+            (0x001E8FF7, 0x002928D3, "UCR03 -> UC_TualaTravelMaker（0.2 m）"),
+            (0x0021B1FA, 0x0004A178, "新家园 -> FlickeringLights 启用标记（20.4 m）"),
+            (0x001145EE, 0x0001531D, "传播新闻 -> NewAtlantisMapMarkerWestEnd（2.5 m）"),
+        ]:
+            m = re.search(
+                r"\{\s*0x%08Xu,\s*0u,\s*\d+u,\s*0x[0-9A-F]+u,\s*(\d+)u,\s*(\d+)u,"
+                % q_local, region)
+            hit = False
+            if m:
+                begin, count = int(m.group(1)), int(m.group(2))
+                window = cands_all[begin:begin + count]
+                hit = any(int(c[0], 16) == fb_local and int(c[2], 16) & 1 for c in window)
+            print(("OK  " if hit else "MISS") +
+                  f" 静态表 · world 级兜底候选在位: {tag}")
+            all_ok &= hit
         def c_rows_of(text: str):
             """kGuideCandidates[] 的候选行（(refrLocal, refrMaster, flags, reserved)）。"""
             a0 = text.find("kGuideCandidates[] = {")
