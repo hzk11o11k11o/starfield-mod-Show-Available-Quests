@@ -878,6 +878,13 @@ step = menu.open
 ;      判据：`入口条目表=21 条（任务板 13 + 可重复 NPC 8）`（第 80 轮两类计数；
 ;      ★ 第 110 轮任务板 +1 = 追踪者联盟悬赏信息台 —— SFBGS003.esm · medium 档）。
 step = assert.log 入口条目表=21 条（任务板 13 \+ 可重复 NPC 8） scope=case timeout=12000
+; ★★★ 第 151 轮（排序进日志）：顺序本身的两条判据 —— `列表顺序：共`（分段 + 头部 +
+;   入口段位置判定）与 `入口顺序：任务板`（入口段显示名顺序：任务板段 → 可重复 NPC 段）。
+;   子串故意**不含数字与括号**（表条数变化 / 全角括号那两类假 FAIL 都绕开），只钉
+;   「这两行真的打了」；顺序的**内容**判读见 docs/99 第 150/151 轮（第 150 轮修复 =
+;   追踪者联盟总部板从表末尾挪进任务板段末尾）。
+step = assert.log 列表顺序：共 scope=case timeout=12000
+step = assert.log 入口顺序：任务板 scope=case timeout=12000
 step = assert.log 推送成功 scope=case timeout=12000
 step = ui.tab
 step = note === 界面 rep= 探针：8 条 + 第一条名字带「（可重复）」前缀 ===

@@ -1653,6 +1653,130 @@ namespace SAQ
 			return "固定显示（这两类条目跳过进度/INFO/链式三类门槛）：" + out;
 		}
 
+		// ★★★ 第 151 轮（玩家要求「让排序也可以在日志里体现」）：**列表顺序**日志。
+		//
+		//   起因：第 150 轮修的是「追踪者联盟任务板混进了（可重复）堆」这一类**顺序
+		//   问题**，而它当时只能靠眼睛在界面里核（玩家截图反馈）—— 日志里此前只有各段
+		//   的**计数**（势力入口前置=4 / 同伴分组前置=N / 可重复任务=…排在末尾 N）与
+		//   名单，没有「顺序本身」。现在收集完成（= 排序之后）打两行：
+		//     ① `列表顺序：…` —— 分段边界 + 头部名字链（势力入口固定顺序的运行期证据）
+		//        + 入口段位置判定（应**连续**且位于**其余段末尾** —— 第 150 轮修复的
+		//        正是这里；异常时行内带「**顺序异常**」，调用处另打一条 WARN）；
+		//     ② `入口顺序：…` —— 入口段的**显示名顺序**（任务板段 → 可重复 NPC 段），
+		//        与界面里看到的顺序逐条对应（载荷顺序 = 列表顺序，见第 96 轮机制）。
+		//   为什么这两行能代表界面顺序：DLL 的收集顺序 = 载荷行顺序 = AS3 侧
+		//   BuildMergedList / InitializeEntries 的输入顺序（组内不改序）—— 界面侧还有
+		//   `order=` 探针（前 6 条 + `|tail=` 末尾两行）互补，两处合起来覆盖「有排序
+		//   规则的段落」（头部 / 入口段 / 末尾）。
+		struct OrderScan
+		{
+			std::size_t faction{};        // 四大势力开头任务（固定排最前）
+			std::size_t companion{};      // 同伴任务（按同伴分组）
+			std::size_t other{};          // 其余（入口段在它的末尾）
+			std::size_t repeat{};         // 可重复任务（整组排末尾）
+			std::size_t entryCount{};     // 入口条目总数（任务板 + 可重复 NPC）
+			std::size_t entryBoard{};     // 其中：任务板
+			std::size_t entryNpc{};       // 其中：可重复 NPC
+			std::size_t entryFirst{};     // 入口段首下标（无入口时 = 下面的 kNoIndex 哨兵）
+			std::size_t entryLast{};      // 入口段末下标
+			bool        entryContiguous{ true };   // 入口条目是否连续
+			bool        headAllFaction{ true };    // 列表头部是否全是势力入口
+			std::string headNames;        // 头部名字链（势力入口，固定顺序）
+			std::string boardNames;       // 任务板段名字链（显示名顺序）
+			std::string npcNames;         // 可重复 NPC 段名字链（显示名顺序）
+		};
+
+		// 「A → B → C」形式的追加（顺序清单的通用写法）。
+		void AppendOrderName(std::string& a_out, const std::string& a_name)
+		{
+			if (!a_out.empty()) {
+				a_out += " → ";
+			}
+			a_out += a_name;
+		}
+
+		OrderScan ScanOrder(const std::vector<QuestEntry>& a_quests)
+		{
+			constexpr std::size_t kNoIndex = static_cast<std::size_t>(-1);
+			OrderScan s;
+			s.entryFirst = kNoIndex;
+			for (std::size_t i = 0; i < a_quests.size(); ++i) {
+				const auto& e = a_quests[i];
+				const bool isEntry = (e.type == kEntryQuestType || e.type == kNpcEntryQuestType);
+				if (e.factionEntry >= 0) {
+					++s.faction;
+				} else if (e.companion >= 0) {
+					++s.companion;
+				} else if (e.repeatable) {
+					++s.repeat;
+				} else {
+					++s.other;
+				}
+				if (isEntry) {
+					++s.entryCount;
+					if (e.type == kEntryQuestType) {
+						++s.entryBoard;
+						AppendOrderName(s.boardNames, e.nameZh);
+					} else {
+						++s.entryNpc;
+						AppendOrderName(s.npcNames, e.nameZh);
+					}
+					if (s.entryFirst == kNoIndex) {
+						s.entryFirst = i;
+					} else if (i != s.entryLast + 1) {
+						s.entryContiguous = false;   // 入口段中间夹了别的条目（第 150 轮那类回归）
+					}
+					s.entryLast = i;
+				}
+			}
+			// 头部名字链（前 faction 条）+「头部真的全是势力入口」校验。
+			for (std::size_t i = 0; i < s.faction && i < a_quests.size(); ++i) {
+				AppendOrderName(s.headNames, a_quests[i].nameZh);
+				if (a_quests[i].factionEntry < 0) {
+					s.headAllFaction = false;
+				}
+			}
+			return s;
+		}
+
+		// 行①：分段 + 头部 + 入口段位置判定。
+		std::string FormatListOrder(const std::vector<QuestEntry>& a_quests)
+		{
+			const auto s = ScanOrder(a_quests);
+			std::string out = std::format("列表顺序：共 {} 条｜分段[势力入口 {}｜同伴 {}｜其余 {}｜可重复 {}]",
+				a_quests.size(), s.faction, s.companion, s.other, s.repeat);
+			if (!s.headNames.empty()) {
+				out += std::format("｜头部{}{}={}",
+					s.faction, s.headAllFaction ? "" : "（**不是势力入口**）", s.headNames);
+			}
+			if (s.entryCount != 0) {
+				const bool atOtherEnd = s.entryFirst >= s.faction + s.companion &&
+					s.entryLast + 1 == s.faction + s.companion + s.other;
+				if (s.entryContiguous && atOtherEnd) {
+					out += std::format("｜入口段 {} 条位于其余段末尾（连续）", s.entryCount);
+				} else {
+					out += std::format("｜入口段 {} 条 **顺序异常**（连续={}｜位于其余段末尾={}）",
+						s.entryCount, s.entryContiguous ? "是" : "否", atOtherEnd ? "是" : "否");
+				}
+			} else {
+				// 模式 1~4 不追加入口条目（AppendEntryRows 的既有语义）—— 明确写出来，
+				// 免得排查时把「没打入口顺序行」误当成 bug。
+				out += "｜入口段 0 条（按当前测试模式未追加）";
+			}
+			return out;
+		}
+
+		// 行②：入口段的显示名顺序（任务板 → 可重复 NPC）。没有入口条目 ⇒ 空串（不打这行）。
+		std::string FormatEntryOrder(const std::vector<QuestEntry>& a_quests)
+		{
+			const auto s = ScanOrder(a_quests);
+			if (s.entryCount == 0) {
+				return {};
+			}
+			return std::format("入口顺序：任务板 {}[{}]｜可重复 NPC {}[{}]",
+				s.entryBoard, s.boardNames, s.entryNpc, s.npcNames);
+		}
+
 		// （第 17 轮删掉了「DNAM 位分布」那行诊断日志：它要回答的问题在 xEdit 的
 		//   flag 名里已经有答案（位0 = Start Game Enabled），而这一位**不是**可用的
 		//   「进度没到」判据（见 docs/99 第 10 轮），每次开菜单白刷一行。）
@@ -3941,6 +4065,32 @@ namespace SAQ
 				const auto pinLine = FormatPinStats(g_pending.stats);
 				if (!pinLine.empty()) {
 					REX::INFO("{}", pinLine);
+				}
+			}
+			// ★★★ 第 151 轮（排序进日志 —— 玩家要求「让排序也可以在日志里体现」）：
+			//   收集完成（= 排序之后）打两行：`列表顺序：…`（分段 + 头部 + 入口段位置）
+			//   与 `入口顺序：…`（入口段显示名顺序）。顺序本身从此可被 assert.log 取证，
+			//   不必再靠眼睛在界面里核（第 150 轮那类问题的发现方式）。说明见
+			//   FormatListOrder / FormatEntryOrder 的注释。
+			{
+				const auto orderScan = ScanOrder(g_pending.quests);
+				REX::INFO("{}", FormatListOrder(g_pending.quests));
+				const auto entryOrder = FormatEntryOrder(g_pending.quests);
+				if (!entryOrder.empty()) {
+					REX::INFO("{}", entryOrder);
+				}
+				// 顺序异常 ⇒ 显眼告警（正常恒不触发）：入口段必须连续、位于其余段末尾；
+				// 列表头部必须全是势力入口（固定顺序那条要求）。第 150 轮的 bug 正是
+				// 「入口混进别的段」—— 那次只能靠玩家截图发现，现在这里挡一道。
+				const bool entryOk = orderScan.entryCount == 0 ||
+					(orderScan.entryContiguous &&
+					 orderScan.entryFirst >= orderScan.faction + orderScan.companion &&
+					 orderScan.entryLast + 1 == orderScan.faction + orderScan.companion + orderScan.other);
+				if (!entryOk || (orderScan.faction != 0 && !orderScan.headAllFaction)) {
+					REX::WARN("列表顺序异常：入口段[连续={}｜位置={}..{}]｜头部是势力入口={} —— 见上一行的「列表顺序」",
+						orderScan.entryContiguous ? "是" : "否",
+						orderScan.entryFirst, orderScan.entryLast,
+						orderScan.headAllFaction ? "是" : "否");
 				}
 			}
 			// 语言这一项只是**日志参考**：实际显示语言由 AS3 侧按引擎推来的任务名判定。
