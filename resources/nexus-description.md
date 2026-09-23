@@ -1,4 +1,4 @@
-# Nexus 上传素材（v0.1.14）
+# Nexus 上传素材（v0.1.15）
 
 > 用途：复制下面内容到 Nexus 的 mod 页。Summary 填「名称/摘要」栏，
 > Description 填「描述」栏（Nexus 描述框可用 BBCode，纯文本换行也正常）。
@@ -37,6 +37,7 @@ Starfield 从不告诉你去哪接任务，全靠自己撞见。这个 mod 在�
 [*] 没有导航目标的任务会明确提示：条目名字前面直接标注**「（不可导航）」**，描述里写明原因，不用点就知道它没法引导
 [*] 导航目标很远的任务：远处点引导会先落到**就近位置**（不再「点了没反应」），走近后自动切换到精确目标；v0.1.14 起这批任务的兜底目标已补全 —— 只剩 1 条 DLC 收集型任务仍需**靠近**目标区域（描述会**提前**写明，HUD 会提示、引导保持待生效，靠近后自动生效，不必重新点）
 [*] 被引导的任务一旦接取，引导自动取消
+[*] 界面文件被其它任务菜单 mod 覆盖 / 未生效时：**关闭任务菜单后 HUD 会明确提示原因**（v0.1.15 起；后台同时停止无效重试，日志更干净）—— 不再是「装了但没生效、也看不出为什么」
 [*] 支持中文 / 英文
 [*] 支持官方内容（追踪者联盟 / 破碎空间 / 地球舰队等；未安装的模块不会显示其任务）
 [*] 日志写在 mod 目录里，删 mod 不残留；日志不超过 1 MB 自动滚动
@@ -89,6 +90,7 @@ Starfield never tells you where to pick up quests — you just have to stumble i
 [*] Quests with no navigation target are clearly flagged (the description explains why) — no dead ends
 [*] Guidance now works from any distance for almost every quest (as of v0.1.14): only one DLC collection quest still needs you to get near (the description says so in advance, the HUD reminds you after you press guide, and the guidance activates automatically once you arrive - no need to press it again)
 [*] Guidance is cancelled automatically once you accept the quest
+[*] If the mission-menu UI is overridden by another mission-menu mod (or missing / outdated), the HUD now clearly tells you why after you close the menu (as of v0.1.15) - no more silent failure
 [*] Chinese and English games supported
 [*] Official content aware (Trackers Alliance, Shattered Space, Earth Fleet, …); quests from modules you don't own are never listed
 [*] Log lives inside the mod folder (no leftovers), capped at 1 MB with auto-roll
@@ -125,6 +127,10 @@ Please include SFSE\Plugins\SAQ_ShowAvailableQuests.log, install method (MO2 / m
 ---
 
 ## 更新日志（Changelog）
+
+### v0.1.15（2026-09-23）
+- 新增：**界面未生效时明确提示** —— 如果本 mod 的界面文件（`Interface\missionmenu.swf`）被其它修改任务菜单的 mod 覆盖、未安装或被旧版本文件覆盖，**关闭任务菜单后 HUD 会弹出中英提示**「可接任务界面未生效：可能被其它任务菜单 mod 覆盖 / Available Quests UI not active - likely overridden by another mission menu mod」。此前这种情况表现为「任务菜单里看不到『可接任务』标签页、也没有任何说明」（且后台日志会反复重试）；现在原因直接告诉你，后台同时停止无效重试（日志更干净）
+- 其它：内部测试与验证设施更新（不影响游戏内行为；发布包仍不包含任何测试代码）
 
 ### v0.1.14（2026-09-23）
 - 改进：**导航兜底补全** —— 此前有一批任务（19 条）的引导目标在远处取不到：点「前往接取地点」会提示「目标尚未加载」，要等你靠近目标区域才出现蓝点。现在这批任务补上了**世界级常驻兜底目标**：**在远处点一下就直接生效**（蓝点落在接取地点附近，走近后自动切到精确目标），描述里不再出现「需要靠近」。目前只剩 1 条 DLC 收集型任务保留该提示（已在描述里提前写明）
@@ -204,7 +210,7 @@ Please include SFSE\Plugins\SAQ_ShowAvailableQuests.log, install method (MO2 / m
 
 | 项 | 说明 |
 | --- | --- |
-| 上传包 | `dist\SAQ-ShowAvailableQuests-0.1.14.zip`（由 `tools\package-saq.ps1` 生成；会先以发布构建重编 DLL —— 包里不含任何 harness/测试代码） |
+| 上传包 | `dist\SAQ-ShowAvailableQuests-0.1.15.zip`（由 `tools\package-saq.ps1` 生成；会先以发布构建重编 DLL —— 包里不含任何 harness/测试代码） |
 | 测试功能 | 包内**不含任何测试资产**（用例文件 / 结果 JSON），配置强制为「正常玩」的默认值（ini `[Test] Mode=0 / Harness=0`）；发布 DLL 不含 harness 编译 —— 由打包脚本 + `verify_saq_build.py` 三层校验把守 |
 | 版本号 | 三处一致：`plugin\xmake.lua`、`plugin\src\main.cpp`、`meta.ini` |
 | 依赖声明 | Nexus 上标注 SFSE 为必需依赖（版本 0.2.21+） |

@@ -67,6 +67,8 @@
     不显示）；位置/遭遇类条件暂未覆盖。
   · 本 mod 会覆盖 Interface\missionmenu.swf 与 missionmenu_lrg.swf：
     与其它修改任务菜单 UI 的 mod 同时使用时，需要做补丁（patch）。
+    若界面未生效（被其它 mod 覆盖 / 未安装 / 旧版本文件），关闭任务菜单后
+    HUD 会弹出中英提示告知原因（v0.1.15 起），不再是「装了没生效、也看不出为什么」。
 
 七、日志与排错
   日志：SFSE\Plugins\SAQ_ShowAvailableQuests.log（默认最大 1 MB，写满自动滚动清空；
