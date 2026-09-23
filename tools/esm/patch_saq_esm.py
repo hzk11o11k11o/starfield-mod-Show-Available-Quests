@@ -135,11 +135,23 @@ TEST_GLOBS = (
     ("SAQ_TestHarness", 0x80D, "总开关（1=harness 启用；0/缺失时脚本零行为、DLL 不写命令）"),
 )
 
+# ★★★ 第 125 轮（路线 D · 冲突检测）：UI 通道不可用的提示标记。
+#
+# 动机（docs/15 九·补六「产品化观察①」）：补丁 SWF 被其它改 missionmenu.swf 的 mod
+# 覆盖 / 未安装时，界面上没有我们的任何 AS3 入口 —— DLL 第 125 轮起会判定
+# 「UI 通道不可用」（SAQ_UI::ProbeChannelIdentity）并停推降噪；这条 GLOB 让
+# **脚本**（SAQ_Main.psc）能在菜单关闭后给玩家一条 HUD 提示（DLL 自己发不了通知）。
+#   协议：DLL 写 1（=请提示）→ 脚本读到 1 ⇒ ShowNotice + 清 0（边沿语义）。
+#   同 Test 通道：记录号只允许追加；脚本运行时自推前缀 Game.GetForm 取，不碰 VMAD。
+UI_GLOBS = (
+    ("SAQ_UiNotice", 0x80E, "UI 通道不可用提示（DLL 写 1；脚本 HUD 提示后清 0）"),
+)
+
 # 需要保证存在的 GLOB：(EDID, 记录号, 说明)
 EXTRA_GLOBS = (
     (TEST_MODE_EDID, TEST_MODE_FORMID, "测试过滤开关（ini / 控制台，见 docs/05 第八节）"),
     (GUIDE_PREFIX_EDID, GUIDE_PREFIX_FORMID, "引导目标 FormID 高位（float 精度问题，见 docs/05）"),
-) + TEST_GLOBS
+) + TEST_GLOBS + UI_GLOBS
 
 # 记录里「目标 / 别名」相关的子记录（重建时先全部删掉）
 ALIAS_SUBS = {b"ALST", b"ALLS", b"ALID", b"ALFG", b"ALED", b"VTCK", b"ALFA", b"ALRT",

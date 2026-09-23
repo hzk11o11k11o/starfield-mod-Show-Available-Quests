@@ -188,6 +188,13 @@ GlobalVariable TestAck = None       ; 0x80B：脚本回执（= 已执行到的�
 GlobalVariable TestResult = None    ; 0x80C：结果码（0=成功 1=表单取不到 2=类型不对 3=异常 4=不支持）
 GlobalVariable TestHarnessCtl = None ; 0x80D：总开关（1=harness 启用）
 
+; ★★★ 第 125 轮（路线 D · 冲突检测）：UI 通道不可用的提示
+;   DLL 判定「任务菜单界面不是我们的 SWF」（被其它 mod 覆盖 / 未安装 / 版本过旧）
+;   时写 1；本脚本在轮询节拍里读到 1 ⇒ HUD 提示玩家 + 清 0（同一条不会重复弹）。
+;   GLOB = SAQ_UiNotice（0x80E，追加记录；VMAD 不碰 —— 同测试通道的做法，运行时自推前缀取）。
+GlobalVariable UiNoticeVar = None
+Bool UiNoticeLoaded = False
+
 Event OnInit()
 	Debug.Trace("[SAQ] SAQ_Main OnInit —— 注册菜单事件 + 启动引导轮询")
 	If NotifyFlag != None
@@ -224,6 +231,9 @@ Event OnTimer(int aiTimerID)
 	; ★ 第 45 轮补丁 2 / 第 46 轮：HUD 提示重复发送 + 提示冷却递减
 	;   （首次在调用点已发；这里按间隔补发剩下几次）。
 	ProcessNotice()
+	; ★★★ 第 125 轮（路线 D · 冲突检测）：读 DLL 的「UI 通道不可用」提示标记
+	;   （未启用时开销 = 一次判空 / 一次 GLOB 读）。
+	ProcessUiChannelNotice()
 	; ★★ 第 49 轮：引擎内 harness —— 测试命令（DLL 写命令、这里执行、写回执）。
 	;   未启用时开销 = 一次判空（TestSeq == None 立刻返回）；启用后每拍比对一次序号。
 	ProcessTestCommand()
@@ -450,6 +460,52 @@ Function ProcessNotice()
 	NoticeLeft -= 1
 	NoticeTicks = StarMapNoticeInterval
 	Debug.Trace("[SAQ] HUD 提示已补发（剩余 " + NoticeLeft + " 次）")
+EndFunction
+
+; ============================================================================
+;  ★★★ 第 125 轮（路线 D · 冲突检测）：UI 通道不可用提示
+;
+;  DLL 的 SAQ.cpp 判定「任务菜单界面不是我们的 SWF」时写 GLOB SAQ_UiNotice = 1
+;  （见 SAQ_UI::ProbeChannelIdentity 与日志「UI 通道不可用」行）；本脚本在菜单关闭
+;  后的轮询节拍里读到 1 ⇒ 提示玩家一次 + 清 0。
+;
+;  为什么提示要放在脚本而不是 DLL：SFSE 没有「发 HUD 通知」的接口，Debug.Notification
+;  只有 Papyrus 有 —— 与引导 / 其它 HUD 提示同一套做法（GLOB 当信箱）。
+;  GLOB 取法与测试通道同款：不碰 VMAD，运行时自推插件前缀 + Game.GetForm。
+; ============================================================================
+Bool Function EnsureUiNoticeVar()
+	If UiNoticeLoaded
+		Return UiNoticeVar != None
+	EndIf
+	Int fid = GetFormID()
+	If fid <= 0
+		Return False
+	EndIf
+	Int prefix = fid / 16777216
+	If prefix <= 0 || prefix > 127
+		UiNoticeLoaded = True
+		Return False
+	EndIf
+	UiNoticeVar = Game.GetForm(prefix * 16777216 + 0x80E) as GlobalVariable
+	UiNoticeLoaded = True
+	Return UiNoticeVar != None
+EndFunction
+
+String Function UiChannelNoticeText()
+	Return "可接任务界面未生效：可能被其它任务菜单 mod 覆盖 / Available Quests UI not active - likely overridden by another mission menu mod"
+EndFunction
+
+Function ProcessUiChannelNotice()
+	If UiNoticeVar == None
+		If !EnsureUiNoticeVar()
+			Return
+		EndIf
+	EndIf
+	If (UiNoticeVar.GetValue() as Int) == 1
+		ShowNotice(UiChannelNoticeText(), 2)
+		UiNoticeVar.SetValue(0)
+		Debug.Trace("[SAQ] UI 通道不可用提示已发出（DLL 判定：任务菜单界面不是我们的版本；见日志「UI 通道不可用」行）")
+	EndIf
 EndFunction
 
 ; ============================================================================

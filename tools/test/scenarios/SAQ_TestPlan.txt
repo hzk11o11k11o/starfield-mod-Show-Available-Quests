@@ -1677,3 +1677,16 @@ step = ui.research2
 step = assert.log 界面研究探针2 .*Menu_mc=ok scope=prev timeout=8000
 step = assert.log 界面研究探针2 .*切3=ok.*切7=ok.*切0=ok.*清理=ok.*U2=ok scope=case timeout=8000
 step = menu.close
+
+[case:r125_ui_channel_ok]
+desc = 第 125 轮（路线 D · 冲突检测）：我们的 SWF 下「UI 通道不可用」判定绝不误报（推送成功且无判定行）
+;  判据：正常界面（我们的 SWF）⇒ 推送成功 + **没有**「UI 通道不可用」行。
+;  这条反向断言是防误报的关键 —— 判定逻辑只有在界面确实不是我们的 SWF 时才该触发
+;  （误判会让正常界面被停推 + 弹错误的 HUD 提示）。
+;  时机：探测只在「真失败第 2 次起」发生 —— 本用例里推送第 1 次就成功，根本走不到探测。
+step = ping
+step = menu.open
+step = assert.log 推送成功 scope=prev timeout=12000
+step = wait 2500
+step = assert.nolog UI 通道不可用 scope=case timeout=1000
+step = menu.close

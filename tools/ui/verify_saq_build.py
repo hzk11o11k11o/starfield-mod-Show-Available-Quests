@@ -431,6 +431,11 @@ TEST_GLOBS = (
     (0x80D, "SAQ_TestHarness"),
 )
 
+# ★★★ 第 125 轮（路线 D · 冲突检测）：UI 通道不可用提示 GLOB（0x80E）。
+#   与测试通道同一套「追加记录」纪律（记录号只增 / 初值 0 / HEDR 同步）——
+#   DLL 判定「界面不是我们的 SWF」时写 1，脚本读到 1 ⇒ HUD 提示 + 清 0。
+UI_NOTICE_GLOB = (0x80E, "SAQ_UiNotice")
+
 
 # ★★ 第 53 轮（大项 F · 发布就绪）：开发构建（SAQ_WITH_HARNESS=1）里必须有的 harness 特征串。
 #   发布构建（xmake f --saq_harness=n）里**这些一条都不该出现** —— 同一张表反向用：
@@ -693,13 +698,26 @@ def check_esm_test_globs(path: pathlib.Path, label: str, require_zero: bool) -> 
             problems.append(f"0x{low:03X} 的 EDID 是 {got_edid!r}，期望 {edid!r}")
         elif require_zero and got_val != 0.0:
             problems.append(f"0x{low:03X} 的初值是 {got_val}，期望 0")
-    if next_id is not None and next_id < 0x80E:
-        problems.append(f"HEDR nextObjectID=0x{next_id:X}，应 >= 0x80E（追加 8 条记录后没同步）")
+    ui_low, ui_edid = UI_NOTICE_GLOB
+    ui_note = ""
+    if ui_low not in found:
+        problems.append(f"缺记录 0x{ui_low:03X}（{ui_edid}）")
+    else:
+        got_edid, got_val = found[ui_low]
+        if got_edid != ui_edid:
+            problems.append(f"0x{ui_low:03X} 的 EDID 是 {got_edid!r}，期望 {ui_edid!r}")
+        elif require_zero and got_val != 0.0:
+            problems.append(f"0x{ui_low:03X} 的初值是 {got_val}，期望 0")
+        else:
+            ui_note = " + UI 提示 GLOB（0x80E）"
+
+    if next_id is not None and next_id < 0x80F:
+        problems.append(f"HEDR nextObjectID=0x{next_id:X}，应 >= 0x80F（追加 9 条记录后没同步）")
 
     ok = not problems
     print(("OK  " if ok else "MISS") +
           f" ESM({label}) · 测试命令通道 GLOB {hit}/{len(TEST_GLOBS)} 条"
-          f"（0x806~0x80D，追加不占用旧记录号）")
+          f"（0x806~0x80D，追加不占用旧记录号）{ui_note}")
     for p_ in problems:
         print(f"       - {p_}")
     return ok
@@ -1330,6 +1348,14 @@ def main() -> int:
             "可重复任务说明数据(危险材料)": "随机太空遭遇",
             "可重复任务统计（可重复任务=）": "可重复任务=",
             "可重复任务保留名单（可重复保留:）": "可重复保留: ",
+            # ★★★ 第 125 轮（路线 D · 冲突检测）：UI 通道判定与提示 ——
+            #   ① 判定 WARN（界面不是我们的 SWF 时才会打的产品行）；
+            #   ② ours 探测 INFO（真失败但界面是我们的 ⇒ 继续重试，不误判）；
+            #   ③ 提示请求 INFO（写 GLOB SAQ_UiNotice，请脚本 HUD 提示玩家）。
+            #   三条都在产品路径（非 harness）—— 发布构建同样必须有（两模式共用这张表）。
+            "UI 通道不可用判定": "UI 通道不可用",
+            "UI 通道探测-ours": "界面是我们的 SWF",
+            "UI 通道提示请求": "UI 通道提示已请求",
         }.items():
             all_ok &= check(f"DLL · {name}", blob, needle.encode())
         # ★★ 第 49 轮（引擎内 harness）：用例驱动器 + 原语层。
@@ -1439,6 +1465,9 @@ def main() -> int:
                             #   （名单钉记录号；第 111 轮改 INFO/链式交替）+ 2 条直接显示
                             #   （切 tab + ui.select 命中）
                             "r109_extra_quests",
+                            # ★★★ 第 125 轮（路线 D · 冲突检测）：正常界面不许被判定成
+                            #   「UI 通道不可用」（反向断言 —— 防误报）。
+                            "r125_ui_channel_ok",
                             "r62_reload_observe"):
                     all_ok &= check(f"用例计划 · [case:{cid}]", plan_text.encode(),
                                     f"[case:{cid}]".encode())
@@ -1812,6 +1841,12 @@ def main() -> int:
                          "assert.log 界面研究探针3 .*Menu_mc=ok".encode()),
                         ("P2 六段汇总断言（扩tab/切3/切7/切0/清理/注入 同现）",
                          "界面研究探针3 .*扩tab=ok.*切3=ok.*切7=ok.*切0=ok.*清理=ok.*注入=ok".encode()),
+                        # ★★★ 第 125 轮（路线 D · 冲突检测）：原版 SWF 下的判定 +
+                        #   停推降噪（旧行为会一路退避重试到预算耗尽）。
+                        ("P2 冲突判定用例段头", "[case:r125_ui_conflict]".encode()),
+                        ("P2 冲突判定断言", "assert.log UI 通道不可用".encode()),
+                        ("P2 停推降噪断言（不再出现「推送放弃」）",
+                         "assert.nolog 推送放弃".encode()),
                     ):
                         all_ok &= check(f"用例计划 · r120 {label}", p2_text.encode(), needle)
                     # 反向检查：原版 SWF 下我们 SWF 的测试入口（ui.tab / ui.select / ui.key /
@@ -2332,6 +2367,13 @@ def main() -> int:
         all_ok &= check("PEX · 目标未加载提示", blob, "目标地点尚未加载".encode())
         all_ok &= check("PEX · 提示冷却属性", blob, b"GuideNoticeCooldownTicks")
         all_ok &= check("PEX · 失败次数节流", blob, b"GuideFailCount")
+        # ★★★ 第 125 轮（路线 D · 冲突检测）：UI 通道不可用提示 —— DLL 判定后写
+        #   GLOB（SAQ_UiNotice = 1），脚本在轮询节拍里读到 ⇒ HUD 提示 + 清 0。
+        #   （GLOB 记录号 0x80E 是 int 字面量、不进 PEX 字符串表，只查函数名与文案。）
+        all_ok &= check("PEX · UI 提示通道变量", blob, b"UiNoticeVar")
+        all_ok &= check("PEX · UI 提示处理函数", blob, b"ProcessUiChannelNotice")
+        all_ok &= check("PEX · UI 提示文案（中）", blob, "可接任务界面未生效".encode())
+        all_ok &= check("PEX · UI 提示文案（英）", blob, b"Available Quests UI not active")
         # ★★ 第 49 轮（引擎内 harness）：脚本侧的测试命令执行器 ——
         #   DLL 写命令 → 这里执行（Quest.Reset/Start/SetStage/CompleteQuest、Actor.MoveTo）
         #   → 写回执。写侧动作用**语言级 API**（不经原生函数指针，见 docs/04 的调用约定）。

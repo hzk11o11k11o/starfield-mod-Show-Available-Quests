@@ -96,5 +96,12 @@ namespace SAQ
 		//   harness（SAQ_TestOps）用它拿测试命令通道的 8 条 GLOB（0x806~0x80D）——
 		//   这样认领逻辑只有一份（前缀扫描 + 锚点校验都留在本模块），测试层不重复实现。
 		RE::TESGlobal* FindGlob(std::uint32_t a_lowId);
+
+		// ★★★ 第 125 轮（路线 D · 冲突检测）：写「UI 通道不可用」提示标记
+		//   （GLOB `SAQ_UiNotice`，记录号 0x80E）。语义 = 边沿触发：
+		//     DLL 判定「任务菜单界面不是我们的 SWF」时写 1；
+		//     脚本在轮询节拍里读到 1 ⇒ 给玩家一条 HUD 提示 + 清 0（见 SAQ_Main.psc）。
+		//   旧 ESM 没有这条 GLOB ⇒ 返回 false（只影响这条 HUD 提示；判定与停推照常）。
+		bool SetUiNotice(float a_value, std::string& a_detail);
 	}
 }

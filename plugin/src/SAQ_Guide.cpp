@@ -27,6 +27,11 @@ namespace SAQ::Guide
 		//   低 24 位（≤0xFFFFFF）+ 高 8 位（≤0xFF）分别存两个 float ⇒ 都精确。
 		//   旧 ESM 没有它 ⇒ -1，按旧语义（target 里就是完整 FormID）处理。
 		constexpr std::uint32_t kFormIDGuidePrefix = 0x805; // GLOB SAQ_GuidePrefix
+		// ★★★ 第 125 轮（路线 D · 冲突检测）：UI 通道不可用的提示标记（可选记录 ——
+		//   旧 ESM 没有它 ⇒ 只影响那条 HUD 提示，判定 / 停推照常）。
+		//   DLL 写 1（=请脚本提示玩家），脚本提示后清 0（见 SAQ_Main.psc 的
+		//   ProcessUiChannelNotice；边沿语义 = 读到 1 就提示一次）。
+		constexpr std::uint32_t kFormIDUiNotice = 0x80E;    // GLOB SAQ_UiNotice
 
 		// 脚本写的身份锚点：7777 + 菜单打开次数（允许 1000 次）
 		constexpr float kNotifyMagic = 7777.0f;
@@ -226,5 +231,25 @@ namespace SAQ::Guide
 			return nullptr;
 		}
 		return GlobAt(g_prefix, a_lowId);
+	}
+
+	// ★★★ 第 125 轮（路线 D · 冲突检测）：写「UI 通道不可用」提示标记（见 SAQ_Guide.h）。
+	bool SetUiNotice(float a_value, std::string& a_detail)
+	{
+		if (!g_resolved) {
+			EnsureChannel();
+		}
+		if (!g_resolved) {
+			a_detail = g_failDetail;
+			return false;
+		}
+		auto* g = GlobAt(g_prefix, kFormIDUiNotice);
+		if (!g) {
+			a_detail = "SAQ_UiNotice GLOB 取不到（ESM 是旧版 / 还没跑最新 patch_saq_esm.py）";
+			return false;
+		}
+		g->value = a_value;
+		a_detail = std::format("写入 SAQ_UiNotice={:.0f}", a_value);
+		return true;
 	}
 }

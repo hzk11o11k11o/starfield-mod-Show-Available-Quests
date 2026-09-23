@@ -39,3 +39,17 @@ step = assert.log 界面研究探针3 .*扩tab=ok.*切3=ok.*切7=ok.*切0=ok.*�
 ;  + 列表 3 条 `SAQ-PoC-Item 0/1/2`；menu.close 后随 Movie 销毁。
 step = wait 30000
 step = menu.close
+
+[case:r125_ui_conflict]
+desc = 第 125 轮（路线 D · 冲突检测）：原版 SWF 下判定「UI 通道不可用」+ 停推降噪（不再空转 14 次重试）
+;  判据：① `UI 通道不可用（第 N 次推送失败后判定）：…` 一行（产品 WARN —— 容它落在
+;  上一步附近，scope=case 覆盖整条用例）；② **不再出现**「推送放弃：重试 14 次」——
+;  判定发生在第 2 次正式失败后立即停推（旧行为会一路退避重试到预算耗尽）。
+;  注：判定的两个前提 = 桥解析成功 + `_root.SAQ_Report` 调用失败 —— P2 环境（原版 SWF）正是该形态。
+;  提示 GLOB（SAQ_UiNotice）不断言：进程内只请求一次，r120 用例窗口里已请求过。
+step = ping
+step = menu.open
+step = wait 3500
+step = assert.log UI 通道不可用 scope=case timeout=8000
+step = assert.nolog 推送放弃 scope=case timeout=1000
+step = menu.close

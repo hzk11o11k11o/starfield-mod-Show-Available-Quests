@@ -1325,6 +1325,39 @@ namespace SAQ::UI
 		return true;
 	}
 
+	// ★★★ 第 125 轮（路线 D · 冲突检测）：界面身份探测（设计与判据见 SAQ_UI.h）。
+	//
+	// 为什么用 `SAQ_Report` 而不是 `SAQ_PushData`：SAQ_Report 是 0 参、**每个版本**
+	//   我们的 SWF 都挂的入口（第 50 轮起还带 `stamp=` 构建指纹）—— 一次调用同时回答
+	//   「入口在不在」与「版本对不对」两个问题；而 SAQ_PushData 的调用失败无法与
+	//   「载荷/时序问题」区分。桥解析失败 = 菜单还在创建 ⇒ unknown（不判定、保持重试）。
+	ChannelIdentity ProbeChannelIdentity(std::string& a_detail)
+	{
+		if (!EnsureResolved(a_detail)) {
+			return ChannelIdentity::unknown;  // 桥没通：菜单刚开 / 换代中间态 —— 保持重试
+		}
+		auto& bridge = Cached();
+		auto* root = reinterpret_cast<RE::Scaleform::GFx::ASMovieRootBase*>(bridge.asRoot);
+		if (!root) {
+			a_detail = "ASMovieRoot 指针为空";
+			return ChannelIdentity::unknown;
+		}
+		const std::string raw = CallAs3NoArg(root, "_root.SAQ_Report");
+		if (raw.find("=fail") != std::string::npos) {
+			a_detail = "_root.SAQ_Report 调用失败（界面里没有我们的入口 —— 原版 / 第三方 / 未挂载）";
+			return ChannelIdentity::notOurs;
+		}
+		const auto at = raw.find("stamp=");
+		if (at == std::string::npos) {
+			a_detail = "_root.SAQ_Report 可调用但没有 stamp= 指纹（界面是我们的旧版本）";
+			return ChannelIdentity::notOurs;
+		}
+		const auto sp = raw.find(' ', at);
+		a_detail = "_root.SAQ_Report 带指纹 stamp=" +
+			raw.substr(at + 6, sp == std::string::npos ? std::string::npos : sp - at - 6);
+		return ChannelIdentity::ours;
+	}
+
 	// ★ 第 10 轮：读 AS3 侧一个**无参函数的字符串返回值**（不带 CallAs3NoArg 的
 	//   "路径=" 前缀、不做日志转义）—— 引导请求就是靠它回传的：
 	//     AS3 侧 SaqGuideSeq/SaqGuideQuest 变化 → SAQ_PeekGuide() 返回 "<seq>|<questFormID>"

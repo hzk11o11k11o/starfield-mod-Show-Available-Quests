@@ -131,6 +131,28 @@ namespace SAQ
 		// a_formID = 0 表示当前没有引导（界面保持 0 即可，调用方通常跳过这种同步）。
 		bool SyncGuideState(std::uint32_t a_formID, std::string& a_reply);
 
+		// ★★★ 第 125 轮（路线 D · 冲突检测）：探测「当前任务菜单界面是不是我们的 SWF」。
+		//
+		// 背景（docs/15 九·补六「产品化观察①」）：我们的补丁 SWF 被其它修改
+		//   `missionmenu.swf` 的 mod 覆盖（或没安装 / 版本过旧）时，root 上不存在我们的
+		//   任何 AS3 入口（`SAQ_PushData` / `SAQ_Report` / `SAQ_PeekGuide`…）——
+		//   旧行为是每次开菜单退避重试 14 次、日志持续「推送失败（重试）」，
+		//   玩家侧则完全看不出「mod 没生效」的原因（像是静默失效）。
+		//   本函数用于**判定界面身份**，让上层能停推降噪 + 提示玩家。
+		//
+		// 判据（保守，宁可漏判不可误判 —— 误判会让正常界面被停推）：
+		//   · 桥解析失败 ⇒ unknown（菜单还在创建等，不判定，保持重试）；
+		//   · 桥解析成功 → 调 `_root.SAQ_Report`（每个版本的我们 SWF 都有的 0 参入口）：
+		//       可调用且带 `stamp=` 构建指纹 ⇒ ours（我们的界面，继续正常重试）；
+		//       调用失败 / 没有指纹        ⇒ notOurs（原版 / 第三方 / 我们的旧版本）。
+		enum class ChannelIdentity
+		{
+			unknown,   // 桥没通（菜单还在创建 / 换代的中间态）—— 不判定
+			ours,      // 界面是我们的 SWF（`SAQ_Report` 带 stamp= 指纹）
+			notOurs,   // 界面里没有我们的入口（原版 / 第三方 / 我们的旧版本）
+		};
+		ChannelIdentity ProbeChannelIdentity(std::string& a_detail);
+
 #if SAQ_WITH_HARNESS
 		// ★★ 第 49 轮（引擎内 harness）：调 AS3 的测试驱动入口（`_root.<a_fn>`，
 		// 单字符串参数、返回字符串）—— 用来代替人做「选中条目 / 按键 / 展开子项」。

@@ -78,8 +78,8 @@
     },
     "esm/SAQ_ShowAvailableQuests.esm": {
       "desc": "代理任务 ESM（patch_saq_esm.py 等，幂等补丁）",
-      "sha256": "c2237d853450bcacda8bf9e2fee060eb3792fcc06d7228311be6668639ed1344",
-      "summary": "4752 B"
+      "sha256": "c4760cb0a8d565d3a06e4e784f55c4fcb36a0f37ff488528f7d36d2561191ba3",
+      "summary": "4805 B"
     }
   }
 }

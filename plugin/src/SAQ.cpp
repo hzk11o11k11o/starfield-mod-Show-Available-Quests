@@ -271,6 +271,25 @@ namespace SAQ
 		constexpr std::uint64_t kMenuNotReadyRetryMs = 150;
 		constexpr std::uint32_t kMaxMenuWaitTries = 24;
 
+		// ★★★ 第 125 轮（路线 D · 冲突检测）：UI 通道身份判定状态。
+		//
+		// 背景（docs/15 九·补六「产品化观察①」）：我们的补丁 SWF 被其它修改
+		//   `missionmenu.swf` 的 mod 覆盖（或没安装 / 版本过旧）时，界面上不存在我们的
+		//   任何 AS3 入口 —— 旧行为是每次开菜单退避重试 14 次（日志持续
+		//   「推送失败（重试）」），玩家侧则看不出「mod 没生效」的原因。
+		//   第 125 轮起：真失败时探测界面身份（UI::ProbeChannelIdentity）——
+		//   判定 notOurs ⇒ 本次菜单停推（done）+ 一行 WARN + 请脚本给玩家一条 HUD 提示。
+		//
+		// 判定纪律（宁可漏判，不可误判 —— 误判会让正常界面被停推）：
+		//   · 只在**真失败**（非「菜单还没就绪」）且第 2 次尝试起才探测；
+		//   · notOurs 的判据 = 桥解析成功（Movie/ASMovieRoot 有效）+ `_root.SAQ_Report`
+		//     调用失败或没有 stamp= 指纹（见 SAQ_UI.cpp 的 ProbeChannelIdentity）；
+		//   · 每菜单打开重置一次（重开菜单 = 新的一次机会）；
+		//   · 提示（GLOB）**进程内只请求一次**，避免反复打扰。
+		UI::ChannelIdentity g_uiChannel{ UI::ChannelIdentity::unknown };
+		bool                g_uiChannelDead{};   // notOurs ⇒ 本菜单会话停用一切 UI 交互
+		bool                g_uiNoticeSent{};    // 进程级：提示只请求一次
+
 		// ------------------------------------------------------------------
 		// 本地化
 		//
@@ -1575,6 +1594,25 @@ namespace SAQ
 		// 定义在下面「引导」一节；这里前向声明（推送成功后要把当前引导同步给界面）。
 		void SyncGuideStateToUi();
 
+		// ★★★ 第 125 轮（路线 D · 冲突检测）：判定「UI 通道不可用」后请脚本给玩家
+		//   一条 HUD 提示（GLOB `SAQ_UiNotice` = 1；脚本在菜单关闭后的轮询节拍里读到、
+		//   提示 + 清 0，见 SAQ_Main.psc 的 ProcessUiChannelNotice）。
+		//   进程内只请求一次（每次启动游戏最多一条 HUD 提示 —— 反复提示是骚扰）；
+		//   旧 ESM 没有该 GLOB ⇒ 失败只记一行 WARN（判定与停推照常，不受影响）。
+		void NotifyUiChannelDead()
+		{
+			if (g_uiNoticeSent) {
+				return;
+			}
+			g_uiNoticeSent = true;
+			std::string detail;
+			if (Guide::SetUiNotice(1.0f, detail)) {
+				REX::INFO("UI 通道提示已请求（脚本将在菜单关闭后提示玩家；进程内只请求一次）：{}", detail);
+			} else {
+				REX::WARN("UI 通道提示写入失败：{}（只影响这条 HUD 提示，不影响判定与停推）", detail);
+			}
+		}
+
 		// 尝试把待推送的数据送进 SWF。
 		//
 		// ★ 第 16 轮：两种失败分开对待 ——
@@ -1645,6 +1683,32 @@ namespace SAQ
 			}
 			// 真失败 ⇒ 退避加倍（封顶 kPushRetryMaxMs）：菜单加载慢时别把机会烧光。
 			++g_pending.attempts;
+
+			// ★★★ 第 125 轮（路线 D · 冲突检测）：真失败时探测「界面是不是我们的 SWF」。
+			//   第 2 次尝试起探测（第 1 次失败常常只是菜单刚创建、桥还没通）；
+			//   定性 ours ⇒ 继续按退避重试（现状）；notOurs ⇒ 停推 + 提示玩家；
+			//   unknown（桥还没通）⇒ 保持 unknown、下次失败再探（开销 = 一次缓存查询 + 一次 Invoke）。
+			if (g_uiChannel == UI::ChannelIdentity::unknown && g_pending.attempts >= 2) {
+				std::string probeDetail;
+				const auto id = UI::ProbeChannelIdentity(probeDetail);
+				if (id == UI::ChannelIdentity::ours) {
+					g_uiChannel = UI::ChannelIdentity::ours;
+					REX::INFO("UI 通道探测：界面是我们的 SWF（{}）—— 继续按退避重试（不是冲突）",
+						probeDetail);
+				} else if (id == UI::ChannelIdentity::notOurs) {
+					g_uiChannel = UI::ChannelIdentity::notOurs;
+					g_uiChannelDead = true;
+					g_pending.quests.clear();
+					g_pending.done = true;
+					REX::WARN("UI 通道不可用（第 {} 次推送失败后判定）：任务菜单界面里没有在运行 "
+							  "Show Available Quests 的界面（可能被其它修改 missionmenu.swf 的 mod 覆盖、"
+							  "未安装或版本过旧）—— 本次菜单起停用界面推送（不再空转重试）。探测：{}",
+						g_pending.attempts, probeDetail);
+					NotifyUiChannelDead();
+					return;
+				}
+			}
+
 			const auto doubled = g_pending.backoffMs * 2;
 			g_pending.backoffMs = doubled < kPushRetryMaxMs ? doubled : kPushRetryMaxMs;
 			if (g_pending.attempts >= kMaxPushAttempts) {
@@ -1716,6 +1780,10 @@ namespace SAQ
 
 		void PollUiReport()
 		{
+			// ★★★ 第 125 轮（路线 D）：已判定「界面不是我们的」⇒ 别再每 500ms 空调一次
+			if (g_uiChannelDead) {
+				return;
+			}
 			if (g_poll.logged >= kReportPollMaxLines) {
 				return;
 			}
@@ -3169,6 +3237,10 @@ namespace SAQ
 		// 序号 0 = 还没有请求；序号变化才算一次新请求（同一个请求不会被重复处理）。
 		void PollGuideRequest()
 		{
+			// ★★★ 第 125 轮（路线 D）：界面不是我们的 ⇒ 不会有我们的引导请求，别空轮询
+			if (g_uiChannelDead) {
+				return;
+			}
 			const auto now = NowMs();
 			if (g_guide.lastPollMs != 0 && now - g_guide.lastPollMs < kGuidePollIntervalMs) {
 				return;
@@ -3643,7 +3715,8 @@ namespace SAQ
 			//      （节流按「距上次 100ms」判定，关闭时刻这一下强制读 —— lastPollMs 清零。）
 			{
 				std::string live;
-				if (UI::ReadUiReport(live) && !live.empty()) {
+				// ★★★ 第 125 轮（路线 D）：界面不是我们的 SWF ⇒ 跳过现场读（读了也只有 fail）
+				if (!g_uiChannelDead && UI::ReadUiReport(live) && !live.empty()) {
 					g_poll.lastReport = std::move(live);
 				}
 			}
@@ -3656,6 +3729,9 @@ namespace SAQ
 			}
 			if (!g_poll.lastReport.empty()) {
 				REX::INFO("菜单关闭：界面最后状态={}", g_poll.lastReport);
+			} else if (g_uiChannelDead) {
+				// ★★★ 第 125 轮（路线 D）：已判定界面不是我们的 —— 说清楚（不是「读不到」）
+				REX::INFO("菜单关闭：界面状态未读取（本轮已判定 UI 通道不可用 —— 界面不是我们的 SWF）");
 			} else {
 				REX::INFO("菜单关闭：界面状态一条都没读回来（桥没通 / SWF 是旧版 / 一次都没轮询到）");
 			}
@@ -3696,6 +3772,12 @@ namespace SAQ
 			g_pending.lastAttemptMs = 0;
 			g_pending.total = 0;
 			g_pending.backoffMs = kPushRetryIntervalMs;  // 新一轮重试：退避复位
+
+			// ★★★ 第 125 轮（路线 D · 冲突检测）：每菜单打开重置判定 —— 新菜单 = 新 SWF
+			//   实例（玩家可能刚调了加载顺序 / 热重载）⇒ 给它新的一次探测机会。
+			//   g_uiNoticeSent 不重置（进程级：HUD 提示每次启动游戏最多一次）。
+			g_uiChannel = UI::ChannelIdentity::unknown;
+			g_uiChannelDead = false;
 
 			// ★ 第 27 轮：「菜单还开着，脚本不会响应」说明是**每菜单一次**（见 PollGuideVerify）。
 			g_guide.verifyWaitNoted = false;
