@@ -171,6 +171,25 @@ namespace SAQ
 		//   切 7 → 被拦（mask=哨兵）；切 0 → 放行（mask 回 `$ALL`）。一次跑完、
 		//   结果一行汇总（红线六）。副作用（哨兵 / tab 数据被替换）随菜单关闭清理。
 		std::string ResearchGfxInjection2();
+
+		// ★★★ 第 120 轮（P2 · 原版 SWF 完整 PoC · docs/15 九·补三/九·补四）：`ui.research3`
+		//   —— 「无 SWF 覆盖」目标形态的完整链路验证（在**原版** missionmenu.swf 上跑）：
+		//     R1 读环境（numTabs / entryCount / filterMask 初值；原版预期 numTabs=7）；
+		//     R2 挂 `selectionChange` priority=100 监听（拦截基础设施，同 P1.5）；
+		//     R3 **扩 tab**：构造 N0+1 项（前 N0 项假数据 + 新 tab "SAQ-PoC" flag=1<<6）
+		//        → `SetTabsData` → `numTabs` 读回（原版 7→8）；
+		//     R4 切 3（对照：原版执行 ⇒ 读**自己的** `FilterInfoA[3]` ⇒ mask 变）；
+		//     R5 切 N0（新 tab）：`stopImmediatePropagation` + 哨兵写 ⇒ 哨兵存活
+		//        （原版若无拦截会读 `FilterInfoA[7]` = undefined.flag ⇒ TypeError ——
+		//        这正是「第 8 个 tab」必须拦截的原因）；
+		//     R6 切 0（放行：原版执行 ⇒ mask 回 `$ALL`）；
+		//     R7 清理监听；
+		//     R8 自设 `filterMask` = 1<<6（模拟产品「我们的 tab」状态）；
+		//     R9 **列表数据注入**：构造 3 条 iType=6 条目 → `MissionsList_mc.InitializeEntries`
+		//        → `entryCount` 读回（期望 = 注入条数）。
+		//   副作用（tab 假数据 / 列表被替换 / filterMask）随 `menu.close` 清理
+		//   （第 27/50 轮定案）。结果一行汇总（红线六）。
+		std::string ResearchGfxInjection3();
 #endif
 	}
 }

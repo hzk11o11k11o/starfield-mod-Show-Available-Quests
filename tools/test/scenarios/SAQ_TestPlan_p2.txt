@@ -1,0 +1,38 @@
+; ============================================================================
+;  SAQ 测试用例计划（P2 · 原版 SWF 完整 PoC —— 第 120 轮）
+;
+;  ★ 只在「无 SWF 覆盖」实验环境使用（三者缺一不可）：
+;    ① MO2 部署里把我们的 SWF 覆盖临时改名禁用：
+;       Interface\missionmenu.swf / missionmenu_lrg.swf → *.p2off
+;       ⇒ 游戏加载**原版** missionmenu.swf；
+;    ② 部署 ini（SFSE\Plugins\SAQ_ShowAvailableQuests.ini）：
+;       [Test] Harness=1（已有）+ Plan=SAQ_TestPlan_p2.txt（指向本文件）；
+;    ③ 开发构建 DLL（含 harness + ui.research3 探针）。
+;  跑完恢复：SWF 改回 + ini 的 Plan 键改回 SAQ_TestPlan.txt（或删键）。
+;
+;  为什么单独一份：原版 SWF 下我们 SWF 的测试入口（ui.* / SAQ_Report / 推送 /
+;  assert.ui）全不可用 —— 42 条主计划在 P2 环境会大面积 FAIL。本计划只用
+;  **C++ 侧原语**（ping / menu.open / wait / menu.close）+ 探针 op（ui.research3）。
+;
+;  判读：`界面研究探针3 …` 一行 ——
+;    环境=(numTabs 7,…) / 扩tab=ok（7→8）/ 切3=ok（对照）/ 切7=ok（拦截 1 次 +
+;    哨兵 0x20000000 存活）/ 切0=ok（放行）/ 清理=ok / 注入=ok（entryCount → 3）。
+;  眼睛：菜单 tab 条上出现第 8 个 tab「SAQ-PoC」；列表被替换成 3 条
+;    「SAQ-PoC-Item i」（破坏性副作用 —— 随 menu.close 清理，第 27/50 轮定案）。
+; ============================================================================
+
+[case:r120_gfx_poc]
+desc = 第 120 轮（P2）：原版 SWF 完整 PoC —— 7 → 8 个 tab + 拦截 + 列表数据注入（无 SWF 覆盖形态）
+;  为什么 menu.open 之后用 wait：原版环境没有「推送成功」行可等桥就绪（我们 SWF
+;  的推送在 P2 下必然失败）—— 用固定 1800 ms 留出 Movie/ASMovieRoot 解析时间
+;  （P1.5 实测：菜单打开后桥在 ~1 秒内就绪）。桥没通 ⇒ 探针行会写「桥没通（…）」
+;  ⇒ 首条断言 FAIL，能一眼看出是时序而不是能力问题。
+step = ping
+step = menu.open
+step = wait 1800
+step = ui.research3
+step = assert.log 界面研究探针3 .*Menu_mc=ok scope=prev timeout=8000
+step = assert.log 界面研究探针3 .*扩tab=ok.*切3=ok.*切7=ok.*切0=ok.*清理=ok.*注入=ok scope=case timeout=8000
+;  给「眼睛」留时间：第 8 个 tab（SAQ-PoC）+ 3 条注入条目（列表被替换）
+step = wait 8000
+step = menu.close

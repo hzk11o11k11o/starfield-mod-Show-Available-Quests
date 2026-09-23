@@ -35,7 +35,17 @@ param(
     #   （★★★ 第 103 轮起测试指定存档 = Save1_FDBB7678M54696D6D6568_000034_20260922142854_2_0_4
     #     —— 它与用例计划 r62 的 `save.load` 子串**必须一致**，verify 里有
     #     「用例计划 · r62 指定存档与部署 ini AutoLoad 一致」检查）
-    [string]$AutoLoad = ''
+    [string]$AutoLoad = '',
+    # ★★★ 第 120 轮（P2 · 原版 SWF 完整 PoC · docs/15 九·补三）：**P2 实验部署** ——
+    #   「无 SWF 覆盖」形态的实机验证环境：
+    #     ① 部署的 SWF 覆盖改名禁用（missionmenu.swf / missionmenu_lrg.swf → *.p2off）
+    #        ⇒ 游戏加载**原版** missionmenu.swf；
+    #     ② 拷入 P2 专用用例计划（tools\test\scenarios\SAQ_TestPlan_p2.txt，随本次部署
+    #        一并拷贝）并把 ini [Test] Plan 指过去（原版下 42 条主计划会大面积 FAIL）；
+    #     ③ 其余照常（DLL 含 harness + ui.research3 探针）。
+    #   ★ 恢复：不带 -P2 再跑一次（例如 `-SkipTable -SkipSwf -Harness`）——
+    #     SWF 拷回、*.p2off 清理、ini Plan 改回 SAQ_TestPlan.txt。
+    [switch]$P2
 )
 
 $ErrorActionPreference = 'Stop'
@@ -348,8 +358,27 @@ if (-not $SkipDeploy) {
         New-Item -ItemType Directory -Force -Path (Join-Path $dest $sub) | Out-Null
     }
     Copy-Item $outDll (Join-Path $dest 'SFSE\Plugins\SAQ_ShowAvailableQuests.dll') -Force
-    Copy-Item $outSwf (Join-Path $dest 'Interface\missionmenu.swf') -Force
-    Copy-Item $outSwfLrg (Join-Path $dest 'Interface\missionmenu_lrg.swf') -Force
+    # ★★★ 第 120 轮（P2）：SWF 覆盖 —— 正常部署时拷入并清理 P2 期的 *.p2off 残留；
+    #   -P2 实验部署时**改名禁用**（游戏加载原版 missionmenu.swf）。
+    $swfDest    = Join-Path $dest 'Interface\missionmenu.swf'
+    $swfLrgDest = Join-Path $dest 'Interface\missionmenu_lrg.swf'
+    if ($P2) {
+        foreach ($f in @($swfDest, $swfLrgDest)) {
+            if (Test-Path $f) {
+                Move-Item $f ($f + '.p2off') -Force
+                Write-Host ("    [P2] 已禁用 SWF 覆盖：" + (Split-Path $f -Leaf) + ".p2off（游戏加载原版）")
+            }
+        }
+    } else {
+        Copy-Item $outSwf $swfDest -Force
+        Copy-Item $outSwfLrg $swfLrgDest -Force
+        foreach ($f in @($swfDest, $swfLrgDest)) {
+            if (Test-Path ($f + '.p2off')) {
+                Remove-Item ($f + '.p2off') -Force
+                Write-Host ("    已清理 P2 残留：" + (Split-Path $f -Leaf) + ".p2off")
+            }
+        }
+    }
     Copy-Item $esmStable (Join-Path $dest $esmName) -Force
     Copy-Item (Join-Path $pexOut '*.pex') (Join-Path $dest 'Scripts') -Force
 
@@ -391,6 +420,10 @@ if (-not $SkipDeploy) {
     $pluginDest = Join-Path $dest 'SFSE\Plugins'
     Copy-Item (Join-Path $root 'tools\test\scenarios\SAQ_TestPlan.txt') `
         (Join-Path $pluginDest 'SAQ_TestPlan.txt') -Force
+    # ★★★ 第 120 轮（P2）：P2 专用计划一并拷入（不被 ini 指向时放着无害；
+    #   verify 有「部署副本与工作区一致」检查）。
+    Copy-Item (Join-Path $root 'tools\test\scenarios\SAQ_TestPlan_p2.txt') `
+        (Join-Path $pluginDest 'SAQ_TestPlan_p2.txt') -Force
     $resDest = Join-Path $pluginDest 'SAQ_testresults.json'
     if (-not (Test-Path $resDest)) {
         [System.IO.File]::WriteAllText($resDest, '{}', (New-Object System.Text.UTF8Encoding $false))
@@ -456,6 +489,16 @@ if (-not $SkipDeploy) {
         if ($Harness) {
             $iniText = [regex]::Replace($iniText, '(?m)^\s*Harness\s*=.*$', 'Harness=1')
             $iniChanged = $true
+        }
+        # ★★★ 第 120 轮（P2）：Plan 键由脚本管理 —— `-P2` ⇒ 指向 P2 专用计划；
+        #   `-Harness`（非 P2）⇒ 若当前还指着 p2 就改回主计划（跑完的恢复动作）。
+        if ($P2) {
+            $iniText = [regex]::Replace($iniText, '(?m)^\s*Plan\s*=.*$', 'Plan=SAQ_TestPlan_p2.txt')
+            $iniChanged = $true
+        } elseif ($Harness -and $iniText -match '(?m)^\s*Plan\s*=\s*SAQ_TestPlan_p2\.txt\s*$') {
+            $iniText = [regex]::Replace($iniText, '(?m)^\s*Plan\s*=.*$', 'Plan=SAQ_TestPlan.txt')
+            $iniChanged = $true
+            Write-Host '    [P2 恢复] ini Plan 已改回 SAQ_TestPlan.txt'
         }
         if ($AutoLoad -ne '') {
             # 键一定已存在（上面 newKeys 补过）；这里强制写入指定存档子串。

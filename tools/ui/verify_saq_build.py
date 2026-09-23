@@ -595,6 +595,16 @@ HARNESS_STRINGS = (
     ("harness GFx 探针2 · 拦截事件名", "BSTabbedSelection::selectionChange"),
     ("harness GFx 探针2 · 拦截判据标记（切7=）", "｜切7="),
     ("harness GFx 探针2 · SetTabsData 补测标记（U2=）", "｜U2="),
+    # ★★★ 第 120 轮（P2 · 原版 SWF 完整 PoC · docs/15 九·补三/九·补四）：`ui.research3` ——
+    #   把「扩 tab + 拦截 + 列表数据注入」拼成**原版环境**下的完整链路：
+    #   R1 环境 / R3 `SetTabsData` 7→8（扩tab=）/ R4 切3 对照 / R5 切7 拦截哨兵 /
+    #   R6 切0 放行 / R7 清理 / R9 `InitializeEntries` 注入（注入=）。
+    #   实现只在开发构建（SAQ_UI.cpp 的 `#if SAQ_WITH_HARNESS` 段 + SAQ_Test.cpp 的 op 名）
+    #   ⇒ 发布 DLL 必须一条都不见（本表反向检查覆盖）。
+    ("harness GFx 探针3 op 名", "ui.research3"),
+    ("harness GFx 探针3 产品行（可被 assert.log 取证）", "界面研究探针3 {}"),
+    ("harness GFx 探针3 · 扩展 tab 判据标记（扩tab=）", "｜扩tab="),
+    ("harness GFx 探针3 · 列表注入判据标记（注入=）", "｜注入="),
 )
 
 
@@ -914,14 +924,35 @@ def main() -> int:
         "报告字段 rq=[": b" rq=[",
         "顺序探针末尾段 |tail=": b"|tail=",
         }
+    # ★★★ 第 120 轮（P2 · 原版 SWF 完整 PoC · docs/15 九·补三）：`--p2` 模式下**部署的
+    #   SWF 覆盖是有意缺失的**（build-saq.ps1 -P2 已把它们改名成 *.p2off —— 游戏加载
+    #   原版 missionmenu.swf）。工作区两份照常全查；部署两份在 P2 模式改为查「.p2off
+    #   存在」证据；非 P2 模式反向检查「*.p2off 不该残留」（P2 实验没恢复干净）。
+    p2_mode = "--p2" in sys.argv[1:]
+    if p2_mode:
+        print("---- P2 模式（--p2）：部署的 SWF 覆盖被临时禁用（预期缺失，改查 *.p2off 证据）----")
+    for name in ("missionmenu.swf", "missionmenu_lrg.swf"):
+        off = MO2_MOD / "Interface" / (name + ".p2off")
+        if p2_mode:
+            ok = off.exists()
+            print(("OK  " if ok else "MISS") +
+                  f" Interface/{name}.p2off · P2 禁用证据（游戏将加载原版 SWF）")
+            all_ok &= ok
+        else:
+            gone = not off.exists()
+            print(("OK  " if gone else "MISS") +
+                  f" Interface/{name}.p2off · P2 残留已清理(反向检查)")
+            all_ok &= gone
     swf_paths = [
-        ROOT / "ui/missionmenu/build/missionmenu.swf",
-        ROOT / "ui/missionmenu_lrg/build/missionmenu_lrg.swf",
-        MO2_MOD / "Interface/missionmenu.swf",
-        MO2_MOD / "Interface/missionmenu_lrg.swf",
+        (ROOT / "ui/missionmenu/build/missionmenu.swf", False),
+        (ROOT / "ui/missionmenu_lrg/build/missionmenu_lrg.swf", False),
+        (MO2_MOD / "Interface/missionmenu.swf", True),
+        (MO2_MOD / "Interface/missionmenu_lrg.swf", True),
     ]
-    for p in swf_paths:
+    for p, deployed in swf_paths:
         if not p.exists():
+            if p2_mode and deployed:
+                continue   # P2：部署覆盖有意缺失（上面已查过 *.p2off 证据）
             print(f"MISS 缺少产物 {p}")
             all_ok = False
             continue
@@ -1758,6 +1789,62 @@ def main() -> int:
                 else:
                     print(f"MISS 用例计划 · MO2 部署副本不存在：{plan_deployed}")
                     all_ok = False
+                # ★★★ 第 120 轮（P2 · 原版 SWF 完整 PoC · docs/15 九·补三/九·补四）：
+                #   P2 专用用例计划（`r120_gfx_poc`）—— 形状 + 只读纪律 + 部署一致。
+                #   它只在 `--p2` 部署（ini Plan 指向它）时运行；平时也必须部署就位
+                #   （build-saq 每次都会拷）⇒ 部署副本一致性照做。
+                p2_src = ROOT / "tools/test/scenarios/SAQ_TestPlan_p2.txt"
+                if p2_src.exists():
+                    p2_text = p2_src.read_text(encoding="utf-8", errors="replace")
+                    for label, needle in (
+                        ("P2 用例段头", "[case:r120_gfx_poc]".encode()),
+                        ("P2 探针步骤", "step = ui.research3".encode()),
+                        ("P2 产品行断言（Menu_mc=ok）",
+                         "assert.log 界面研究探针3 .*Menu_mc=ok".encode()),
+                        ("P2 六段汇总断言（扩tab/切3/切7/切0/清理/注入 同现）",
+                         "界面研究探针3 .*扩tab=ok.*切3=ok.*切7=ok.*切0=ok.*清理=ok.*注入=ok".encode()),
+                    ):
+                        all_ok &= check(f"用例计划 · r120 {label}", p2_text.encode(), needle)
+                    # 反向检查：原版 SWF 下我们 SWF 的测试入口（ui.tab / ui.select / ui.key /
+                    #   assert.ui / SAQ_Report）全不可用 —— P2 计划只许用 C++ 侧原语。
+                    #   ★ 只看 `step =` 行（注释里的同类词是说明文字，不算执行内容 ——
+                    #     首版扫全文会被计划头的注释误伤，本轮 verify 自检抓出）。
+                    p2_steps = "\n".join(
+                        l for l in p2_text.splitlines() if l.strip().lower().startswith("step"))
+                    p2_bad = any(s in p2_steps for s in
+                                 ("ui.tab", "ui.select", "ui.key", "assert.ui",
+                                  "SAQ_Report", "quest.reset", "quest.stage"))
+                    print(("MISS" if p2_bad else "OK  ") +
+                          " 用例计划 · r120 只走 C++ 原语（无 ui.tab/select/key/assert.ui，反向检查）")
+                    all_ok &= not p2_bad
+                    p2_deployed = MO2_MOD / "SFSE/Plugins/SAQ_TestPlan_p2.txt"
+                    if p2_deployed.exists():
+                        same_p2 = p2_deployed.read_bytes() == p2_src.read_bytes()
+                        print(("OK  " if same_p2 else "MISS") +
+                              " 用例计划 · P2 部署副本与工作区一致（部署未落后）")
+                        all_ok &= same_p2
+                    else:
+                        print(f"MISS 用例计划 · P2 部署副本不存在：{p2_deployed}")
+                        all_ok = False
+                    # ★★★ 第 120 轮（P2）：部署 ini 的 Plan 键必须与模式一致 ——
+                    #   `--p2` ⇒ 指向 SAQ_TestPlan_p2.txt；平时 ⇒ 不能还指着 p2
+                    #   （说明 P2 实验没恢复干净）。
+                    _ini_plan = MO2_MOD / "SFSE/Plugins/SAQ_ShowAvailableQuests.ini"
+                    if _ini_plan.exists():
+                        _pt = _ini_plan.read_text(encoding="utf-8", errors="replace")
+                        _m_pl = re.search(r"(?mi)^\s*Plan\s*=\s*(\S+)\s*$", _pt)
+                        _pl = (_m_pl.group(1) if _m_pl else "").strip()
+                        if p2_mode:
+                            ok_pl = _pl == "SAQ_TestPlan_p2.txt"
+                            print(("OK  " if ok_pl else "MISS") +
+                                  f" 部署 ini · P2 模式 Plan={_pl or '(空)'}（要求 SAQ_TestPlan_p2.txt）")
+                            all_ok &= ok_pl
+                        else:
+                            ok_pl = _pl != "SAQ_TestPlan_p2.txt"
+                            print(("OK  " if ok_pl else "MISS") +
+                                  f" 部署 ini · Plan={_pl or '(默认 SAQ_TestPlan.txt)'}"
+                                  "（反向检查：未残留 P2 指向）")
+                            all_ok &= ok_pl
                 # ★ 第 55 轮：smoke 的三条「上一步副作用」断言必须带 `scope=prev` ——
                 #   09:06 会话的假失败就是漏写它（「引导请求」行其实打了，只是落在
                 #   断言窗口起点之前 —— 动作与它的日志常在同一次 Tick）。

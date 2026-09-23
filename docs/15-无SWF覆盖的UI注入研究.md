@@ -8,7 +8,9 @@
 > 本文 = 离线取证 + 路线盘点 + 实验设计 + **实测判读（见第九·补节：U0 ✅ / U1 ❌ 能力边界 /
 > U2 待补测 / U3 ✅ ⇒ 路线 A 不终止，下一步探针 v2 / P1.5）** + **探针 v2 落地
 > （第九·补二节）** + **探针 v2 实测判读（第九·补三节：五段全 ok = 拦截 + 哨兵写 + U2
-> 补测全成立 ⇒ 绕过路径实机确认，下一步 P2 = 原版 SWF 完整 PoC）**。
+> 补测全成立 ⇒ 绕过路径实机确认，下一步 P2 = 原版 SWF 完整 PoC）** + **P2 落地
+> （第九·补四节：`ui.research3` = 扩 tab 7→8 / 切 7 拦截哨兵 / `InitializeEntries`
+> 列表注入；`build-saq.ps1 -P2` 部署开关 + verify `--p2`；待实机判读）**。
 
 ## 一、问题定义与成功判据
 
@@ -281,6 +283,50 @@ dev/release 双向 + 4 条用例计划形状 + 1 条只读反向）；断言 = *
   `SetSelectedCategoryIndex` 拒绝（拒绝码 `tab-refused`，第 51 轮已见过该机制）——
   P2 的探针顺序须改为「**先 `SetTabsData` 扩到 8 → 再切 7 验证拦截**」；
 - `filterMask` 初值（`$ALL`）与 tab 数无关，对照段（切 3）在原版上照样可用。
+
+### 九·补四、P2 已落地（2026-09-23 · 第 121 轮；`ui.research3`）
+
+**实现**（`plugin/src/SAQ_UI.{h,cpp}` 的 `ResearchGfxInjection3`；harness 段内、发布零残留）：
+
+| 段 | 动作 | 判定（汇总行字段） |
+| --- | --- | --- |
+| R1 | 读环境 `numTabs` / `entryCount` / `filterMask` | `环境=(numTabs 7,…)`（原版预期 7） |
+| R2 | `TabbedFilterSelection_mc` 挂 priority=100 的 `"BSTabbedSelection::selectionChange"` 监听 | （拦截计数在 R5 用） |
+| R3 | **扩 tab**：构造 N0+1 项（前 N0 项假数据 + 新 tab `"SAQ-PoC"` flag=1<<6）→ `SetTabsData` → `numTabs` 读回 | `扩tab=ok（7→8）` |
+| R4 | 切 3（对照） | `切3=ok`（原版执行 ⇒ 读**自己的** `FilterInfoA[3]` ⇒ mask 变） |
+| R5 | 切 N0（新 tab）：`stopImmediatePropagation` + 哨兵写 | **哨兵存活 = 拦截 + 写双成立**（`切7=ok（拦截 1 次,mask→0x20000000）`） |
+| R6 | 切 0（放行） | `切0=ok`（mask 回到 `$ALL`） |
+| R7 | `removeEventListener` | `清理=ok` |
+| R8 | 自设 `filterMask` = 1<<6（模拟产品「我们的 tab」状态） | （为 R9 铺路） |
+| R9 | **列表数据注入**：构造 3 条 iType=6 条目 → `MissionsList_mc.InitializeEntries` → `entryCount` 读回 | `注入=ok（entryCount 206→3）` |
+
+**判据链**（一条行内正则；顺序 = 输出顺序，防拆散后漏段）：
+`扩tab=ok.*切3=ok.*切7=ok.*切0=ok.*清理=ok.*注入=ok`。
+
+**为什么 R5 是「必须拦截」的硬证据**：原版 SWF 的 `FilterInfoA` 只有 7 项 ——
+原版 `onFilterChanged`（priority=0）会读 `FilterInfoA[7].flag` = `undefined.flag` ⇒
+TypeError。我们 priority=100 + `stopImmediatePropagation` 拦住它、自己设 mask
+（产品形态下 = 「切到我们的 tab」）；没拦住则哨兵被覆盖/异常打断 ⇒ 哨兵不存活。
+
+**P2 部署（`build-saq.ps1 -P2`）**：
+
+| 动作 | 细节 |
+| --- | --- |
+| SWF 覆盖禁用 | `Interface\missionmenu.swf` / `missionmenu_lrg.swf` → `*.p2off`（游戏加载原版） |
+| 用例计划切换 | 拷入 `SAQ_TestPlan_p2.txt`（只含 `r120_gfx_poc` 一条 —— 原版下我们 SWF 的 `ui.*` 测试入口全不可用）并写 ini `[Test] Plan=SAQ_TestPlan_p2.txt` |
+| 恢复 | 不带 `-P2` 再跑一次（例如 `-SkipTable -SkipSwf -Harness`）：SWF 拷回、`*.p2off` 清理、ini Plan 改回 `SAQ_TestPlan.txt` |
+
+**verify（`--p2` 模式）**：P2 期间部署 SWF 是**有意缺失**的 ⇒ `--p2` 改查
+`*.p2off` 存在证据、部署 ini `Plan` 必须指向 p2 计划；非 P2 模式反向检查
+`*.p2off` 残留与 Plan 残留（防「P2 没恢复干净」）。新增检查：探针3 特征串
+dev/release 双向 ×4 + r120 计划形状/断言 ×4 + 只读反向 ×1 + p2off 证据 ×2 +
+Plan 一致性 ×1。
+
+**待实机判读（下一轮）**：跑 P2 会话（`Harness=1` + `Plan=SAQ_TestPlan_p2.txt` +
+SWF 禁用）⇒ 判读 `界面研究探针3 …` 一行（六段同现 = ok）+ **眼睛**：菜单 tab 条上
+出现第 8 个 tab「SAQ-PoC」、列表被替换成 3 条「SAQ-PoC-Item i」（破坏性副作用，
+`menu.close` 收尾）。六段全 ok ⇒ 「无 SWF 覆盖」目标形态成立（**P2 通过**），
+再评估功能迁移（第七节）与产品形态（建议「兼容模式」，默认仍走 SWF）。
 
 ## 附：复现命令（离线证据）
 

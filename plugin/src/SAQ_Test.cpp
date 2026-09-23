@@ -699,6 +699,15 @@ namespace SAQ::Test
 				a_step.kind = Kind::kUiResearch;
 				a_step.text = "2";
 				a_step.timeoutMs = 8000;
+			} else if (op == "ui.research3") {
+				// ★★★ 第 120 轮（P2 · 原版 SWF 完整 PoC · docs/15 九·补三/九·补四）：
+				//   把「扩 tab + 拦截 + 列表数据注入」拼成原版环境下的完整链路
+				//   （R1 环境 / R3 SetTabsData 7→8 / R4 切3 对照 / R5 切7 拦截哨兵 /
+				//   R6 切0 放行 / R7 清理 / R9 InitializeEntries 注入）。
+				//   一次跑完（见 SAQ_UI.cpp 的 ResearchGfxInjection3）。
+				a_step.kind = Kind::kUiResearch;
+				a_step.text = "3";
+				a_step.timeoutMs = 8000;
 			} else if (op == "wait") {
 				a_step.kind = Kind::kWait;
 				const auto toks = SplitWs(rest);
@@ -1354,6 +1363,15 @@ namespace SAQ::Test
 					const auto probe2 = UI::ResearchGfxInjection2();
 					REX::INFO("界面研究探针2 {}", probe2);
 					CompleteStep(true, probe2, {});
+					return true;
+				}
+				// ★★★ 第 120 轮（P2 · 原版 SWF 完整 PoC）：`ui.research3` ——
+				//   原版环境（我们的 SWF 覆盖被临时禁用）下的完整链路：扩 tab 7→8 +
+				//   切 7 拦截哨兵 + 列表数据注入（InitializeEntries）。同样一行产品日志。
+				if (step.text == "3") {
+					const auto probe3 = UI::ResearchGfxInjection3();
+					REX::INFO("界面研究探针3 {}", probe3);
+					CompleteStep(true, probe3, {});
 					return true;
 				}
 				const bool withEvents = step.text.find("events") != std::string::npos;
