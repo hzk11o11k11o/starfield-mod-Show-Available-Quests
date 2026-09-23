@@ -1,4 +1,4 @@
-# Nexus 上传素材（v0.1.17）
+# Nexus 上传素材（v0.1.18）
 
 > 用途：复制下面内容到 Nexus 的 mod 页。Summary 填「名称/摘要」栏，
 > Description 填「描述」栏（Nexus 描述框可用 BBCode，纯文本换行也正常）。
@@ -128,6 +128,10 @@ Please include SFSE\Plugins\SAQ_ShowAvailableQuests.log, install method (MO2 / m
 
 ## 更新日志（Changelog）
 
+### v0.1.18（2026-09-24）
+- 修复：「可接任务」列表里**任务板入口的排列顺序** —— 追踪者联盟总部任务板此前夹在「（可重复）…」条目之间（看上去像排序错乱）；现在 13 处任务板入口连成一片（最后一块 = 追踪者联盟总部），其后才接「（可重复）…」条目，列表分区一目了然
+- 其它：内部日志与验证设施更新（不影响游戏内行为；发布包仍不包含任何测试代码）
+
 ### v0.1.17（2026-09-24）
 - 修复：最后一条引导目标**需要靠近目标区域才会生效**的任务（破碎空间 DLC 的收集型任务）已补全兜底 —— 现在**全部任务**在任意距离点一下引导都会**立即生效**，不再出现「目标尚未加载，保持待生效」的等待
 - 其它：内部数据与验证设施更新（不影响游戏内行为；发布包仍不包含任何测试代码）
@@ -219,7 +223,7 @@ Please include SFSE\Plugins\SAQ_ShowAvailableQuests.log, install method (MO2 / m
 
 | 项 | 说明 |
 | --- | --- |
-| 上传包 | `dist\SAQ-ShowAvailableQuests-0.1.17.zip`（由 `tools\package-saq.ps1` 生成；会先以发布构建重编 DLL —— 包里不含任何 harness/测试代码） |
+| 上传包 | `dist\SAQ-ShowAvailableQuests-0.1.18.zip`（由 `tools\package-saq.ps1` 生成；会先以发布构建重编 DLL —— 包里不含任何 harness/测试代码） |
 | 测试功能 | 包内**不含任何测试资产**（用例文件 / 结果 JSON），配置强制为「正常玩」的默认值（ini `[Test] Mode=0 / Harness=0`）；发布 DLL 不含 harness 编译 —— 由打包脚本 + `verify_saq_build.py` 三层校验把守 |
 | 版本号 | 三处一致：`plugin\xmake.lua`、`plugin\src\main.cpp`、`meta.ini` |
 | 依赖声明 | Nexus 上标注 SFSE 为必需依赖（版本 0.2.21+） |
