@@ -1533,5 +1533,312 @@ namespace SAQ::UI
 		}
 		return true;
 	}
+
+	// ======================================================================
+	// ★★★ 第 117 轮（无 SWF 覆盖的 UI 注入研究 · docs/15）：`ui.research` 探针
+	//
+	//   验证"不替换 missionmenu.swf、直接在运行时操作原版 AS3 对象"的可行性
+	//   （目的 = 消除与其它改任务菜单 UI mod 的文件级二选一冲突）。三个未知点：
+	//
+	//     U1 私有成员可读写性 —— `_root.Menu_mc.FilterInfoA`（原版 private；
+	//        只有 3 处使用：声明 / currentFilterFlag / PopulateTabs）。它决定
+	//        "第 8 个 tab"能否存在：不写它，`currentFilterFlag` 在选中第 8 个
+	//        tab 时会越界（原版 MissionMenu.as:171/347）。
+	//     U2 public 方法/属性 —— `TabbedFilterSelection_mc.SetTabsData(Array)`
+	//        （BSTabbedSelection.as:141，public）+ `numTabs`（getter）。
+	//     U3 事件注入 —— `MissionsList_mc.addEventListener("MissionsList::itemActivated",
+	//        <C++ FunctionHandler>)`（事件名是 public static const，可硬编码）。
+	//
+	//   方法论（与项目其余探针一致）：**每个动作"调用 → 读回验证"**，不能只看
+	//   调用返回值；结果汇总成一行产品日志（`界面研究探针 …`，可被 assert.log 取证）。
+	//
+	//   副作用：写测试会往 `FilterInfoA` 追加一个标记项（幂等：已有就跳过）——
+	//   菜单关闭后 Movie 销毁、下次打开重建（第 27/50 轮定案）⇒ 天然清理。
+	// ======================================================================
+	namespace
+	{
+		constexpr std::size_t kSlotAsRootCreateObject = 0x2E;    // CreateObject(Value*, const char* = nullptr, …)
+		constexpr std::size_t kSlotAsRootCreateArray = 0x2F;     // CreateArray(Value*)
+		constexpr std::size_t kSlotAsRootCreateFunction = 0x30;  // CreateFunction(Value*, FunctionHandler*, void*)
+		constexpr std::size_t kSlotAsRootGetVariable = 0x32;     // GetVariable(Value*, const char*) const
+
+		constexpr const char*   kResearchMarkText = "SAQ研究";        // 写测试标记项（幂等识别）
+		constexpr std::uint32_t kResearchMarkFlag = 1u << 6;          // = 1 << AVAILABLE_QUEST_TYPE（64）
+
+		bool SafeGetVariable(RE::Scaleform::GFx::ASMovieRootBase* a_root, const char* a_path,
+			RE::Scaleform::GFx::Value* a_out)
+		{
+			__try {
+				return a_root->GetVariable(a_out, a_path);
+			} __except (EXCEPTION_EXECUTE_HANDLER) {
+				return false;
+			}
+		}
+
+		bool SafeCreateObject(RE::Scaleform::GFx::ASMovieRootBase* a_root, RE::Scaleform::GFx::Value* a_out)
+		{
+			__try {
+				a_root->CreateObject(a_out);
+				return true;
+			} __except (EXCEPTION_EXECUTE_HANDLER) {
+				return false;
+			}
+		}
+
+		bool SafeCreateFunction(RE::Scaleform::GFx::ASMovieRootBase* a_root, RE::Scaleform::GFx::Value* a_out,
+			RE::Scaleform::GFx::FunctionHandler* a_handler, void* a_userData)
+		{
+			__try {
+				a_root->CreateFunction(a_out, a_handler, a_userData);
+				return true;
+			} __except (EXCEPTION_EXECUTE_HANDLER) {
+				return false;
+			}
+		}
+
+		bool SafeValueGetMember(RE::Scaleform::GFx::Value* a_obj, const char* a_name,
+			RE::Scaleform::GFx::Value* a_out)
+		{
+			__try {
+				return a_obj->GetMember(a_name, a_out);
+			} __except (EXCEPTION_EXECUTE_HANDLER) {
+				return false;
+			}
+		}
+
+		bool SafeValueSetMember(RE::Scaleform::GFx::Value* a_obj, const char* a_name,
+			const RE::Scaleform::GFx::Value& a_value)
+		{
+			__try {
+				return a_obj->SetMember(a_name, a_value);
+			} __except (EXCEPTION_EXECUTE_HANDLER) {
+				return false;
+			}
+		}
+
+		bool SafeValueInvoke(RE::Scaleform::GFx::Value* a_obj, const char* a_name,
+			RE::Scaleform::GFx::Value* a_result, RE::Scaleform::GFx::Value* a_args, std::size_t a_count)
+		{
+			__try {
+				return a_obj->Invoke(a_name, a_result, a_args, a_count);
+			} __except (EXCEPTION_EXECUTE_HANDLER) {
+				return false;
+			}
+		}
+
+		bool SafeValuePushBack(RE::Scaleform::GFx::Value* a_arr, const RE::Scaleform::GFx::Value& a_value)
+		{
+			__try {
+				return a_arr->PushBack(a_value);
+			} __except (EXCEPTION_EXECUTE_HANDLER) {
+				return false;
+			}
+		}
+
+		bool SafeValueVisitElements(RE::Scaleform::GFx::Value* a_arr,
+			RE::Scaleform::GFx::Value::ObjectInterface::ArrVisitor* a_visitor)
+		{
+			__try {
+				a_arr->VisitElements(a_visitor);
+				return true;
+			} __except (EXCEPTION_EXECUTE_HANDLER) {
+				return false;
+			}
+		}
+
+		// `FilterInfoA` 的项形状 = {text:String, flag:uint} —— 逐项收集摘要。
+		// 上限 16 项（正常 7~9；多了说明结构变了，别把日志刷爆）。
+		class FilterInfoScanVisitor : public RE::Scaleform::GFx::Value::ObjectInterface::ArrVisitor
+		{
+		public:
+			void Visit(std::uint32_t a_idx, const RE::Scaleform::GFx::Value& a_val) override
+			{
+				(void)a_idx;
+				if (count >= kMax) {
+					overflow = true;
+					return;
+				}
+				++count;
+				char text[64]{};
+				RE::Scaleform::GFx::Value t;
+				if (a_val.GetMember("text", &t)) {
+					(void)SafeReadValueString(t, text, sizeof(text));
+				}
+				if (text[0] == '\0') {
+					std::snprintf(text, sizeof(text), "?");
+				}
+				RE::Scaleform::GFx::Value f;
+				double                    flag = 0.0;
+				const bool hasFlag = a_val.GetMember("flag", &f) && SafeReadValueNumber(f, flag);
+				if (std::strcmp(text, kResearchMarkText) == 0) {
+					hasOurMark = true;
+				}
+				if (count <= kMaxDetail) {
+					if (!summary.empty()) {
+						summary += "，";
+					}
+					summary += std::format("{}.{}{}", count - 1, text,
+						hasFlag ? std::format("/0x{:X}", static_cast<std::uint64_t>(flag)) : std::string{});
+				}
+			}
+
+			std::int32_t count{};
+			bool         overflow{};
+			bool         hasOurMark{};
+			std::string  summary;
+
+		private:
+			static constexpr std::int32_t kMax = 16;
+			static constexpr std::int32_t kMaxDetail = 8;
+		};
+
+		// U3 用：事件回调 handler（只计数 + 留一行日志；参数解析留待后续轮次）。
+		// 生命周期：堆分配（RefCountBase 初始 0；`CreateFunction` / 事件系统会 AddRef，
+		// AS3 侧释放时 Release → 0 → delete）—— 静态对象会被 Release 误删，不能用 static。
+		class ResearchEventHandler : public RE::Scaleform::GFx::FunctionHandler
+		{
+		public:
+			void Call(const Params& a_params) override
+			{
+				const int n = ++s_calls;
+				REX::INFO("界面研究探针：事件回调收到（第 {} 次，argCount={}）", n, a_params.argCount);
+			}
+
+			static std::atomic<int> s_calls;
+		};
+		std::atomic<int> ResearchEventHandler::s_calls{ 0 };
+	}
+
+	std::string ResearchGfxCapabilities(bool a_withEvents)
+	{
+		std::string detail;
+		if (!EnsureResolved(detail)) {
+			return "桥没通（" + EscapeForLog(detail, 200) + "）";
+		}
+		auto& bridge = Cached();
+		auto* root = reinterpret_cast<RE::Scaleform::GFx::ASMovieRootBase*>(bridge.asRoot);
+		if (!root) {
+			return "ASMovieRoot 指针为空";
+		}
+
+		std::string out;
+
+		// ---- U0：路径读基础设施（GetVariable 槽 —— commonlibsf 标 0x32，本版本未验证）----
+		const bool getVarSlot = VtableSlotInModule(root, kSlotAsRootGetVariable);
+		RE::Scaleform::GFx::Value menu;  // `_root.Menu_mc` = MissionMenu 实例（原版/我们的 SWF 同名）
+		bool menuOk = false;
+		if (getVarSlot) {
+			menuOk = SafeGetVariable(root, "_root.Menu_mc", &menu) && menu.IsObject();
+		}
+		out += std::format("GetVar槽={}｜Menu_mc={}", getVarSlot ? "在" : "无", menuOk ? "ok" : "fail");
+		if (!menuOk) {
+			return out + "（后面各项依赖它，本轮到此为止）";
+		}
+
+		// ---- U1 读：`FilterInfoA`（原版 private）----
+		RE::Scaleform::GFx::Value fi;
+		const bool hasMember = menu.HasMember("FilterInfoA");
+		const bool readOk = SafeValueGetMember(&menu, "FilterInfoA", &fi) && fi.IsArray();
+		FilterInfoScanVisitor scan;
+		if (readOk) {
+			(void)SafeValueVisitElements(&fi, &scan);
+		}
+		out += std::format("｜私有读=({} HasMember={} 项数={}{})",
+			readOk ? "ok" : "fail", hasMember ? 1 : 0, scan.count, scan.overflow ? " 溢出16+" : "");
+		if (!scan.summary.empty()) {
+			out += "｜内容=" + EscapeForLog(scan.summary, 220);
+		}
+
+		// ---- U1 写：往数组追加标记项（引用修改；幂等）----
+		bool         writeOk = false;
+		std::int32_t afterWrite = -1;
+		if (readOk && !scan.hasOurMark) {
+			RE::Scaleform::GFx::Value item;
+			const bool created = VtableSlotInModule(root, kSlotAsRootCreateObject) && SafeCreateObject(root, &item);
+			bool marked = false;
+			if (created) {
+				RE::Scaleform::GFx::Value title;
+				if (SafeCreateString(root, &title, kResearchMarkText)) {
+					(void)SafeValueSetMember(&item, "text", title);
+				}
+				RE::Scaleform::GFx::Value flag(static_cast<std::uint32_t>(kResearchMarkFlag));
+				(void)SafeValueSetMember(&item, "flag", flag);
+				marked = SafeValuePushBack(&fi, item);
+			}
+			// 读回验证（不能只看 PushBack 的返回值）
+			RE::Scaleform::GFx::Value fi2;
+			if (SafeValueGetMember(&menu, "FilterInfoA", &fi2) && fi2.IsArray()) {
+				FilterInfoScanVisitor scan2;
+				(void)SafeValueVisitElements(&fi2, &scan2);
+				afterWrite = scan2.count;
+				writeOk = marked && scan2.count == scan.count + 1 && scan2.hasOurMark;
+			}
+			out += std::format("｜私有写={}（{}→{}）", writeOk ? "ok" : "fail", scan.count, afterWrite);
+		} else if (readOk) {
+			writeOk = true;  // 已有标记项（上一次已写过）—— 视为可写
+			out += std::format("｜私有写=已验证（已有标记项，共{}项）", scan.count);
+		} else {
+			out += "｜私有写=未做（读失败）";
+		}
+
+		// ---- U2：`TabbedFilterSelection_mc.SetTabsData` + `numTabs` 读回 ----
+		RE::Scaleform::GFx::Value tabSel;
+		const bool tabSelOk = SafeValueGetMember(&menu, "TabbedFilterSelection_mc", &tabSel) && tabSel.IsObject();
+		double tabsBefore = -1.0;
+		if (tabSelOk) {
+			RE::Scaleform::GFx::Value nt;
+			if (SafeValueGetMember(&tabSel, "numTabs", &nt)) {
+				(void)SafeReadValueNumber(nt, tabsBefore);
+			}
+		}
+		out += std::format("｜TabSel={} numTabs={}", tabSelOk ? "ok" : "fail",
+			tabsBefore >= 0 ? std::format("{:.0f}", tabsBefore) : std::string{ "?" });
+		if (tabSelOk && writeOk && readOk) {
+			RE::Scaleform::GFx::Value arg = fi;  // 同一 AS3 数组（引用语义）
+			RE::Scaleform::GFx::Value ret;
+			const bool called = SafeValueInvoke(&tabSel, "SetTabsData", &ret, &arg, 1);
+			RE::Scaleform::GFx::Value nt2;
+			double                   tabsAfter = -1.0;
+			if (SafeValueGetMember(&tabSel, "numTabs", &nt2)) {
+				(void)SafeReadValueNumber(nt2, tabsAfter);
+			}
+			const bool ok = called && tabsAfter == tabsBefore + 1;
+			out += std::format("｜SetTabsData={}（numTabs {}→{}）", ok ? "ok" : "fail",
+				tabsBefore >= 0 ? std::format("{:.0f}", tabsBefore) : std::string{ "?" },
+				tabsAfter >= 0 ? std::format("{:.0f}", tabsAfter) : std::string{ "?" });
+		}
+
+		// ---- U3：事件注入（可选，单独一步便于定位）----
+		if (!a_withEvents) {
+			out += "｜事件=未试";
+			return out;
+		}
+		RE::Scaleform::GFx::Value list;
+		const bool listOk = SafeValueGetMember(&menu, "MissionsList_mc", &list) && list.IsObject();
+		out += std::format("｜MissionsList_mc={}", listOk ? "ok" : "fail");
+		if (listOk && VtableSlotInModule(root, kSlotAsRootCreateFunction)) {
+			RE::Scaleform::GFx::Value fn;
+			if (SafeCreateFunction(root, &fn, new ResearchEventHandler(), nullptr)) {
+				RE::Scaleform::GFx::Value title;
+				if (!SafeCreateString(root, &title, "MissionsList::itemActivated")) {
+					return out + "｜事件注册=事件名编码失败";
+				}
+				RE::Scaleform::GFx::Value args[5];
+				args[0] = title;
+				args[1] = fn;
+				args[2] = false;
+				args[3] = static_cast<std::uint32_t>(100);  // priority（原版监听器 priority = 0）
+				args[4] = false;
+				RE::Scaleform::GFx::Value ret;
+				const bool added = SafeValueInvoke(&list, "addEventListener", &ret, args, 5);
+				out += std::format("｜事件注册={}（点列表条目后看「事件回调收到」）", added ? "ok" : "fail");
+			} else {
+				out += "｜事件注册=fail（CreateFunction 失败）";
+			}
+		} else {
+			out += "｜事件注册=未做（列表取不到 / CreateFunction 槽不在）";
+		}
+		return out;
+	}
 #endif
 }

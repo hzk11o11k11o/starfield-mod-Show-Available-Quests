@@ -575,6 +575,16 @@ HARNESS_STRINGS = (
     #   会因此挡住打包（第 112 轮跑发布验证时才暴露）。归属改到本表：
     #   开发构建必须见（缺 = 驱动器能力被回退）、发布构建必须不见（名实相符）。
     ("harness 表外记录直拼（r110 驱动器能力）", "表外记录，直拼"),
+    # ★★★ 第 117 轮（无 SWF 覆盖的 UI 注入研究 · docs/15）：`ui.research` 探针 ——
+    #   只用 GFx API 直接操作原版 MissionMenu 的 AS3 对象（**不经过我们 SWF 的任何入口**），
+    #   验证 U1 私有成员读写（FilterInfoA）/ U2 public 方法调用（SetTabsData）/
+    #   U3 事件注入（addEventListener + C++ FunctionHandler）。
+    #   实现只在开发构建（SAQ_UI.cpp 的 `#if SAQ_WITH_HARNESS` 段 + SAQ_Test.cpp 的 op 名）
+    #   ⇒ 发布 DLL 必须一条都不见（本表反向检查覆盖）。
+    ("harness GFx 研究探针 op 名", "ui.research"),
+    ("harness GFx 研究探针产品行（可被 assert.log 取证）", "界面研究探针 {}"),
+    ("harness GFx 研究探针 · 私有成员读写成对标记", "私有读="),
+    ("harness GFx 研究探针 · 事件注册标记", "事件注册="),
 )
 
 
@@ -1979,6 +1989,22 @@ def main() -> int:
                     print(("MISS" if _bad114 else "OK  ") +
                           " 用例计划 · r114 四条只读（无 reset / 无 stage 推送，反向检查）")
                     all_ok &= not _bad114
+                # ★★★ 第 117 轮（无 SWF 覆盖的 UI 注入研究 · docs/15）：
+                #   两条研究用例 —— ① `r117_gfx_research`（U1/U2 能力探针：私有成员读写
+                #   + SetTabsData）；② `r117_gfx_research_events`（U3 事件注册 + 走原版
+                #   路径触发 itemActivated 观察回调）。两条都以
+                #   `assert.log 界面研究探针` 取证**探针那一行产品日志**（红线六：
+                #   探针结果必须同时打产品行，`assert.log` 跳过 `harness：` 行）。
+                for label, needle in (
+                    ("U1/U2 能力探针段头", "[case:r117_gfx_research]".encode()),
+                    ("U1/U2 能力探针步骤", "step = ui.research".encode()),
+                    ("U1/U2 探针产品行断言（GetVar槽=）",
+                     "assert.log 界面研究探针 GetVar槽=".encode()),
+                    ("U3 事件用例段头", "[case:r117_gfx_research_events]".encode()),
+                    ("U3 事件注册步骤", "ui.research events".encode()),
+                    ("U3 事件注册断言", "assert.log 界面研究探针 .*事件注册=".encode()),
+                ):
+                    all_ok &= check(f"用例计划 · r117 {label}", plan_text.encode(), needle)
                 # ★★ 第 62 轮（大项 I）：自动读档用例 —— ① 只允许用**用户指定的那个存档**
                 #   （子串 ★ 第 101 轮切到 Exit0 → ★★★ 第 103 轮切到 Save1）；② 读档步骤在；
                 #   ③ 存档列表诊断在；④ **与部署 ini 的 [Test] AutoLoad 一致**（见下）。

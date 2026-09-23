@@ -137,6 +137,7 @@ namespace SAQ::Test
 			kGuideProbe,   // ★ 第 60 轮：候选可得性探针（只读，见 ProbeGuideCandidates）
 			kQuestProbe,   // ★★ 第 101 轮补丁：quest.probe —— 直读 IsStageDone（只读，见 ProbeQuestStages）
 			kInfoProbe,    // ★★★ 第 106 轮：info.probe —— INFO 门槛 OR 组探针（只读，见 ProbeInfoGates）
+			kUiResearch,   // ★★★ 第 117 轮：ui.research —— GFx 注入能力探针（见 ResearchGfxCapabilities）
 			kSaveList,     // ★★ 第 62 轮：存档列表诊断（BGSSaveLoadManager，只读）
 			kSaveLoad,     // ★★ 第 62 轮：自动读档（排队 → 等加载走完 → 通道重新就绪）
 		};
@@ -680,6 +681,15 @@ namespace SAQ::Test
 					a_error = "需要 <记录号>（如 info.probe 0x001C7185）";
 					return false;
 				}
+			} else if (op == "ui.research") {
+				// ★★★ 第 117 轮（无 SWF 覆盖的 UI 注入研究 · docs/15）：
+				//   只用 GFx API 直接操作原版 MissionMenu 的 AS3 对象（**不经过我们 SWF
+				//   里的任何入口**）—— 验证 U1 私有成员读写 / U2 public 方法调用 /
+				//   U3 事件注入三项能力。参数可选：`events` = 同时做 U3（事件注册；
+				//   单独一步便于定位问题，见 SAQ_UI.cpp 的 ResearchGfxCapabilities）。
+				a_step.kind = Kind::kUiResearch;
+				a_step.text = Trim(rest);
+				a_step.timeoutMs = 5000;
 			} else if (op == "wait") {
 				a_step.kind = Kind::kWait;
 				const auto toks = SplitWs(rest);
@@ -1318,6 +1328,18 @@ namespace SAQ::Test
 				//   `assert.log` 只认产品行（LogFind 跳过一切含 `harness：` 的行）。
 				const auto probe = ProbeInfoGates(step.formId);
 				REX::INFO("信息探针 {}", probe);
+				CompleteStep(true, probe, {});
+				return true;
+			}
+
+			case Kind::kUiResearch: {
+				// ★★★ 第 117 轮（无 SWF 覆盖的 UI 注入研究 · docs/15）：GFx 注入能力探针。
+				//   一次性完成（不进 Papyrus 通道、不等回执；**菜单必须开着** —— 它读的是
+				//   界面里的 AS3 对象）。红线六（第 104 轮）：探针结果必须**同时打一行
+				//   产品日志**（`assert.log` 只认产品行，LogFind 跳过一切含 `harness：` 的行）。
+				const bool withEvents = step.text.find("events") != std::string::npos;
+				const auto probe = UI::ResearchGfxCapabilities(withEvents);
+				REX::INFO("界面研究探针 {}", probe);
 				CompleteStep(true, probe, {});
 				return true;
 			}

@@ -139,6 +139,18 @@ namespace SAQ
 		// ★ 第 53 轮（大项 F）：只在开发构建（SAQ_WITH_HARNESS=1）里存在 ——
 		//   调用方只有 harness 原语层（SAQ_TestOps.cpp），发布构建不含它们。
 		bool InvokeUiTestDrive(const char* a_fn, const std::string& a_arg, std::string& a_reply);
+
+		// ★★★ 第 117 轮（无 SWF 覆盖的 UI 注入研究 · docs/15）：`ui.research` ——
+		//   **不经由我们 SWF 里的任何入口**，直接用 GFx API 操作原版 `MissionMenu`
+		//   的 AS3 对象，验证注入方案的三个技术未知点（U1/U2/U3）：
+		//     U1 私有成员（`FilterInfoA`，private）可读 / 可写？
+		//     U2 public 接口（`SetTabsData` / `numTabs` / `entryCount` / `filterMask`）可达？
+		//     U3 事件注入（`MissionsList_mc.addEventListener` + C++ FunctionHandler）可用？
+		//   a_withEvents = true 时才做 U3（`CreateFunction` 的 handler 生命周期在 GFx 侧，
+		//   单独一步便于定位问题）。返回一行汇总（调用方打产品日志 + 进步骤 JSON）。
+		//   只读优先；唯一的写副作用 = 往 `FilterInfoA` 追加一个标记项（菜单关闭后
+		//   随 Movie 销毁自然清理，无需还原 —— 第 27/50 轮定案）。
+		std::string ResearchGfxCapabilities(bool a_withEvents);
 #endif
 	}
 }

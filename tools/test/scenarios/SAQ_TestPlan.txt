@@ -1629,3 +1629,35 @@ step = wait 5000
 step = note === 触发后状态（判读：入侵事件是否被位置触发）===
 step = quest.probe ~3:0x0007E73F
 step = menu.close
+
+[case:r117_gfx_research]
+desc = 第 117 轮：无 SWF 覆盖的 UI 注入研究 —— GFx 能力探针（U1 私有读写 / U2 public 调用）
+;  判读（结果在日志 `界面研究探针 …` 一行 + 步骤 JSON）：GetVar槽 / Menu_mc / 私有读 / 私有写 / SetTabsData。
+;  ★ 副作用：写测试会把 `FilterInfoA` 追加一项并调 SetTabsData（本会话 tab 多一个「SAQ研究」）——
+;    菜单关闭后 Movie 销毁、下次打开重建（第 27/50 轮定案）⇒ 无需还原；本用例内不做后续 UI 断言。
+step = note === 预热（同上）：开一次菜单让桥解析 ===
+step = ping
+step = menu.open
+step = assert.log 推送成功 scope=prev timeout=12000
+step = note === 能力探针：只用 GFx API 直接操作 _root.Menu_mc 的 AS3 对象（不经过我们 SWF 的入口）===
+step = ui.research
+step = assert.log 界面研究探针 GetVar槽= scope=prev timeout=5000
+step = assert.log 界面研究探针 .*Menu_mc=.*私有读= scope=case timeout=5000
+step = menu.close
+
+[case:r117_gfx_research_events]
+desc = 第 117 轮：事件注入（U3）—— 注册 C++ 回调到 MissionsList_mc；再走原版路径触发一次 itemActivated
+;  判读：`事件注册=ok` +（玩家/驱动点过一次条目后）`事件回调收到` 两行。
+;  回调行不断言（研究观察项）—— 若注册 ok 而回调没来，说明事件注入需要在别处再挂（下一轮判读）。
+step = ping
+step = menu.open
+step = assert.log 推送成功 scope=prev timeout=12000
+step = note === 注册事件回调（addEventListener("MissionsList::itemActivated", C++ handler, priority=100)）===
+step = ui.research events
+step = assert.log 界面研究探针 .*事件注册= scope=prev timeout=5000
+step = note === 走原版路径触发（选中 + Accept → MissionsList.onEntryPress → ITEM_ACTIVATED）===
+step = ui.tab
+step = ui.select 0x0006E0A1
+step = ui.key Accept
+step = wait 1500
+step = menu.close
