@@ -1661,3 +1661,19 @@ step = ui.select 0x0006E0A1
 step = ui.key Accept
 step = wait 1500
 step = menu.close
+
+[case:r119_gfx_inject2]
+desc = 第 119 轮（探针 v2 / P1.5）：绕过 U1 的三项能力 —— 事件拦截 + filterMask 哨兵写 + SetTabsData 补测（不依赖 FilterInfoA）
+;  判读：`界面研究探针2 …` 一行。四段判据：切3=ok（对照：原版执行、mask 变）；
+;    切7=ok（拦到 —— mask=哨兵 0x20000000 存活 = stopImmediatePropagation + 写都生效）；
+;    切0=ok（放行：非 7 的 tab 不拦，mask 回 $ALL）；U2=ok（SetTabsData 8→9→8）。
+;  ★ 副作用：filterMask 哨兵 / tab 数据被替换（第 9/8 项假数据）—— menu.close 随
+;    Movie 销毁清理（第 27/50 轮定案）；本用例内不做后续 UI 断言。
+step = ping
+step = menu.open
+step = assert.log 推送成功 scope=prev timeout=12000
+step = note === 探针 v2：挂 selectionChange 监听（priority=100）+ 切 3/7/0 三段 + SetTabsData 补测 ===
+step = ui.research2
+step = assert.log 界面研究探针2 .*Menu_mc=ok scope=prev timeout=8000
+step = assert.log 界面研究探针2 .*切3=ok.*切7=ok.*切0=ok.*清理=ok.*U2=ok scope=case timeout=8000
+step = menu.close

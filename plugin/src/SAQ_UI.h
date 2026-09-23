@@ -151,6 +151,26 @@ namespace SAQ
 		//   只读优先；唯一的写副作用 = 往 `FilterInfoA` 追加一个标记项（菜单关闭后
 		//   随 Movie 销毁自然清理，无需还原 —— 第 27/50 轮定案）。
 		std::string ResearchGfxCapabilities(bool a_withEvents);
+
+		// ★★★ 第 119 轮（探针 v2 / P1.5 · docs/15 九·补）：`ui.research2` ——
+		//   第 118 轮判明 U1（private 成员）**读不到**（`HasMember=0`；AVM2 private
+		//   trait 带类私有 namespace）⇒ 本轮验证**不碰 FilterInfoA 的绕过路径**：
+		//     R1 成员枚举（ObjVisitor 尽力模式）—— FilterInfoA 是否可见（收口取证）；
+		//     R2 事件拦截：在 `TabbedFilterSelection_mc` 挂 priority=100 的
+		//        `"BSTabbedSelection::selectionChange"` 监听；handler 对
+		//        `iSelectedIndex == 7`（我们的 tab）`stopImmediatePropagation()`
+		//        （原版 `onFilterChanged` 是同一事件上的 priority=0 监听）；
+		//     R3 `filterMask` 写：拦截时 `SetMember` 自设**哨兵值**（1<<29）并读回 ——
+		//        原版若没被拦住会在我们之后执行、把值覆盖回自己的 flag
+		//        ⇒ **哨兵存活 = 拦截生效 + 写生效**（单值双判据）；
+		//     R4 U2 补测：C++ 构造数组 → `SetTabsData` → `numTabs` 读回
+		//        （N→N+1→N 双向；第 118 轮把这一步错误地耦合在 U1 之后，
+		//        它其实**不依赖 FilterInfoA**）。
+		//   切 tab 走原版 public 入口 `MissionTabbedSelection.SetSelectedCategoryIndex`
+		//   （内部 `SetSelectedIndex` → `dispatchEvent`）：切 3 → 原版执行（对照）；
+		//   切 7 → 被拦（mask=哨兵）；切 0 → 放行（mask 回 `$ALL`）。一次跑完、
+		//   结果一行汇总（红线六）。副作用（哨兵 / tab 数据被替换）随菜单关闭清理。
+		std::string ResearchGfxInjection2();
 #endif
 	}
 }

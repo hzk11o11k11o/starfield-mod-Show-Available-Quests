@@ -690,6 +690,15 @@ namespace SAQ::Test
 				a_step.kind = Kind::kUiResearch;
 				a_step.text = Trim(rest);
 				a_step.timeoutMs = 5000;
+			} else if (op == "ui.research2") {
+				// ★★★ 第 119 轮（探针 v2 / P1.5 · docs/15 九·补）：第 118 轮判明
+				//   U1 读不到 private（不碰 FilterInfoA）⇒ 本轮验证绕过路径：
+				//   R1 成员枚举 / R2 事件拦截（selectionChange priority=100 +
+				//   stopImmediatePropagation）/ R3 filterMask 哨兵写 / R4 SetTabsData
+				//   补测。四段一次跑完（见 SAQ_UI.cpp 的 ResearchGfxInjection2）。
+				a_step.kind = Kind::kUiResearch;
+				a_step.text = "2";
+				a_step.timeoutMs = 8000;
 			} else if (op == "wait") {
 				a_step.kind = Kind::kWait;
 				const auto toks = SplitWs(rest);
@@ -1337,6 +1346,16 @@ namespace SAQ::Test
 				//   一次性完成（不进 Papyrus 通道、不等回执；**菜单必须开着** —— 它读的是
 				//   界面里的 AS3 对象）。红线六（第 104 轮）：探针结果必须**同时打一行
 				//   产品日志**（`assert.log` 只认产品行，LogFind 跳过一切含 `harness：` 的行）。
+				//
+				//   ★★★ 第 119 轮（探针 v2 / P1.5）：`ui.research2` —— parse 时用
+				//   `step.text == "2"` 标记（复用同一 kind）；结果打 `界面研究探针2 …`
+				//   （同样一行产品日志，红线六）。
+				if (step.text == "2") {
+					const auto probe2 = UI::ResearchGfxInjection2();
+					REX::INFO("界面研究探针2 {}", probe2);
+					CompleteStep(true, probe2, {});
+					return true;
+				}
 				const bool withEvents = step.text.find("events") != std::string::npos;
 				const auto probe = UI::ResearchGfxCapabilities(withEvents);
 				REX::INFO("界面研究探针 {}", probe);

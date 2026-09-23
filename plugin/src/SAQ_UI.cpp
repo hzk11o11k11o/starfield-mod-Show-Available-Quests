@@ -1840,5 +1840,323 @@ namespace SAQ::UI
 		}
 		return out;
 	}
+
+	// ======================================================================
+	// ★★★ 第 119 轮（探针 v2 / P1.5 · docs/15 九·补）：`ui.research2`
+	//
+	//   第 118 轮判明：U1（private 成员读写）**读不到**（`HasMember=0`）——
+	//   AVM2 的 private trait 带类私有 namespace，GFx 的 public multiname 查不到。
+	//   ⇒ 本轮验证「**不碰 FilterInfoA** 的绕过路径」—— 这才是产品形态要用的：
+	//
+	//     R1 成员枚举：ObjVisitor 扫 `Menu_mc`（尽力模式，含 AS3 public 链）——
+	//        FilterInfoA 是否可见（收口取证；预期不可见 ⇒ 彻底关闭这条读取路）。
+	//     R2 事件拦截：在 `TabbedFilterSelection_mc` 挂 priority=100 的
+	//        `"BSTabbedSelection::selectionChange"` 监听（原版 onFilterChanged
+	//        是同一事件上的 priority=0 监听）—— handler 对 iSelectedIndex==7
+	//        （我们的 tab）`stopImmediatePropagation()`（防原版 `FilterInfoA[7]` 越界）。
+	//     R3 `filterMask` 写：拦截时用 SetMember 自设**哨兵值**（1<<29）并读回 ——
+	//        原版（priority=0）若没被拦住会在我们之后执行、把值覆盖回自己的 flag
+	//        ⇒ **哨兵存活 = 拦截生效 + 写生效**（单值双判据）。
+	//     R4 U2 补测：C++ 构造数组 → `SetTabsData` → `numTabs` 读回（N→N+1→N；
+	//        第 118 轮把它错误地耦合在 U1 之后 —— 它其实**不依赖 FilterInfoA**）。
+	//
+	//   切 tab 走原版 public 入口 `MissionTabbedSelection.SetSelectedCategoryIndex`
+	//   （内部 `SetSelectedIndex` → `dispatchEvent`；原版「读档恢复上次分类」用的
+	//   就是它）：切 3 → 原版执行（对照：mask 变）；切 7 → 被拦（mask=哨兵）；
+	//   切 0 → 放行（mask 回 `$ALL`）。四段一次跑完，结果一行汇总（红线六）。
+	// ======================================================================
+	namespace
+	{
+		constexpr std::uint32_t kResearch2InterceptIndex = 7;       // 我们的 tab（第 8 个）下标
+		constexpr std::uint32_t kResearch2SentinelMask = 1u << 29;  // 哨兵（原版/我们都不会用的 flag 位）
+		constexpr const char*   kResearch2EventName = "BSTabbedSelection::selectionChange";
+
+		bool SafeCreateArray(RE::Scaleform::GFx::ASMovieRootBase* a_root, RE::Scaleform::GFx::Value* a_out)
+		{
+			__try {
+				a_root->CreateArray(a_out);
+				return true;
+			} __except (EXCEPTION_EXECUTE_HANDLER) {
+				return false;
+			}
+		}
+
+		bool SafeValueVisitMembers(RE::Scaleform::GFx::Value* a_obj,
+			RE::Scaleform::GFx::Value::ObjectVisitor* a_visitor)
+		{
+			__try {
+				a_obj->VisitMembers(a_visitor);
+				return true;
+			} __except (EXCEPTION_EXECUTE_HANDLER) {
+				return false;
+			}
+		}
+
+		// R1 用：扫对象成员（尽力模式）—— 只统计总数 + 找 FilterInfoA（不做字符串表）。
+		class MemberScanVisitor : public RE::Scaleform::GFx::Value::ObjectVisitor
+		{
+		public:
+			bool IncludeAS3PublicMembers() const override { return true; }
+
+			void Visit(const char* a_name, const RE::Scaleform::GFx::Value& a_val) override
+			{
+				(void)a_val;
+				++count;
+				if (a_name && std::strcmp(a_name, "FilterInfoA") == 0) {
+					foundFilterInfoA = true;
+				}
+			}
+
+			std::int32_t count{};
+			bool         foundFilterInfoA{};
+		};
+
+		// R2/R3 用：拦截 handler —— 读事件里的 `iSelectedIndex`；== 我们的 tab（7）时
+		//   `stopImmediatePropagation()` + 自设 `filterMask` 哨兵（读回验证）。
+		//   生命周期同第 117 轮：堆分配（RefCountBase 初始 0；事件系统 AddRef，
+		//   `removeEventListener` 后 Release → 0 → delete）⇒ **remove 之后绝不能再
+		//   解引用**（统计必须在 remove 前抄走）。
+		class Research2EventHandler : public RE::Scaleform::GFx::FunctionHandler
+		{
+		public:
+			explicit Research2EventHandler(RE::Scaleform::GFx::Value a_missionsList) :
+				m_missionsList(a_missionsList)  // 拷贝（AddRef）—— 只在本次菜单生命周期内用
+			{}
+
+			void Call(const Params& a_params) override
+			{
+				int idx = -1;
+				if (a_params.argCount >= 1 && a_params.args) {
+					RE::Scaleform::GFx::Value iv;
+					double                  d = -1.0;
+					if (a_params.args[0].GetMember("iSelectedIndex", &iv) && SafeReadValueNumber(iv, d)) {
+						idx = static_cast<int>(d);
+					}
+				}
+				const int n = ++s_calls;
+				s_lastIndex = idx;
+				bool stopped = false;
+				if (idx == static_cast<int>(kResearch2InterceptIndex) && a_params.argCount >= 1 && a_params.args) {
+					// 拦住原版 onFilterChanged（priority=0）—— 不拦的话它随后执行
+					//   `filterMask = FilterInfoA[7].flag`（原版越界 TypeError）。
+					RE::Scaleform::GFx::Value ret;
+					(void)SafeValueInvoke(&a_params.args[0], "stopImmediatePropagation", &ret, nullptr, 0);
+					RE::Scaleform::GFx::Value sentinel(static_cast<std::uint32_t>(kResearch2SentinelMask));
+					const bool wrote = SafeValueSetMember(&m_missionsList, "filterMask", sentinel);
+					// 读回验证（不能只看 SetMember 返回值）
+					RE::Scaleform::GFx::Value back;
+					double                  backNum = -1.0;
+					const bool readBack = SafeValueGetMember(&m_missionsList, "filterMask", &back) &&
+						SafeReadValueNumber(back, backNum);
+					stopped = wrote && readBack &&
+						static_cast<std::uint32_t>(backNum) == kResearch2SentinelMask;
+					if (stopped) {
+						++s_blocks;
+					}
+				}
+				s_lastStopped = stopped;
+				REX::INFO("界面研究探针2：事件回调（第 {} 次 idx={} 拦截={}）", n, idx, stopped ? "是" : "否");
+			}
+
+			static std::atomic<int>  s_calls;
+			static std::atomic<int>  s_blocks;
+			static std::atomic<int>  s_lastIndex;
+			static std::atomic<bool> s_lastStopped;
+
+		private:
+			RE::Scaleform::GFx::Value m_missionsList;
+		};
+		std::atomic<int>  Research2EventHandler::s_calls{ 0 };
+		std::atomic<int>  Research2EventHandler::s_blocks{ 0 };
+		std::atomic<int>  Research2EventHandler::s_lastIndex{ -1 };
+		std::atomic<bool> Research2EventHandler::s_lastStopped{ false };
+
+		std::string Research2MaskHex(double a_mask)
+		{
+			if (a_mask < 0.0) {
+				return "?";
+			}
+			return std::format("0x{:08X}", static_cast<std::uint32_t>(static_cast<std::uint64_t>(a_mask)));
+		}
+
+		std::string Research2NumStr(double a_v)
+		{
+			if (a_v < 0.0) {
+				return "?";
+			}
+			return std::format("{:.0f}", a_v);
+		}
+	}
+
+	std::string ResearchGfxInjection2()
+	{
+		std::string detail;
+		if (!EnsureResolved(detail)) {
+			return "桥没通（" + EscapeForLog(detail, 200) + "）";
+		}
+		auto& bridge = Cached();
+		auto* root = reinterpret_cast<RE::Scaleform::GFx::ASMovieRootBase*>(bridge.asRoot);
+		if (!root) {
+			return "ASMovieRoot 指针为空";
+		}
+
+		std::string out;
+
+		RE::Scaleform::GFx::Value menu;
+		const bool menuOk = SafeGetVariable(root, "_root.Menu_mc", &menu) && menu.IsObject();
+		if (!menuOk) {
+			return "Menu_mc=fail（路径取不到，后面全部依赖它）";
+		}
+		out += "Menu_mc=ok";
+
+		// ---- R1：成员枚举（尽力模式）----
+		{
+			MemberScanVisitor scan;
+			const bool scanned = SafeValueVisitMembers(&menu, &scan);
+			out += std::format("｜枚举=({}{} 个,FilterInfoA={})",
+				scanned ? "" : "fail ", scan.count, scan.foundFilterInfoA ? "有" : "无");
+		}
+
+		RE::Scaleform::GFx::Value tabSel;
+		RE::Scaleform::GFx::Value list;
+		const bool tabSelOk = SafeValueGetMember(&menu, "TabbedFilterSelection_mc", &tabSel) && tabSel.IsObject();
+		const bool listOk = SafeValueGetMember(&menu, "MissionsList_mc", &list) && list.IsObject();
+		if (!tabSelOk || !listOk) {
+			return out + std::format("｜TabSel={} MissionsList={}（缺一个就做不下去）",
+				tabSelOk ? "ok" : "fail", listOk ? "ok" : "fail");
+		}
+
+		auto readMask = [&list](double& a_out) -> bool {
+			RE::Scaleform::GFx::Value v;
+			return SafeValueGetMember(&list, "filterMask", &v) && SafeReadValueNumber(v, a_out);
+		};
+		// 原版 public 入口（内部 SetSelectedIndex → dispatchEvent）—— 与原版
+		// 「读档恢复上次分类」同一条路。
+		auto switchTab = [&tabSel](std::uint32_t a_idx) -> bool {
+			RE::Scaleform::GFx::Value arg(static_cast<std::uint32_t>(a_idx));
+			RE::Scaleform::GFx::Value ret;
+			return SafeValueInvoke(&tabSel, "SetSelectedCategoryIndex", &ret, &arg, 1);
+		};
+
+		// ---- R2：挂拦截监听（priority=100；原版 onFilterChanged 是 0）----
+		auto* handler = new Research2EventHandler(list);
+		RE::Scaleform::GFx::Value fn;
+		if (!(VtableSlotInModule(root, kSlotAsRootCreateFunction) &&
+				SafeCreateFunction(root, &fn, handler, nullptr))) {
+			return out + "｜事件=注册失败（CreateFunction）";
+		}
+		RE::Scaleform::GFx::Value evTitle;
+		if (!SafeCreateString(root, &evTitle, kResearch2EventName)) {
+			return out + "｜事件=注册失败（事件名编码失败）";
+		}
+		{
+			RE::Scaleform::GFx::Value args[5];
+			args[0] = evTitle;
+			args[1] = fn;
+			args[2] = false;
+			args[3] = static_cast<std::uint32_t>(100);
+			args[4] = false;
+			RE::Scaleform::GFx::Value ret;
+			if (!SafeValueInvoke(&tabSel, "addEventListener", &ret, args, 5)) {
+				return out + "｜事件=注册失败（addEventListener）";
+			}
+		}
+
+		// ---- 四段：读初值 → 切 3（对照）→ 切 7（拦截）→ 切 0（放行）----
+		double     mask0 = -1.0, maskA = -1.0, maskB = -1.0, maskC = -1.0;
+		const bool r0 = readMask(mask0);
+		const bool s3 = switchTab(3);
+		const bool rA = readMask(maskA);
+		const bool s7 = switchTab(7);
+		const bool rB = readMask(maskB);
+		const bool s0 = switchTab(0);
+		const bool rC = readMask(maskC);
+		// 统计先抄走（removeEventListener 之后 handler 可能被 delete，绝不再解引用）
+		const int calls = Research2EventHandler::s_calls.load();
+		const int blocks = Research2EventHandler::s_blocks.load();
+		const int lastIdx = Research2EventHandler::s_lastIndex.load();
+
+		// 判据：切 3 = 回调 + 未被拦 + mask 变化；切 7 = 拦截计数 +1 + mask == 哨兵
+		//   （原版若没被拦住，随后执行会把 mask 覆盖回自己的 flag ⇒ 哨兵不存活）；
+		//   切 0 = 回到非哨兵（原版执行 `$ALL`）。
+		const bool pass3 = s3 && r0 && rA && maskA != mask0 &&
+			maskA != static_cast<double>(kResearch2SentinelMask);
+		const bool pass7 = s7 && rB && blocks >= 1 &&
+			maskB == static_cast<double>(kResearch2SentinelMask);
+		const bool pass0 = s0 && rC && maskC != static_cast<double>(kResearch2SentinelMask) && maskC != maskB;
+		out += std::format("｜切3={}（mask {}→{}）", pass3 ? "ok" : "fail",
+			Research2MaskHex(mask0), Research2MaskHex(maskA));
+		out += std::format("｜切7={}（拦截 {} 次,mask→{}）", pass7 ? "ok" : "fail",
+			blocks, Research2MaskHex(maskB));
+		out += std::format("｜切0={}（mask→{}）", pass0 ? "ok" : "fail", Research2MaskHex(maskC));
+		out += std::format("｜回调={} 次（末次 idx={}）", calls, lastIdx);
+
+		// ---- 清理监听（remove 之后 handler 生命周期归 GFx；不再触碰）----
+		bool removed = false;
+		{
+			RE::Scaleform::GFx::Value remArgs[2];
+			remArgs[0] = evTitle;
+			remArgs[1] = fn;
+			RE::Scaleform::GFx::Value ret;
+			removed = SafeValueInvoke(&tabSel, "removeEventListener", &ret, remArgs, 2);
+		}
+		out += std::format("｜清理={}", removed ? "ok" : "fail");
+
+		// ---- R4：U2 补测（SetTabsData 不依赖 FilterInfoA；破坏性 —— 放最后）----
+		auto readNumTabs = [&tabSel](double& a_out) -> bool {
+			RE::Scaleform::GFx::Value v;
+			return SafeValueGetMember(&tabSel, "numTabs", &v) && SafeReadValueNumber(v, a_out);
+		};
+		auto buildTabs = [&](std::uint32_t a_count, const char* a_tag) -> bool {
+			RE::Scaleform::GFx::Value arr;
+			if (!(VtableSlotInModule(root, kSlotAsRootCreateArray) && SafeCreateArray(root, &arr))) {
+				return false;
+			}
+			for (std::uint32_t i = 0; i < a_count; ++i) {
+				RE::Scaleform::GFx::Value item;
+				if (!SafeCreateObject(root, &item)) {
+					return false;
+				}
+				RE::Scaleform::GFx::Value t;
+				if (SafeCreateString(root, &t, std::format("${}{}", a_tag, i).c_str())) {
+					(void)SafeValueSetMember(&item, "text", t);
+				}
+				RE::Scaleform::GFx::Value f(static_cast<std::uint32_t>(
+					i == 0 ? 0xFFFFFFFFu : (1u << (i % 7))));
+				(void)SafeValueSetMember(&item, "flag", f);
+				if (!SafeValuePushBack(&arr, item)) {
+					return false;
+				}
+			}
+			RE::Scaleform::GFx::Value ret;
+			return SafeValueInvoke(&tabSel, "SetTabsData", &ret, &arr, 1);
+		};
+		double     tabsBefore = -1.0, tabs9 = -1.0, tabs8 = -1.0;
+		const bool t0 = readNumTabs(tabsBefore);
+		const bool c9 = t0 && buildTabs(9, "SAQ测试");
+		const bool t9 = c9 && readNumTabs(tabs9);
+		const bool c8 = (t9 && tabs9 == tabsBefore + 1) && buildTabs(8, "SAQ恢复");
+		const bool t8 = c8 && readNumTabs(tabs8);
+		const bool passU2 = t0 && c9 && t9 && c8 && t8 &&
+			tabs9 == tabsBefore + 1 && tabs8 == tabsBefore;
+		if (passU2) {
+			out += std::format("｜U2=ok（TabsData 调用 ok，numTabs {}→{}→{}）",
+				Research2NumStr(tabsBefore), Research2NumStr(tabs9), Research2NumStr(tabs8));
+		} else if (!t0) {
+			out += "｜U2=fail（读 numTabs 失败）";
+		} else if (!c9) {
+			out += "｜U2=fail（构造 9 项数组 / 调用 SetTabsData 失败）";
+		} else if (!t9 || tabs9 != tabsBefore + 1) {
+			out += std::format("｜U2=fail（9 项后 numTabs={}，期望 {}）",
+				Research2NumStr(tabs9), Research2NumStr(tabsBefore + 1));
+		} else if (!c8) {
+			out += "｜U2=fail（恢复 8 项失败）";
+		} else {
+			out += std::format("｜U2=fail（恢复后 numTabs={}，期望 {}）",
+				Research2NumStr(tabs8), Research2NumStr(tabsBefore));
+		}
+
+		return out;
+	}
 #endif
 }

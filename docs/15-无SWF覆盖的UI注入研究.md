@@ -6,7 +6,9 @@
 > **目的** = 消除与其它改任务菜单 UI mod 的**文件级二选一冲突**。
 >
 > 本文 = 离线取证 + 路线盘点 + 实验设计 + **实测判读（见第九·补节：U0 ✅ / U1 ❌ 能力边界 /
-> U2 待补测 / U3 ✅ ⇒ 路线 A 不终止，下一步探针 v2 / P1.5）**。
+> U2 待补测 / U3 ✅ ⇒ 路线 A 不终止，下一步探针 v2 / P1.5）** + **探针 v2 落地
+> （第九·补二节：`ui.research2` = R1 枚举 / R2 拦截 / R3 filterMask 哨兵写 / R4 SetTabsData
+> 补测；用例集 42 条，待实机判读）**。
 
 ## 一、问题定义与成功判据
 
@@ -211,17 +213,38 @@
 5. 事件类型字符串 = **`"BSTabbedSelection::selectionChange"`**（`BSTabbedSelectionEvent.NAME`）；
    事件对象带 `iSelectedIndex` / `iPreviousSelectionIndex`（public int，可供 C++ 回调读取）。
 
-**探针 v2（P1.5）设计**（下一轮）：
+### 九·补二、探针 v2 已落地（2026-09-23 · 第 119 轮；`ui.research2`）
 
-| 步 | 动作 | 判据 |
+**实现**（`plugin/src/SAQ_UI.{h,cpp}` 的 `ResearchGfxInjection2`；harness 段内、发布零残留）：
+
+| 段 | 动作 | 判定（汇总行字段） |
 | --- | --- | --- |
-| 1 | C++ 构造 8 项数组（`CreateObject`+`text`/`flag`）→ `SetTabsData` → 读回 `numTabs` | **U2 补测**：调用成功（numTabs 跟随数组长度） |
-| 2 | 在 `TabbedFilterSelection_mc` 挂 `selectionChange` priority=100 + `stopImmediatePropagation` → 程序化切一次 tab | **拦截成立**：原版 `onFilterChanged` 被拦（列表 `filterMask` 不跟变 / 无异常） |
-| 3 | `SetMember(MissionsList_mc, "filterMask", 64)` → 读回 + 观察列表 | **写成立**：读回 64 且列表过滤变化 |
-| 4 | （可选）`VisitMembers` / `GetVariable` 路径读 `FilterInfoA` | 若可枚举到 ⇒ 仅存疑点的最后补充（即使可读，写仍不可行） |
+| R1 | `ObjVisitor` 扫 `Menu_mc`（尽力模式，含 AS3 public 链） | `枚举=(N 个,FilterInfoA=有/无)` |
+| R2 | 在 `TabbedFilterSelection_mc` 挂 `priority=100` 的 `"BSTabbedSelection::selectionChange"` 监听（原版 `onFilterChanged` 是 0） | `切7=ok`（拦截计数 ≥1） |
+| R3 | handler 对 `iSelectedIndex==7` `stopImmediatePropagation()` + `SetMember(filterMask, 哨兵 1<<29)` + 读回 | **哨兵存活 = 拦截 + 写双成立**（若没拦住，原版随后执行会把值覆盖回自己的 flag） |
+| R4 | C++ 构造数组 → `SetTabsData` → `numTabs` 读回 | `U2=ok（numTabs N→N+1→N）` |
 
-三项全过 ⇒ 做 **P2**（原版 SWF 完整 PoC：MO2 临时禁用我们的 SWF 覆盖，验证 7 → 8 个 tab
-+ 数据注入 + 交互接管）；若 2/3 又失败且无替代 ⇒ 路线 A 终止，回到路线 D（现状 + 冲突检测）。
+**判据链（一次执行四段；切 tab 走原版 public 入口 `SetSelectedCategoryIndex`
+—— 内部 `SetSelectedIndex` → `dispatchEvent`）**：
+
+1. 挂监听 → 读 `filterMask` 初值（`$ALL`）；
+2. 切 3 → 回调 idx=3（不拦）→ 原版执行 ⇒ mask 变化（**对照**：切换动作确实触发原版处理）；
+3. 切 7 → 回调 idx=7 → stop + 自设哨兵 ⇒ mask == `0x20000000`（**拦截 + 写**）；
+4. 切 0 → 回调 idx=0（不拦）→ 原版执行 ⇒ mask 回 `$ALL`（**不越权**：非 7 的 tab 不拦）；
+5. `removeEventListener` 清理（统计先抄走 —— remove 后 handler 可能被 delete）；
+6. U2 补测（破坏性，放最后）：构造 9 项 → `numTabs 8→9`；恢复 8 项 → `8`。
+
+用例 = `r119_gfx_inject2`（用例集 **41 → 42**，728 步）；verify +10 条（5 条 DLL 特征
+dev/release 双向 + 4 条用例计划形状 + 1 条只读反向）；断言 = **一条行内正则**
+（`切3=ok.*切7=ok.*切0=ok.*清理=ok.*U2=ok` —— 顺序固定，防拆散后漏段）。
+
+**副作用**：哨兵 `filterMask` / tab 数据被替换（`$SAQ测试0..8` / `$SAQ恢复0..7`）——
+菜单关闭随 Movie 销毁清理（第 27/50 轮定案）；用例内不做后续 UI 断言（`menu.close` 收尾）。
+
+**判读（待实机）**：四段全 ok ⇒ 做 **P2**（原版 SWF 完整 PoC：MO2 临时禁用我们的
+SWF 覆盖，验证 7 → 8 个 tab + 数据注入 + 交互接管）；任一段 fail ⇒ 按该段的实测值定位
+（哨兵不存活 = 拦截失败；`U2=fail` 自带原因）。若 2/3 又失败且无替代 ⇒ 路线 A 终止，
+回到路线 D（现状 + 冲突检测）。
 
 ## 附：复现命令（离线证据）
 

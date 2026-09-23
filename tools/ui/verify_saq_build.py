@@ -585,6 +585,16 @@ HARNESS_STRINGS = (
     ("harness GFx 研究探针产品行（可被 assert.log 取证）", "界面研究探针 {}"),
     ("harness GFx 研究探针 · 私有成员读写成对标记", "私有读="),
     ("harness GFx 研究探针 · 事件注册标记", "事件注册="),
+    # ★★★ 第 119 轮（探针 v2 / P1.5 · docs/15 九·补）：`ui.research2` —— 绕过 U1
+    #   （private 读不到）的三项能力：R1 成员枚举 / R2 事件拦截
+    #   （`"BSTabbedSelection::selectionChange"` priority=100 + stopImmediatePropagation）
+    #   / R3 `filterMask` 哨兵写 / R4 `SetTabsData` 补测。四段判据的标记串：
+    #   切3= / 切7= / 切0= / U2=（dev 正向；发布构建一条都不见，本表反向覆盖）。
+    ("harness GFx 探针2 op 名", "ui.research2"),
+    ("harness GFx 探针2 产品行（可被 assert.log 取证）", "界面研究探针2 {}"),
+    ("harness GFx 探针2 · 拦截事件名", "BSTabbedSelection::selectionChange"),
+    ("harness GFx 探针2 · 拦截判据标记（切7=）", "｜切7="),
+    ("harness GFx 探针2 · SetTabsData 补测标记（U2=）", "｜U2="),
 )
 
 
@@ -2005,6 +2015,27 @@ def main() -> int:
                     ("U3 事件注册断言", "assert.log 界面研究探针 .*事件注册=".encode()),
                 ):
                     all_ok &= check(f"用例计划 · r117 {label}", plan_text.encode(), needle)
+                # ★★★ 第 119 轮（探针 v2 / P1.5 · docs/15 九·补）：一条研究用例 ——
+                #   `r119_gfx_inject2`：绕过 U1（private 读不到）的三项能力
+                #   （事件拦截 + `filterMask` 哨兵写 + `SetTabsData` 补测）。判据 =
+                #   汇总行四段 ok 同现（切3/切7/切0/U2）+ 清理 ok —— 断言写成**一条**
+                #   行内正则（顺序固定；拆散成多条时漏一段看不出来）。
+                for label, needle in (
+                    ("探针2 用例段头", "[case:r119_gfx_inject2]".encode()),
+                    ("探针2 步骤", "step = ui.research2".encode()),
+                    ("探针2 产品行断言（Menu_mc=ok）",
+                     "assert.log 界面研究探针2 .*Menu_mc=ok".encode()),
+                    ("探针2 四段汇总断言（切3/切7/切0/清理/U2 同现）",
+                     "界面研究探针2 .*切3=ok.*切7=ok.*切0=ok.*清理=ok.*U2=ok".encode()),
+                ):
+                    all_ok &= check(f"用例计划 · r119 {label}", plan_text.encode(), needle)
+                _i119 = plan_text.find("[case:r119_gfx_inject2]")
+                if _i119 >= 0:
+                    _sec119 = plan_text[_i119:]
+                    _bad119 = ("quest.reset" in _sec119) or ("quest.stage " in _sec119)
+                    print(("MISS" if _bad119 else "OK  ") +
+                          " 用例计划 · r119 只读探针（无 reset / 无 stage 推送，反向检查）")
+                    all_ok &= not _bad119
                 # ★★ 第 62 轮（大项 I）：自动读档用例 —— ① 只允许用**用户指定的那个存档**
                 #   （子串 ★ 第 101 轮切到 Exit0 → ★★★ 第 103 轮切到 Save1）；② 读档步骤在；
                 #   ③ 存档列表诊断在；④ **与部署 ini 的 [Test] AutoLoad 一致**（见下）。
