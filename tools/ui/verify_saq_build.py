@@ -202,10 +202,11 @@
           用例计划：`r109_extra_quests`（5 条隐藏证据走门槛名单 / 2 条走 ui.select）。
           ★ 第 111 轮：隐藏证据断言改「INFO/链式交替」（实机两条被 INFO 先藏）。
   第 112 轮（用户需求 · 日志上限可配）：日志文件上限做成配置项 —— ini `[Log] MaxSizeMB`
-          （单位 MB）；不填 = 按构建类型默认（Nexus 发布版 1 MB / 开发构建 10 MB）。
+          （单位 MB）；Nexus 发布包默认 1 / 开发部署默认 10（不填时 DLL 按构建类型兜底）。
           本脚本检查：DLL 含 `[Log] MaxSizeMB` 串 + 按模式各一条默认值文案
           （开发「开发构建默认」/ 发布「发布构建默认」）+ 反向检查（main.cpp 旧硬编码
-          `kLogMaxBytes` 已移除）+ ini 模板含 [Log] 段说明与示例注释。
+          `kLogMaxBytes` 已移除）+ ini 模板含 [Log] 段 + **MaxSizeMB 生效键**（发布默认 1；
+          反向检查旧「; MaxSizeMB」注释示例写法已替换 —— 配置项必须看得见、能直接改）。
 
 用法：python tools/ui/verify_saq_build.py [--release|--dev]
 """
@@ -1985,8 +1986,14 @@ def main() -> int:
         if ini_tmpl_112.exists():
             tmpl_112 = ini_tmpl_112.read_bytes()
             all_ok &= check("ini 模板 · [Log] 段（第 112 轮）", tmpl_112, b"[Log]")
-            all_ok &= check("ini 模板 · 日志上限示例注释（MaxSizeMB）", tmpl_112,
-                            b"MaxSizeMB")
+            #   ★ 修正（用户要求「配置项要能在 ini 里看到」）：MaxSizeMB 必须是**生效键**
+            #   （不是注释示例）—— 发布包默认 1。
+            all_ok &= check("ini 模板 · MaxSizeMB=1 生效键（发布默认）", tmpl_112,
+                            b"MaxSizeMB=1")
+            gone_tmpl = b"; MaxSizeMB" not in tmpl_112
+            print(("OK  " if gone_tmpl else "MISS") +
+                  " ini 模板 · 旧注释示例「; MaxSizeMB」已替换(反向检查，第 112 轮)")
+            all_ok &= gone_tmpl
         else:
             print(f"MISS 缺少 {ini_tmpl_112}")
             all_ok = False

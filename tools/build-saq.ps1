@@ -368,6 +368,16 @@ if (-not $SkipDeploy) {
     if (-not (Test-Path $iniDest)) {
         Copy-Item (Join-Path $root 'resources\SAQ_ShowAvailableQuests.ini') $iniDest -Force
         Write-Host '    已放入配置文件模板（SFSE\Plugins\SAQ_ShowAvailableQuests.ini）'
+        # ★★ 第 112 轮：开发部署的日志上限默认写 10 MB（resources 模板是 Nexus 发布包用的，
+        #   值 = 1）—— 首次部署时直接改掉，让本机 ini 一眼能看到「开发口径」的值。
+        if (-not $Release) {
+            $t0 = [System.IO.File]::ReadAllText($iniDest, [System.Text.Encoding]::UTF8)
+            $t1 = [regex]::Replace($t0, '(?m)^\s*MaxSizeMB\s*=.*$', 'MaxSizeMB=10')
+            if ($t1 -ne $t0) {
+                [System.IO.File]::WriteAllText($iniDest, $t1, (New-Object System.Text.UTF8Encoding $true))
+                Write-Host '    日志上限：开发部署写 10 MB（ini [Log] MaxSizeMB）'
+            }
+        }
     }
 
     # ★ 第 49 轮（引擎内 harness）：
@@ -419,6 +429,29 @@ if (-not $SkipDeploy) {
                 $iniText = $iniText.TrimEnd() + "`r`n[Test]`r`n$insert`r`n"
             }
             $iniChanged = $true
+        }
+        # ★★ 第 112 轮（用户要求：日志上限配置项要能在 ini 里看到）：[Log] 段 / MaxSizeMB
+        #   键缺失 ⇒ 补上（段的位置无关 —— Profile API 按段名读；追加到末尾最安全。
+        #   ★ 第 49 轮的教训是「键落错段」，那只对 GetPrivateProfileInt 的**段名**敏感，
+        #   这里补的就是 [Log] 段本身）。值按构建：开发部署 10 / 发布部署 1；
+        #   **已有值不动**（尊重手改）。
+        if ($iniText -notmatch '(?m)^\s*MaxSizeMB\s*=') {
+            $logVal = if ($Release) { '1' } else { '10' }
+            if ($iniText -match '(?m)^\s*\[Log\]\s*$') {
+                $iniText = $iniText -replace '(?m)^(\s*\[Log\]\s*)$', "`$1`r`nMaxSizeMB=$logVal"
+            } else {
+                $logSec = @(
+                    ';',
+                    '; ── 日志文件大小上限（第 112 轮）──────────────────────────────',
+                    '; 单位 MB：写新一行时若会超过就把旧内容整体清空（不是滚动保留旧文件）。',
+                    ';   Nexus 发布包默认 1；开发部署默认 10 —— 想留更长记录就改这个值。',
+                    '[Log]',
+                    "MaxSizeMB=$logVal"
+                ) -join "`r`n"
+                $iniText = $iniText.TrimEnd() + "`r`n" + $logSec + "`r`n"
+            }
+            $iniChanged = $true
+            Write-Host "    已补 ini [Log] MaxSizeMB=$logVal（第 112 轮：日志上限可配）"
         }
         if ($Harness) {
             $iniText = [regex]::Replace($iniText, '(?m)^\s*Harness\s*=.*$', 'Harness=1')

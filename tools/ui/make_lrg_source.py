@@ -11,8 +11,8 @@ _loc2_ += "_LRG"）。改 UI 时两边都要打补丁，但维护两份手改脚
 from __future__ import annotations
 
 import io
-import shutil
 import sys
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -42,6 +42,25 @@ REPLACEMENTS = [
 ]
 
 
+def _write_bytes_retry(d: Path, data: bytes) -> None:
+    """★ 第 112 轮补（实机踩坑）：本机 `shutil.copyfile` 偶发
+    `OSError: [Errno 22] Invalid argument`（目标先被截断、写入失败 ⇒ 留下 0 字节文件，
+    症状 = 下一次构建报「lrg 源里找不到内嵌标记」）。疑似磁盘/过滤器瞬时状态。
+    改为显式读写 + 重试 + 大小校验；失败时给可操作的提示（别留半个文件）。"""
+    last: Exception | None = None
+    for _ in range(5):
+        try:
+            with open(d, "wb") as f:
+                f.write(data)
+            if d.stat().st_size == len(data):
+                return
+            last = OSError(f"写后大小不符（{d.stat().st_size} != {len(data)}）")
+        except OSError as e:
+            last = e
+        time.sleep(0.3)
+    raise OSError(f"写入失败：{d}（{last}）—— 检查文件是否被占用 / 磁盘是否正常")
+
+
 def main() -> int:
     if not SRC.exists():
         print(f"缺少普通版源码目录：{SRC}", file=sys.stderr)
@@ -51,7 +70,7 @@ def main() -> int:
         s = SRC / rel_src
         d = DST / rel_dst
         d.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(s, d)
+        _write_bytes_retry(d, s.read_bytes())
         print(f"copy {rel_src} -> {d.relative_to(ROOT)}")
 
     mm = DST / "MissionMenu.as"
@@ -72,7 +91,8 @@ def main() -> int:
             print(f"!! {marker} 出现 {text.count(marker)} 次（脚本被重复执行？）", file=sys.stderr)
             return 3
 
-    io.open(mm, "w", encoding="utf-8", newline="").write(text)
+    # ★ 第 112 轮补：写回同样走「重试 + 大小校验」（避免 0 字节文件再现）。
+    _write_bytes_retry(mm, text.encode("utf-8"))
     print(f"wrote {mm.relative_to(ROOT)}")
     return 0
 

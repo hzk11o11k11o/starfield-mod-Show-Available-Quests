@@ -592,10 +592,13 @@ namespace SAQ
 				";\r\n"
 				"; ---- 日志文件大小上限（第 112 轮） ----\r\n"
 				"; 单位 MB：写新一行时若会超过就把旧内容整体清空（不是滚动保留旧文件）。\r\n"
-				";   不填 = 按构建类型默认（Nexus 发布版 1 MB / 开发构建 10 MB）；\r\n"
-				";   填 N = 用 N MB（范围 1~1024；非法值按默认处理并在日志里 WARN）。\r\n"
+				";   Nexus 发布包默认 1；开发构建默认 10 —— 想留更长的记录就改这个值。\r\n"
 				"[Log]\r\n"
-				"; MaxSizeMB=1\r\n";
+#if SAQ_WITH_HARNESS
+				"MaxSizeMB=10\r\n";
+#else
+				"MaxSizeMB=1\r\n";
+#endif
 			std::ofstream f{ path.c_str(), std::ios::binary };
 			if (!f) {
 				REX::WARN("测试开关 ini 写不进去（忽略；不影响其它功能）");
