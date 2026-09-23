@@ -652,6 +652,20 @@ HARNESS_STRINGS = (
     ("harness GFx 探针4 · 就地刷新判据标记（刷新=）", "｜刷新="),
     ("harness GFx 探针4 · CreateObject 类名（真 AS3 实例 —— U5 的钥匙）",
      "Shared.Components.ButtonControls.ButtonData.UserEventData"),
+    # ★★ 第 131 轮（2026-09-23 18:29 P2 会话判读后的探针修正 · docs/15 十二·补）：
+    #   ① U5 `接管=fail` 真因 = 旧版把 **UserEventManager 实例**当 param2 传给
+    #      `ButtonBaseData` —— 原版 ctor 只接受 `UserEventData` 或 `Array`（其它类型
+    #      被 `TraceWarning` 忽略 ⇒ `UserEvents=null` ⇒ `HandleUserEvent` 里
+    #      `this.Data.UserEvents.CallForMatchingData` 空引用 ⇒ 触发失败、回调 0 次）。
+    #      修正 = param2 传**事件数组 `[ud]`**（原版正典写法）+ **读回
+    #      `data.UserEvents.NumUserEvents`** 作接线证据。
+    #   ② U9 `关菜单入口=fail` 真因 = 旧判据「未知事件必须返回 false」不成立 ——
+    #      原版 `MissionMenu.ProcessUserEvent` 末尾把返回值**覆盖**为 ButtonBar /
+    #      TabbedFilterSelection 的结果（未知事件返回 true 属正常且无副作用）；
+    #      判据改为「可调用 + 菜单仍在」，返回值只作信息记录。
+    #   这条特征串钉住「接线读回」不被回退（改回传 Manager 实例 ⇒ 必 MISS）：
+    #   dev 正向；发布构建一条都不见（本表反向检查覆盖）。
+    ("harness GFx 探针4 · 按钮 Data 接线判据标记（接线 UserEvents=）", "接线 UserEvents="),
 )
 
 

@@ -794,6 +794,48 @@ className, const Value* args, numArgs)` —— **带类名即造 AS3 类实例**
 描述面板 = `sDescription` 字段（Probe 用 ASCII 文案，避免英文环境缺中文字形）；
 `menu.close` 后重开 = 原版数据（副作用清理）。
 
+## 十二·补、P2 会话判读与探针修正（2026-09-23 18:29 会话 · 第 131 轮）
+
+**会话**（P2 实验态 · 原版 SWF · 开发 DLL 1116160 B · `Plan=SAQ_TestPlan_p2.txt`）：
+3 条用例 = `r120_gfx_poc` **PASS**（42313 ms）/ `r125_ui_conflict` **PASS**（4750 ms）/
+`r130_gfx_migrate` **FAIL**（13375 ms）—— 唯一 FAIL = 4b 的 `关菜单入口=ok` 断言
+（探针判据写错，见下）。**眼睛**：玩家看到列表 **2 条 `SAQ-Mig-0/1`** ⇒ 与
+`注入=ok（entryCount 1→2）` 逐项一致（判据 + 眼睛双达成）。
+
+**探针 v4 判读（实测行 → 结论）**：
+
+| 段 | 实测 | 结论 |
+| --- | --- | --- |
+| 4a | `读条目=ok（1 条,首条 0x00003448:类型1:名=一小步:字段8｜选中项=0x00003448）` | **U6 ✅** 引擎条目直读成立（分时注入 / 「选中项是不是我们的」判据可用） |
+| 4a | `语言=zh（中文样本 3 字）` | **U8a ✅** 语言判定有通道（引擎任务名 CJK） |
+| 4a | `类通道=ok（BSUIDataManager）｜静态=ok（hasEventListener=false）｜订阅=ok`；订阅回调立即收到 1 次（18:31:16.035） | **U10 ✅** 类通道 + 静态调用 + `Subscribe("QuestData")` 全通（可替代 watchdog；引擎推送也收到了） |
+| 4a | `造对象=ok（三级）`（当时判据只查「造出来是 object」） | 三级实例都造出来了 —— 但**接线错了**（见修正①；新判据补 `接线 UserEvents=1`） |
+| 4a | `接管=fail（刷新=ok 触发=fail 回调=0 次 Enabled=1）` | **探针缺陷（非能力边界）**：`SetButtonData` 被接受（Enabled 1→0→1 副证成立）+ `RefreshButtonData` ok，但 `HandleUserEvent("R3")` 调用失败、回调 0 次 —— 真因 = 旧版把 `UserEventManager` **实例**当 param2 传给 `ButtonBaseData`；原版 ctor 只接受 **UserEventData 或 Array**（其它类型 `TraceWarning` 忽略 ⇒ `UserEvents=null` ⇒ `HandleUserEvent` 里 `this.Data.UserEvents.CallForMatchingData` 空引用） |
+| 4a | `注入=ok（entryCount 1→2）`（2 条真实字段集） | 判据成立（P3 验收手段）+ 与眼睛一致 |
+| 4a | `选中=ok（0x56780001）｜置灰=ok（不可导航=0，可导航=1）` | **U10b ✅** `bCanShowOnMap` ⇒ SET COURSE 置灰是**数据驱动**（11.4-⑦ 成立，不需要接管按钮） |
+| 4b | `刷新=ok（竖条 Inactive→Active）` | **U7 ✅** 就地刷新成立（不重建列表） |
+| 4b | `文本=ok（SAQ-Mig-0）` | **U8b ✅** 渲染文本可读（验收手段） |
+| 4b | `关菜单入口=fail（返回 true，菜单仍在=是）` | **探针判据错（非能力边界）**：原版 `MissionMenu.ProcessUserEvent` 末尾把返回值**覆盖**为 ButtonBar / TabbedFilterSelection 的结果 —— 未知事件返回 true 属正常且无副作用；真正的关菜单 = 传 `"ReturnToStarMap"` / `"Missions"`（留 P4） |
+| 4b | `订阅回调=1 次` | 类通道订阅生效（会话内有引擎推送） |
+
+**两条修正（第 131 轮 · 探针侧，产品零改动）**：
+1. `SAQ_UI.cpp` `ResearchGfxInjection4`（U5）：`ButtonBaseData` 的 param2 改传**事件数组
+   `[ud]`**（原版正典写法 `new ButtonBaseData("$REJECT",[new UserEventData("R3",fn)],…)`），
+   并**读回 `data.UserEvents.NumUserEvents`** 作接线证据（日志 `造对象=ok（三级 + 接线
+   UserEvents=1）`）；`UserEventManager` 的创建/读回保留为独立能力证据（`NumUserEvents=1`）。
+2. `SAQ_UI.cpp` `ResearchGfxInjection4b`（U9）：判据改「**可调用 + 无副作用（菜单仍在）**」，
+   返回值只作信息记录（`关菜单入口=ok（可调用=是；菜单仍在=是；返回 true，真关菜单留 P4）`）。
+
+**判据链结论**：U6 / U7 / U8 / U10 / 置灰 **✅ 全绿**；U5 机制**未证否**（接线缺陷掩盖，
+修正后预期 ok）；U9「可调用」**✅**（真关菜单留 P4）。⇒ **P3 立项不受阻**；
+下一步 = 重跑 P2 会话（3 条用例）验证 `接管=ok` + `关菜单入口=ok`（4b 断言过）。
+
+**验证（全离线全绿）**：DLL 开发构建 **1117184 B**（+1024）；P2 实验态重新部署
+（`*.p2off` + `Harness=1` + `Plan=SAQ_TestPlan_p2.txt` + `AutoLoad=…142854_2_0_4`）；
+`verify --dev --p2` **784 行 / 0 MISS / 全部通过**（+1 条特征串「接线 UserEvents=」——
+dev 正向 / 发布反向，防「改回传 Manager 实例」再犯）；离线层 **5 步全过**；
+`p2_plan_regex_check.py` **7 条正则编译 + 4 条样例匹配全过**。
+
 ## 附：复现命令（离线证据）
 
 ```powershell

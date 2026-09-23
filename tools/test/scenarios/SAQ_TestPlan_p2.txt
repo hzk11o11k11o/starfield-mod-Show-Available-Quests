@@ -77,7 +77,8 @@ desc = 第 130 轮（功能迁移探针 v4）：U5 按键接管 / U6 引擎条�
 ;         注入（2 条真实字段集条目）/ 选中（selectedIndex → selectedEntry 读回）/
 ;         置灰（bCanShowOnMap=false ⇒ SET COURSE Enabled=0；=true ⇒ 1）。
 ;    4b = 渲染层（与 4a 之间隔一帧）：就地刷新（竖条 Inactive→Active）/ 渲染文本
-;         （clip 的 TextField）/ 关菜单入口（ProcessUserEvent 返回 false 且菜单仍在）。
+;         （clip 的 TextField）/ 关菜单入口（ProcessUserEvent 可调用 + 无副作用；
+;         真关菜单 = 传 "ReturnToStarMap"/"Missions" —— 留到 P4 用驱动器验证）。
 ;  判据里 `类通道`/`造对象`/`接管` 用 (ok|fail) 宽匹配：这三项是**能力边界测量**
 ;  （任一 fail 都有对应的 fallback，见 docs/15 11.4-⑥），必须「有结论」而不是「猜 ok」。
 ;  眼睛：列表被替换成 2 条 `SAQ-Mig-0/1`（当前 tab 掩码 = 1<<6）；选中一条 ⇒ 右侧描述
@@ -85,6 +86,16 @@ desc = 第 130 轮（功能迁移探针 v4）：U5 按键接管 / U6 引擎条�
 ;    破坏性副作用随 `menu.close` 清理（第 27/50 轮定案；重开后 = 原版数据）。
 ;  ★ 探针副作用（仅本次会话）：REJECT 按钮的 Data 被换成探针造的实例（该按钮平时
 ;    不可见；「换 Data 是否被接受」本身就是 U5 的判据 —— 菜单关闭随 Movie 销毁还原）。
+;  ★★ 第 131 轮（18:29 实机判读后的修正 —— 两条都是**探针侧缺陷**，非能力边界）：
+;    ① U5 `接管=fail` 真因 = 旧版把 `UserEventManager` 实例当 param2 传给
+;       `ButtonBaseData` —— 原版 ctor 只接受 `UserEventData` 或 `Array`（其它类型被
+;       忽略 ⇒ `UserEvents=null` ⇒ `HandleUserEvent` 空引用）。现在传事件数组 +
+;       **读回 `data.UserEvents.NumUserEvents`** 作接线证据（`造对象=ok（三级 + 接线
+;       UserEvents=1）`）。
+;    ② U9 `关菜单入口=fail` 真因 = 旧判据「未知事件必须返回 false」不成立：原版
+;       `MissionMenu.ProcessUserEvent` 末尾把返回值**覆盖**为 ButtonBar /
+;       TabbedFilterSelection 的结果（未知事件返回 true 属正常，且**无副作用**）。
+;       判据改为「可调用 + 菜单仍在」，返回值只作信息记录。
 step = ping
 step = menu.open
 step = wait 1800

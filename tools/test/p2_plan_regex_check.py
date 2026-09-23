@@ -22,14 +22,14 @@ SAMPLES = {
         "读条目=ok（1 条,首条 0x0000006F:类型3:名=你的名字:字段8｜选中项=0x0000006F）｜"
         "语言=zh（中文样本 4 字）｜类通道=ok（BSUIDataManager）｜静态=ok（hasEventListener=false）｜"
         "订阅=ok｜读Data=fail（Data 是 protected trait —— 与 U1 同类边界）｜"
-        "造对象=ok（UserEventData/UserEventManager/ButtonBaseData 三级）｜"
+        "造对象=ok（三级 + 接线 UserEvents=1）｜"
         "接管=ok（回调收到 1 次 —— R 键可接管）｜注入=ok（entryCount 1→2）｜"
         "选中=ok（0x56780001）｜置灰=ok（不可导航=0，可导航=1）"
     ),
     "4b": (
         "界面研究探针4b Menu_mc=ok｜环境=(entryCount 2,mask 0x00000040)｜"
         "刷新=ok（竖条 Inactive→Active）｜文本=ok（SAQ-Mig-0）｜"
-        "关菜单入口=ok（返回 false，菜单仍在=是）｜订阅回调=0 次"
+        "关菜单入口=ok（可调用=是；菜单仍在=是；返回 true，真关菜单留 P4）｜订阅回调=0 次"
     ),
 }
 

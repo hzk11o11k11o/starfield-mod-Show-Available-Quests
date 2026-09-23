@@ -2554,9 +2554,14 @@ namespace SAQ::UI
 	//     U5 按键接管（三条路，一次试完）：
 	//        ① 读 `ButtonBar_mc.<Btn>_mc.Data` —— 原版 `MinimalButton.Data` 是
 	//           **protected** ⇒ 与 U1（private）同类边界，预期读不到；
-	//        ② `CreateObject` 带**类名**造真 AS3 实例（`UserEventData` →
-	//           `UserEventManager`（ctor 参数 = 数组）→ `ButtonBaseData`）——
-	//           这是 GFx 里唯一能拿到「真 ButtonData 实例」的办法；
+	//        ② `CreateObject` 带**类名**造真 AS3 实例（`UserEventData` → 事件数组
+	//           `[ud]` → `UserEventManager` → `ButtonBaseData`）—— 这是 GFx 里唯一
+	//           能拿到「真 ButtonData 实例」的办法；★ 第 131 轮实机判读修的缺陷：
+	//           `ButtonBaseData` 的 param2 **只接受 UserEventData 或 Array**（原版
+	//           正典写法 = `new ButtonBaseData("$REJECT",[new UserEventData("R3",fn)],…)`）
+	//           —— 旧版传 UserEventManager 实例被 ctor 忽略 ⇒ `UserEvents=null` ⇒
+	//           `HandleUserEvent` 空引用；现在改传数组 + **读回 `data.UserEvents` 的
+	//           `NumUserEvents`** 作接线证据；
 	//        ③ `SetButtonData` 换到按钮上 + public 的
 	//           `MinimalButton.HandleUserEvent("R3",false,false)` **程序化触发按键
 	//           路径** ⇒ 我们的 C++ `funcCallback` 被调用 = **按键可接管**。
@@ -2565,7 +2570,10 @@ namespace SAQ::UI
 	//        探测期间被换 Data 对玩家无观感影响；`Enabled` 初值 = true，换成
 	//        `bEnabled=false` 后读回 false ⇒ **副证「实例被接受并被 AS3 侧读取」**。
 	//     U9 关闭原语：public 的 `MissionMenu.ProcessUserEvent("SAQ_Research",false)`
-	//        可调用 + 返回 false + 菜单仍在（不真关菜单 —— 真关留到 P4 用驱动器验证）。
+	//        判据 = **可调用 + 无副作用（菜单仍在）**；★ 第 131 轮修正：原版末尾会把
+	//        返回值**覆盖**为 ButtonBar / TabbedFilterSelection 的结果 —— 未知事件
+	//        返回 true 属正常（旧判据「必须返回 false」是错的），返回值只作信息记录；
+	//        真关菜单 = 传 `"ReturnToStarMap"` / `"Missions"`（留到 P4 用驱动器验证）。
 	//     另加：`bCanShowOnMap` 字段 ⇒ SET COURSE 按钮 `Enabled` 的**数据驱动**验证
 	//        （11.4-⑦「不可导航 ⇒ 置灰」：条目 0 给 false、条目 1 给 true，选中后
 	//        读按钮 Enabled 必须 0 / 1）。
@@ -2902,34 +2910,66 @@ namespace SAQ::UI
 				if (ok1) {
 					ok1 = readStr(ud, "sUserEvent", udKey) && udKey == kResearch4RejectKey;
 				}
-				// ② UserEventManager（真实例）：ctor 参数 = [UserEventData] 数组
+				// ② 事件数组 [ud]（★ 第 131 轮修正的关键）：原版 `ButtonBaseData` 的
+				//   param2 **只接受 UserEventData 或 Array**（见 ButtonBaseData.as 的 ctor：
+				//   其它类型走 `GlobalFunc.TraceWarning("aUserEvents is not a UserEventData
+				//   or Array")` 并**忽略** ⇒ `UserEvents` 保持 null（ButtonData 默认值）⇒
+				//   `HandleUserEvent` 里 `this.Data.UserEvents.CallForMatchingData` 空引用
+				//   ⇒ 触发失败、回调 0 次）。原版正典写法 =
+				//   `new ButtonBaseData("$REJECT",[new UserEventData("R3",fn)],…)`。
+				RE::Scaleform::GFx::Value arr;
+				bool                    arrOk = false;
+				if (ok1) {
+					arrOk = SafeCreateArray(root, &arr) && SafeValuePushBack(&arr, ud);
+				}
+				// ②b UserEventManager（真实例）：ctor 参数 = 事件数组；**读回 NumUserEvents=1**
+				//   （光「造出来是个 object」不算接线成功 —— 第 131 轮的教训）。
 				RE::Scaleform::GFx::Value uem;
 				bool                    ok2 = false;
-				if (ok1) {
-					RE::Scaleform::GFx::Value arr;
-					if (SafeCreateArray(root, &arr) && SafeValuePushBack(&arr, ud)) {
-						RE::Scaleform::GFx::Value args[1]{ arr };
-						ok2 = SafeCreateObjectOfClass(root, &uem, kResearch4UemNames,
-							kResearch4ClassNameCount, args, 1);
+				double                  uemNum = -1.0;
+				if (arrOk) {
+					RE::Scaleform::GFx::Value args[1]{ arr };
+					ok2 = SafeCreateObjectOfClass(root, &uem, kResearch4UemNames,
+						kResearch4ClassNameCount, args, 1);
+					if (ok2) {
+						ok2 = readNum(uem, "NumUserEvents", uemNum) && uemNum == 1.0;
 					}
 				}
-				// ③ ButtonBaseData（真实例）：("$REJECT", uem, bEnabled=false, bVisible=false)
+				// ③ ButtonBaseData（真实例）：("$REJECT", [ud], bEnabled=false, bVisible=false)
 				//   —— bEnabled 给 false：SetButtonData 之后按钮 `Enabled` 由 true 变 false
 				//   即是「实例被接受并被 AS3 侧读到」的副证。
+				//   ★ 第 131 轮：param2 改传**数组**（旧版传 UserEventManager 实例 —— 被
+				//   ctor 忽略 ⇒ 接管 fail 的探针缺陷），并**读回 `data.UserEvents`**
+				//   作接线证据（防同类缺陷再犯；verify 特征串「接线 UserEvents=」）。
 				RE::Scaleform::GFx::Value data;
 				bool                    ok3 = false;
+				double                  wireNum = -1.0;
+				bool                    wireOk = false;
 				if (ok2) {
 					RE::Scaleform::GFx::Value t;
 					if (SafeCreateString(root, &t, "$REJECT")) {
-						RE::Scaleform::GFx::Value args[4]{ t, uem,
+						RE::Scaleform::GFx::Value args[4]{ t, arr,
 							RE::Scaleform::GFx::Value(false), RE::Scaleform::GFx::Value(false) };
 						ok3 = SafeCreateObjectOfClass(root, &data, kResearch4BbdNames,
 							kResearch4ClassNameCount, args, 4);
 					}
+					if (ok3) {
+						RE::Scaleform::GFx::Value uev;
+						wireOk = SafeValueGetMember(&data, "UserEvents", &uev) && uev.IsObject() &&
+							readNum(uev, "NumUserEvents", wireNum) && wireNum == 1.0;
+					}
 				}
-				makeNote = ok3 ? "ok（UserEventData/UserEventManager/ButtonBaseData 三级）" :
-					std::format("fail（断在{}）",
-						ok1 ? (ok2 ? "ButtonBaseData" : "UserEventManager") : "UserEventData");
+				if (ok1 && arrOk && ok2 && ok3 && wireOk) {
+					makeNote = "ok（三级 + 接线 UserEvents=1）";
+				} else {
+					const std::string stage =
+						!ok1 ? std::string{ "UserEventData" } :
+						!arrOk ? std::string{ "事件数组" } :
+						!ok2 ? std::format("UserEventManager（NumUserEvents={}）", Research2NumStr(uemNum)) :
+						!ok3 ? std::string{ "ButtonBaseData" } :
+						std::format("接线（UserEvents NumUserEvents={}）", Research2NumStr(wireNum));
+					makeNote = std::format("fail（断在{}）", stage);
+				}
 				if (ok3) {
 					RE::Scaleform::GFx::Value ret;
 					const bool               setOk = SafeValueInvoke(&reject, "SetButtonData", &ret, &data, 1);
@@ -3181,24 +3221,33 @@ namespace SAQ::UI
 			out += std::format("｜文本={}（{}）", textOk ? "ok" : "fail", ClipLogText(text, 16));
 		}
 
-		// ---- U9：关闭原语（传未知事件名 —— 可调用、返回 false、菜单仍在；不真关）----
+		// ---- U9：关闭原语（★ 第 131 轮修正判据：**可调用 + 无副作用**；真关菜单留 P4）----
+		//   旧判据「未知事件必须返回 false」不成立：原版 `MissionMenu.ProcessUserEvent`
+		//   末尾把返回值**覆盖**为 `ButtonBar_mc.ProcessUserEvent` /
+		//   `TabbedFilterSelection_mc.ProcessUserEvent` 的结果（见 MissionMenu.as）——
+		//   未知事件下可能被某个按钮声称处理（返回 true），但**没有副作用**（菜单仍在）。
+		//   真正的关菜单原语 = 传 `"ReturnToStarMap"`（OnCancelEvent）或 `"Missions"`
+		//   （onCloseSubMenuToGame）—— 那会真关掉菜单（30 秒「眼睛」窗口提前结束），
+		//   按设计留到 P4 用驱动器验证。这里判 = 可调用 + 菜单仍在（无副作用）。
 		{
 			RE::Scaleform::GFx::Value evName;
 			bool                     called = false;
-			bool                     retBool = true;
+			bool                     retIsBool = false;
+			bool                     retBool = false;
 			if (SafeCreateString(root, &evName, "SAQ_Research")) {
 				RE::Scaleform::GFx::Value args[2]{ evName, RE::Scaleform::GFx::Value(false) };
 				RE::Scaleform::GFx::Value ret;
 				called = SafeValueInvoke(&menu, "ProcessUserEvent", &ret, args, 2);
 				if (called) {
-					(void)SafeReadValueBool(ret, retBool);
+					retIsBool = SafeReadValueBool(ret, retBool);
 				}
 			}
 			double     after = -1.0;
 			const bool alive = readNum(list, "entryCount", after) && after == entries;
-			const bool pass = called && !retBool && alive;
-			out += std::format("｜关菜单入口={}（返回 {}，菜单仍在={}）",
-				pass ? "ok" : "fail", retBool ? "true" : "false", alive ? "是" : "否");
+			const bool pass = called && alive;
+			out += std::format("｜关菜单入口={}（可调用={}；菜单仍在={}；返回 {}，真关菜单留 P4）",
+				pass ? "ok" : "fail", called ? "是" : "否", alive ? "是" : "否",
+				!called ? "?" : (retIsBool ? (retBool ? "true" : "false") : "非布尔"));
 		}
 
 		// ---- U10 收口：QuestData 订阅回调计数（本会话没有新推送 ⇒ 0 属正常）----

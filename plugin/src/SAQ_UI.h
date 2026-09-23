@@ -222,11 +222,15 @@ namespace SAQ
 		//     U10 类通道：`loaderInfo.applicationDomain.getDefinition("…BSUIDataManager")`
 		//        + 静态调用 + `Subscribe("QuestData", fn)`（产物形态用它替代 watchdog）；
 		//     U5 按键接管：① `Data` 是原版 **protected**（预期读不到，与 U1 同类边界）；
-		//        ② `CreateObject` 带**类名**造真 AS3 实例（UserEventData /
-		//        UserEventManager / ButtonBaseData）→ `SetButtonData` 换到按钮上 →
-		//        public 的 `MinimalButton.HandleUserEvent("R3",false,false)` 程序化触发
+		//        ② `CreateObject` 带**类名**造真 AS3 实例（UserEventData / 事件数组
+		//        `[ud]` / UserEventManager / ButtonBaseData）→ `SetButtonData` 换到按钮上
+		//        → public 的 `MinimalButton.HandleUserEvent("R3",false,false)` 程序化触发
 		//        ⇒ 我们的 C++ 回调被调用 = **R 键可接管**（接管不了也有 fallback：
 		//        父条目 Enter = 引导，见 docs/15 11.4-⑥）；
+		//        ★ 第 131 轮（实机判读后的修正）：`ButtonBaseData` 的 param2 只接受
+		//        **UserEventData 或 Array** —— 旧版传 UserEventManager 实例会被 ctor
+		//        忽略（`UserEvents=null` ⇒ `HandleUserEvent` 空引用 ⇒ 接管假 fail）；
+		//        现在传数组 + 读回 `data.UserEvents.NumUserEvents` 作接线证据；
 		//     另加：`bCanShowOnMap` 字段 ⇒ SET COURSE `Enabled` 的**数据驱动**验证
 		//        （docs/15 11.4-⑦「不可导航 ⇒ 置灰」）。
 		//   数据/对象层一次完成（注入条目 / mask / 按钮 Data 为破坏性副作用，
@@ -238,7 +242,10 @@ namespace SAQ
 		//        → `clip.SetEntryText(条目)` ⇒ 竖条帧名 Inactive→Active（不重建列表）；
 		//     U8b 渲染文本：读回 clip 的 TextField（名字真的显示）；
 		//     U9 关闭原语：public 的 `MissionMenu.ProcessUserEvent("SAQ_Research",false)`
-		//        可调用 + 返回 false + 菜单仍在（**不真关菜单**；真关留到 P4 验证）。
+		//        判据 = **可调用 + 无副作用（菜单仍在）**（**不真关菜单**；真关留到 P4 验证）；
+		//        ★ 第 131 轮（实机判读后的修正）：原版会把返回值覆盖为 ButtonBar /
+		//        TabbedFilterSelection 的结果 —— 未知事件返回 true 属正常（旧判据
+		//        「必须返回 false」不成立），返回值只作信息记录。
 		//   为什么拆两段：U7 是渲染层证据 —— clip 的 `itemIndex` 由
 		//   `BSScrollingContainer.Update` 在帧推进时写，注入与读回之间必须隔一帧
 		//   （P2 计划在两步之间插 `wait 1200`）。
