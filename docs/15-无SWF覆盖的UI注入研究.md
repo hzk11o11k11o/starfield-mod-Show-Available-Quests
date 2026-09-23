@@ -7,8 +7,8 @@
 >
 > 本文 = 离线取证 + 路线盘点 + 实验设计 + **实测判读（见第九·补节：U0 ✅ / U1 ❌ 能力边界 /
 > U2 待补测 / U3 ✅ ⇒ 路线 A 不终止，下一步探针 v2 / P1.5）** + **探针 v2 落地
-> （第九·补二节：`ui.research2` = R1 枚举 / R2 拦截 / R3 filterMask 哨兵写 / R4 SetTabsData
-> 补测；用例集 42 条，待实机判读）**。
+> （第九·补二节）** + **探针 v2 实测判读（第九·补三节：五段全 ok = 拦截 + 哨兵写 + U2
+> 补测全成立 ⇒ 绕过路径实机确认，下一步 P2 = 原版 SWF 完整 PoC）**。
 
 ## 一、问题定义与成功判据
 
@@ -241,10 +241,46 @@ dev/release 双向 + 4 条用例计划形状 + 1 条只读反向）；断言 = *
 **副作用**：哨兵 `filterMask` / tab 数据被替换（`$SAQ测试0..8` / `$SAQ恢复0..7`）——
 菜单关闭随 Movie 销毁清理（第 27/50 轮定案）；用例内不做后续 UI 断言（`menu.close` 收尾）。
 
-**判读（待实机）**：四段全 ok ⇒ 做 **P2**（原版 SWF 完整 PoC：MO2 临时禁用我们的
-SWF 覆盖，验证 7 → 8 个 tab + 数据注入 + 交互接管）；任一段 fail ⇒ 按该段的实测值定位
+**判读**：四段全 ok ⇒ 做 **P2**（原版 SWF 完整 PoC：MO2 临时禁用我们的 SWF 覆盖，
+验证 7 → 8 个 tab + 数据注入 + 交互接管）；任一段 fail ⇒ 按该段的实测值定位
 （哨兵不存活 = 拦截失败；`U2=fail` 自带原因）。若 2/3 又失败且无替代 ⇒ 路线 A 终止，
-回到路线 D（现状 + 冲突检测）。
+回到路线 D（现状 + 冲突检测）。**实测 = 九·补三（五段全 ok ⇒ 做 P2）**。
+
+### 九·补三、探针 v2 实测判读（2026-09-23 · 第 120 轮；42 条用例 42/42 全 PASS）
+
+**实测一行**（`r119_gfx_inject2` 用例，14:53:43.324）：
+
+```
+界面研究探针2 Menu_mc=ok｜枚举=(82 个,FilterInfoA=无)｜切3=ok（mask 0xFFFFFFBF→0x00000008）｜切7=ok（拦截 1 次,mask→0x20000000）｜切0=ok（mask→0xFFFFFFBF）｜回调=3 次（末次 idx=0）｜清理=ok｜U2=ok（TabsData 调用 ok，numTabs 8→9→8）
+```
+
+| 段 | 实测 | 判读 |
+| --- | --- | --- |
+| R1 成员枚举 | `枚举=(82 个, FilterInfoA=无)` | U1 能力边界**再次确认**（private trait 不在 public 枚举里 —— 82 个成员 = FLA 公开成员 + dynamic 属性） |
+| R2 事件回调 | `回调=3 次（末次 idx=0）` | ✅ 三次切 tab（3/7/0）priority=100 监听**每次都先收到** |
+| R3 拦截 + 写 | `切7=ok（拦截 1 次，mask→0x20000000）` | ✅ **哨兵存活 = 拦截 + 写双成立**：`stopImmediatePropagation` 确实拦住了原版 `onFilterChanged`（否则它随后会用 `FilterInfoA[idx]` 的值把 mask 覆盖回去），且 `SetMember(filterMask)` 生效 |
+| R3 对照 | `切3=ok（mask 0xFFFFFFBF→0x00000008）` | ✅ 原版执行路径正常（切普通 tab 时 mask 按原版逻辑变化） |
+| R3 不越权 | `切0=ok（mask→0xFFFFFFBF）` | ✅ 非 7 的 tab 一律放行（拦截只对第 8 tab 生效） |
+| R4 U2 补测 | `U2=ok（TabsData 调用 ok，numTabs 8→9→8）` | ✅ **U2 成立**：`SetTabsData` 全链路（C++ 构造数组 → 调用 → getter 读回 → 恢复）可用 |
+| 清理 | `清理=ok` | ✅ `removeEventListener` 正常 |
+
+**结论：P1.5 全绿 —— 路线 A 的绕过路径实机确认**：
+
+1. **加 tab 可行**（U2：`SetTabsData` + `numTabs` getter 读写）；
+2. **不越界可行**（R3：拦截原版 `onFilterChanged` + 自设 `filterMask`，哨兵存活）；
+3. **交互接管可行**（R2 + 第 118 轮 U3：priority=100 监听真实先收到，可 `stopImmediatePropagation`）；
+4. 唯一限制 = 不能直接读写 `FilterInfoA`（U1）—— 但上述路径已完整绕开它。
+
+⇒ **下一步 = P2**（原版 SWF 完整 PoC）：MO2 临时禁用我们的 SWF 覆盖 ⇒ 在**原版
+7 个 tab** 的环境里验证「7 → 8 个 tab + 列表数据注入 + 交互接管」全链路；成功即
+"无 SWF 覆盖"目标形态成立，之后才评估功能迁移（第七节）与产品形态（第七节风险：
+建议"兼容模式"，默认仍走 SWF）。
+
+**P2 的探针设计注意点**（从本轮实测推出的两条）：
+- 原版 SWF 只有 7 个 tab（idx 0~6）⇒ 「切 7」在**扩 tab 之前**会被
+  `SetSelectedCategoryIndex` 拒绝（拒绝码 `tab-refused`，第 51 轮已见过该机制）——
+  P2 的探针顺序须改为「**先 `SetTabsData` 扩到 8 → 再切 7 验证拦截**」；
+- `filterMask` 初值（`$ALL`）与 tab 数无关，对照段（切 3）在原版上照样可用。
 
 ## 附：复现命令（离线证据）
 
