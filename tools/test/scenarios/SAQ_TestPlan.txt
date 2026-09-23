@@ -1630,6 +1630,47 @@ step = note === 触发后状态（判读：入侵事件是否被位置触发）=
 step = quest.probe ~3:0x0007E73F
 step = menu.close
 
+; ----------------------------------------------------------------------------
+;  用例：第 146 轮 —— **DLC world 级常驻兜底收口**（`docs/14` 五节遗留的最后 1 条）
+;
+;  背景：`SFBGS001_VKaiZ02`（ShatteredSpace 城市支线 / 收集型，`~4:0x0005FC74`）是
+;  本机最后 1 条「全部候选都非常驻」的任务 —— 病根 = DLC 的 **world 池键口径**
+;  （组链 `WorldChildren` label 的低 24 位 = 0x0470CB）与候选 world
+;  （内联 WRLD 记录的 in-file FormID = 0x010470CB）不一致 ⇒ world 级兜底池从未建立。
+;  修复（`gen_guide_targets.py` 的 `_world_key` + 保留完整 in-file FormID）后，
+;  它的候选池 = 4 个 NPC + **1 条 world 级常驻兜底**
+;  （`SFBGS001_VKaiZ02_LijanaStandMarker01`，距首选候选 1.0 m）⇒ 远处点引导立即生效，
+;  「需要靠近」链路消失（Mode=6 清单由 1 → 0；表检查见 verify）。
+;
+;  判据（**只读**：不 reset / 不推 stage，不改任何任务状态）：
+;    ① `guide.probe ~4:0x0005FC74` 报 **5 条候选**，其中 **[5] 兜底 = 可得**
+;       （常驻引用 ⇒ 任何位置都取得到）；
+;    ② 该行同时说明「4 个 NPC 此刻取不到」是预期的（玩家不在达兹拉 ⇒ 非常驻）——
+;       不断言它们的状态（随玩家位置变化），只钉 [5]。
+;
+;  ★★★ 第 147 轮（本用例首跑收口）：首跑（2026-09-24 06:22 会话）**假 FAIL** ——
+;  两处用例侧缺陷：① 断言写成 `候选可得性：莉亚娜·杜尔可夫`（把候选 [1] 的名字当成了
+;  探针行开头的任务名；实际任务名 = `快递员`，`莉亚娜·杜尔可夫` 只是 [1] 的候选人名）
+;  ⇒ 正则永不可能命中（同第 83 轮「全角括号」一族）；② `guide.probe`（第 60 轮）
+;  **没有产品日志行**（结果只进 `[PASS] guide.probe …` 步骤行，`assert.log` 只认产品行
+;  = 红线六）⇒ 就算正则写对也查不到 —— 与第 104 轮 quest.probe 踩过的完全同型。
+;  修法：DLL 侧补 `REX::INFO("引导探针 {}", detail)`（照抄 kQuestProbe 的产品行）；
+;  用例侧按**产品行实际格式**断言（`引导探针 候选可得性：快递员（0x…）｜…`）。
+;  ★ 教训：新 op 的断言先做红线六自查 ——「这行以什么前缀进日志」。
+; ----------------------------------------------------------------------------
+[case:r146_vkaiz02_fb]
+desc = 第 146 轮：VKaiZ02 补 DLC world 级常驻兜底 —— 候选探针：5 条候选、[5] 兜底=可得
+step = note === 预热：开一次菜单（master 解析 + 静态表就绪 —— `~4:` 直拼依赖它）===
+step = ping
+step = menu.open
+step = assert.log 推送成功 scope=prev timeout=12000
+step = menu.close
+step = note === 只读候选探针：4 个 NPC + 第 5 条 world 级常驻兜底 ===
+step = guide.probe ~4:0x0005FC74
+step = assert.log 引导探针 候选可得性：快递员（0x[0-9A-F]{8}）.*\[5\]「SFBGS001_VKaiZ02_LijanaStandMarker01」0x[0-9A-F]{8}=可得 scope=prev timeout=8000
+step = note === 反向检查：兜底候选不许取不到（常驻引用 ⇒ 任何位置都该 可得）===
+step = assert.nolog 引导探针 候选可得性：快递员.*\[5\]「SFBGS001_VKaiZ02_LijanaStandMarker01」0x[0-9A-F]{8}=取不到 scope=case timeout=1000
+
 [case:r117_gfx_research]
 desc = 第 117 轮：无 SWF 覆盖的 UI 注入研究 —— GFx 能力探针（U1 私有读写 / U2 public 调用）
 ;  判读（结果在日志 `界面研究探针 …` 一行 + 步骤 JSON）：GetVar槽 / Menu_mc / 私有读 / 私有写 / SetTabsData。

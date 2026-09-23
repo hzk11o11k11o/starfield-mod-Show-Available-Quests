@@ -2273,6 +2273,7 @@ namespace SAQ
 		{ 0x05FD15u, 4u, 0x00u, 0u, "费兰·诺斯达" },
 		{ 0x05FD16u, 4u, 0x00u, 0u, "阿莉嘉·达尔卡" },
 		{ 0x05FD17u, 4u, 0x00u, 0u, "拉齐姆·瓦里安" },
+		{ 0x114EC2u, 4u, 0x01u, 0u, "SFBGS001_VKaiZ02_LijanaStandMarker01" },
 		{ 0x07BDB2u, 4u, 0x00u, 0u, "娜拉达·布雷迪" },
 		{ 0x0DCF14u, 4u, 0x01u, 0u, "SFBGS001_DazraZ03Start" },
 		{ 0x059704u, 4u, 0x00u, 0u, "埃克里斯·凯希尔" },
@@ -2282,7 +2283,7 @@ namespace SAQ
 		{ 0x10F241u, 4u, 0x01u, 0u, "???" },
 		{ 0x10F240u, 4u, 0x01u, 0u, "???" },
 	};
-	inline constexpr std::size_t kGuideCandidateCount = 1020;
+	inline constexpr std::size_t kGuideCandidateCount = 1021;
 
 	// ★★ 第 74 轮（同伴好感度任务）：同伴显示名（下标 = StaticQuestInfo::companion）——
 	//   中英各一份（界面按游戏语言选；静态表的名字已经带了这个前缀）。
@@ -2689,10 +2690,10 @@ namespace SAQ
 		{ 0x00050B56u, 4u, 0u, 0x00000100u, 991u, 6u, 11u, 0u, 422u, 0u, 87u, 0u, "", "", "Hide and Seek", "捉迷藏", -1, -1, 0u, -1, -1, -1 },
 		{ 0x0005DAF0u, 4u, 3u, 0x00010100u, 997u, 6u, 11u, 0u, 422u, 0u, 87u, 0u, "", "", "The Duel", "决斗", -1, -1, 0u, -1, -1, -1 },
 		{ 0x0005FC73u, 4u, 3u, 0x00010100u, 1003u, 5u, 11u, 0u, 422u, 2u, 87u, 0u, "", "", "Path of Redemption", "救赎之道", -1, -1, 0u, -1, -1, -1 },
-		{ 0x0005FC74u, 4u, 3u, 0x00000100u, 1008u, 4u, 11u, 0u, 424u, 0u, 87u, 0u, "", "", "The Courier", "快递员", -1, -1, 0u, -1, -1, -1 },
-		{ 0x00098AD9u, 4u, 0u, 0x00000500u, 1012u, 0u, 11u, 0u, 424u, 0u, 87u, 0u, "", "", "Player House Quest", "玩家房屋任务", -1, -1, 0u, -1, -1, -1 },
-		{ 0x000D5E84u, 4u, 3u, 0x00010111u, 1012u, 2u, 11u, 0u, 424u, 0u, 87u, 0u, "Va'ruun Depository", "瓦鲁贮藏所", "Sympathy for the Living", "同情生者", -1, -1, 0u, -1, -1, -1 },
-		{ 0x0010AAD5u, 4u, 2u, 0x00010100u, 1014u, 6u, 11u, 0u, 424u, 1u, 87u, 3u, "", "", "The Other Side", "另一边", 3, -1, 0u, -1, -1, -1 },
+		{ 0x0005FC74u, 4u, 3u, 0x00000100u, 1008u, 5u, 11u, 0u, 424u, 0u, 87u, 0u, "", "", "The Courier", "快递员", -1, -1, 0u, -1, -1, -1 },
+		{ 0x00098AD9u, 4u, 0u, 0x00000500u, 1013u, 0u, 11u, 0u, 424u, 0u, 87u, 0u, "", "", "Player House Quest", "玩家房屋任务", -1, -1, 0u, -1, -1, -1 },
+		{ 0x000D5E84u, 4u, 3u, 0x00010111u, 1013u, 2u, 11u, 0u, 424u, 0u, 87u, 0u, "Va'ruun Depository", "瓦鲁贮藏所", "Sympathy for the Living", "同情生者", -1, -1, 0u, -1, -1, -1 },
+		{ 0x0010AAD5u, 4u, 2u, 0x00010100u, 1015u, 6u, 11u, 0u, 424u, 1u, 87u, 3u, "", "", "The Other Side", "另一边", 3, -1, 0u, -1, -1, -1 },
 	};
 	inline constexpr std::size_t kQuestTableSize = 280;
 }

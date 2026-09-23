@@ -1369,6 +1369,14 @@ namespace SAQ::Test
 					CompleteStep(false, detail, LogSince(g_cur.logMark, kEvidenceMaxLines));
 					return true;
 				}
+				// ★★★ 第 147 轮（r146 首跑收口 · 补记「红线六」）：探针结果必须**同时打一行
+				//   产品日志** —— `assert.log` 只认产品行（`LogFind` 跳过一切含 `harness：`
+				//   的行 = 第 56 轮防回声红线）。本 op（第 60 轮）此前只把结果放进
+				//   `[PASS] guide.probe …` 步骤行 ⇒ 第 146 轮新用例 r146_vkaiz02_fb 第一次
+				//   对探针输出做 assert.log，当场**假 FAIL**（步骤自身 PASS、断言超时、
+				//   evidence 为空 —— 与第 104 轮 quest.probe 踩过的完全同型）。
+				//   修法照抄 kQuestProbe：结果照打一行产品日志，断言语义不变。
+				REX::INFO("引导探针 {}", detail);
 				// 结果进步骤结果（SAQ_testresults.json）—— 「走远后候选是否仍可得」的硬证据。
 				CompleteStep(true, detail, {});
 				return true;

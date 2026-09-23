@@ -329,7 +329,13 @@ def collect_world_persistents(mm: mmap.mmap, worlds: set[int]) -> dict[int, list
     ⇒ 对「同 cell 找不到兜底」的任务，在它候选的 worldspace 里找最近的 world 级常驻引用
     （实测 19/20 条命中，距离 0.2~8.4 m —— 蓝点仍落在正确位置）。
 
-    返回 {world: [(formid, pos, base, edid)]}。
+    ★ 第 146 轮（DLC 收口）：两处口径对齐 ——
+      · 池键 = 组链 type-1 label 的**低 24 位**（`& 0xFFFFFF`，见下）—— 调用方传进来的
+        `worlds` 必须用同一口径（`_world_key`），否则 DLC（前缀 0x01）对不上；
+      · 返回的 `formid` = **完整 in-file FormID（不掩高字节）** —— 交给 owner_fields()
+        按前缀判 master；只留 24 位会把 DLC 引用误判成 starfield.esm 的记录号。
+
+    返回 {world(低 24 位): [(formid(in-file), pos, base, edid)]}。
     """
     out: dict[int, list] = {}
 
@@ -340,8 +346,9 @@ def collect_world_persistents(mm: mmap.mmap, worlds: set[int]) -> dict[int, list
                 if size < 24:
                     return
                 gtype = struct.unpack_from("<i", mm, p + 12)[0]
+                # ★ 第 146 轮：池键统一用组链 label 的低 24 位（与 _world_key 同口径）。
                 label = struct.unpack_from("<i", mm, p + 8)[0] & 0xFFFFFF
-                # WRLD 组（type 1）的 label = worldspace 的 FormID
+                # WRLD 组（type 1）的 label = worldspace 的 FormID（低 24 位）
                 wl = label if (gtype == 1 and world_label == 0) else world_label
                 rec(p + 24, p + size, types + [gtype], wl)
                 p += size
@@ -363,7 +370,11 @@ def collect_world_persistents(mm: mmap.mmap, worlds: set[int]) -> dict[int, list
                     elif s == b"EDID":
                         edid = ascii_z(sp)
                 if pos:
-                    formid = u32(mm[p + 12:p + 16]) & 0xFFFFFF
+                    # ★ 第 146 轮：这里**不再掩掉高字节** —— 返回值要交给 owner_fields()
+                    #   （靠前缀判「引用属于哪个 master」）。旧实现只留 24 位 ⇒ DLC 引用
+                    #   （in-file 0x0111xxxx，前缀 0x01）会被误判成 starfield.esm 的记录号。
+                    #   基础游戏前缀本来就是 0x00 ⇒ 本改动对基础游戏逐字节等价。
+                    formid = u32(mm[p + 12:p + 16])
                     out.setdefault(world_label, []).append((formid, pos, base, edid))
             p += 24 + size
 
@@ -405,6 +416,18 @@ def _ref_related(edid: str, kws: set[str]) -> int:
         return 1
     low = edid.lower()
     return 0 if any(k in low for k in kws) else 1
+
+
+def _world_key(world: int) -> int:
+    """worldspace 池的键归一化（★ 第 146 轮）：只用低 24 位。
+
+    ★ 为什么需要：`collect_world_persistents` 从**组链 label** 取 worldspace，而组 label
+      的高字节是「记录所在文件的空间前缀」；候选侧的 `world` 来自**内联 WRLD 记录**
+      （DLC 里 = `0x010470CB` 这样的完整 in-file FormID）。基础游戏前缀 0x00 ⇒ 两者
+      恰好相等；DLC 前缀 0x01 ⇒「0x010470CB ≠ 0x0470CB」⇒ **world 级兜底池永远为空**
+      （实测 = `SFBGS001_VKaiZ02`，第 146 轮唯一一条无兜底任务；`docs/14` 第五节遗留）。
+    """
+    return world & 0xFFFFFF
 
 
 def _pick_nearest(pool: dict[int, list], targets: list[tuple[int, tuple]],
@@ -461,7 +484,10 @@ def find_fallbacks(pre_cands: dict[int, list[dict]], wanted_by_master: dict[str,
         if not cands or any(c.get("persistent") for c in cands):
             continue
         tc = [(c["cell"], c["pos"]) for c in cands if c.get("cell") and c.get("pos")]
-        tw = [(c.get("world") or 0, c["pos"]) for c in cands if c.get("pos") and c.get("world")]
+        # ★ 第 146 轮：world 键按「组链 label 口径」归一化（低 24 位）——
+        #   与 collect_world_persistents 的池键一致，修掉 DLC 前缀对不上的缺陷。
+        tw = [(_world_key(c.get("world") or 0), c["pos"])
+              for c in cands if c.get("pos") and c.get("world")]
         if tc:
             need_cell[fid] = tc
             cells.update(c for c, _ in tc)

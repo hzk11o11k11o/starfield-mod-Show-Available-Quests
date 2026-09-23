@@ -245,6 +245,35 @@
           （flags 四类细分 / 记录级记录文件纳入 / 记录级扫描补 SFBGS003）。
           本脚本检查：内核任意 cmp 折叠 + NaN 保护 + 两条管线低字节 + GLOB 单独放行 +
           tripwire 升级在场 + 反向检查（旧「读 u32 当 type」不得残留）。
+  第 146 轮（**DLC world 级常驻兜底收口** · `docs/14` 五节遗留的最后 1 条）：
+          ① 数据侧（tools/esm/gen_guide_targets.py）：`SFBGS001_VKaiZ02`（ShatteredSpace）
+             是最后 1 条「全部候选都非常驻」的任务 —— 病根 = **world 池键口径不一致**：
+             池键 = 组链 `WorldChildren` label 的低 24 位（0x0470CB），候选 world = 内联
+             WRLD 记录的 in-file FormID（0x010470CB）⇒ DLC 前缀对不上、池从未建立；
+             另 `collect_world_persistents` 曾把引用号掩成 24 位（DLC 会丢 master 前缀）。
+             修法 = 新 `_world_key`（两侧同口径）+ 返回完整 in-file FormID。
+             效果：候选池 **1020 → 1021**、有目标任务 225 不变、「需要靠近」任务 **1 → 0**
+             （旧代码 run 与新代码 run 逐任务对比：**只有 VKaiZ02 变化**，见
+             `ref/_r146_guides_compare.log`）；SWF 不重编（DLC 条目不在内嵌载荷里）。
+          ② 用例侧：新增 1 条**只读**候选探针用例 `r146_vkaiz02_fb`
+             （`guide.probe ~4:0x0005FC74` ⇒ `[5]「…LijanaStandMarker01」=可得`）。
+          本脚本检查：候选池精确计数 **1021** + 4 条任务的 world 级兜底候选在位（含
+          VKaiZ02 的 **DLC master** 样本）+ 生成器口径归一化实现标记 +
+          Mode=6 ini 文案同步（DLL 模板 + resources 模板）+ 用例计划 3 条断言 +
+          反向检查（旧「掩 24 位」写法不得残留）。
+  第 147 轮（**r146 首跑收口 · 红线六第二例**）：
+          r146_vkaiz02_fb 首跑（2026-09-24 06:22 会话）唯一 FAIL = 用例侧两处缺陷：
+          ① 断言把候选 [1] 的名字（莉亚娜·杜尔可夫）当成探针行的**任务名**（实际任务名
+          = 快递员）⇒ 正则永不命中（同第 83 轮「全角括号」一族）；② `guide.probe`
+          （第 60 轮落地，早于第 104 轮的探针产品行红线）**没有产品日志行** —— 结果只
+          进 `[PASS] guide.probe …` 步骤行，而 `assert.log` 只认产品行（红线六）⇒ 就算
+          正则写对也查不到（与第 104 轮 quest.probe 完全同型）。
+          修法：DLL 侧照抄 kQuestProbe 补 `REX::INFO("引导探针 {}", detail)`；用例断言
+          按产品行实际格式重写（`引导探针 候选可得性：快递员（0x…）｜…[5]…=可得`）。
+          ★ 关键判读：探针输出本身早就正确（首跑日志 `[5]「…LijanaStandMarker01」
+          0x01114EC2=可得`）⇒ **产品侧零缺陷**，两处都在 harness/用例侧。
+          本脚本检查：dev 特征串 `引导探针 {}`（发布反向）+ r146 两条断言按新格式 +
+          反向检查（旧断言不得残留）。
 
 用法：python tools/ui/verify_saq_build.py [--release|--dev]
 """
@@ -594,6 +623,13 @@ HARNESS_STRINGS = (
     #     拼不出 `任务探针 quest.probe 0x` 这样的连续串（第一版写错成那个，MISS 过）。
     #     两条必须**成对**在：上一条管「探针输出格式」，本条管「结果会进产品日志」。
     ("harness 探针产品行（可被 assert.log 取证）", "任务探针 {}"),
+    # ★★★ 第 147 轮（2026-09-24 06:22 会话 r146 唯一 FAIL 的定调用 · 红线六复现）：
+    #   同一条红线的**第二例** —— `guide.probe`（第 60 轮落地，早于第 104 轮定红线）
+    #   只把结果放进 `[PASS] guide.probe …` 步骤行，没打产品行。第 146 轮新用例
+    #   `r146_vkaiz02_fb` 第一次对探针输出做 assert.log ⇒ 断言必然假 FAIL
+    #   （步骤 PASS、断言超时、evidence 为空）。第 147 轮照抄 kQuestProbe 补上：
+    #   `REX::INFO("引导探针 {}", detail)`。本表钉住它不被回退（dev 正向 / 发布反向）。
+    ("harness 引导候选探针产品行（可被 assert.log 取证）", "引导探针 {}"),
     # ★★★ 第 112 轮（verify 修正）：第 110 轮把这条放进了「产品特征字典」⇒ 发布构建
     #   必然 MISS（文案实际在 SAQ_Test.cpp::ResolveLocalFormID 里）—— `verify --release`
     #   会因此挡住打包（第 112 轮跑发布验证时才暴露）。归属改到本表：
@@ -1385,8 +1421,11 @@ def main() -> int:
             #   （实测样本「营救机器人」），方便实测时找条目。
             #   ★ 第 47 轮：判据升级为「首选候选非常驻」（兜底候选是常驻的）。
             "测试模式 6 日志文案": "只显示「需要靠近」的条目".encode(),
-            # ★ 第 48 轮：判据回退为「全部候选都非常驻」（20 条）—— ini 说明同步。
-            "测试模式 6 ini 说明": "全部候选都非常驻，20 条".encode(),
+            # ★ 第 48 轮：判据回退为「全部候选都非常驻」—— ini 说明同步。
+            # ★★ 第 146 轮：本机这类任务 1 → 0（VKaiZ02 补上 DLC world 级兜底）⇒
+            #   ini 模板文案同步（模式保留作回归探针）。
+            "测试模式 6 ini 说明": "全部候选都非常驻".encode(),
+            "测试模式 6 ini 第 146 轮注记": "第 146 轮起为 0 条".encode(),
             # 上限写死成 5 曾把 Mode=6 静默折成 0（玩家看到的是「过滤失效」）⇒ 现在
             # 超范围要 WARN，且模式行**无论开没开都打**（缺了这行就没法区分「ini 没读到」）。
             "测试模式超范围告警": "超出已知范围".encode(),
@@ -1644,9 +1683,35 @@ def main() -> int:
                             # ★★★ 第 125 轮（路线 D · 冲突检测）：正常界面不许被判定成
                             #   「UI 通道不可用」（反向断言 —— 防误报）。
                             "r125_ui_channel_ok",
+                            # ★★★★★★ 第 146 轮（DLC world 级常驻兜底收口）：VKaiZ02
+                            #   只读候选探针（4 NPC + 第 5 条 world 级兜底）。
+                            "r146_vkaiz02_fb",
                             "r62_reload_observe"):
                     all_ok &= check(f"用例计划 · [case:{cid}]", plan_text.encode(),
                                     f"[case:{cid}]".encode())
+                # ★★★★★★ 第 146 轮：r146 用例的断言形状（步骤在 + [5] 兜底=可得 +
+                #   反向检查「[5] 不许取不到」）—— 防止以后把兜底候选改没 / 断言放松。
+                #   ★★★ 第 147 轮（首跑收口）：断言必须以**产品行前缀** `引导探针 `
+                #   开头（红线六 —— `guide.probe` 已补产品日志行）；旧写法
+                #   `候选可得性：莉亚娜·杜尔可夫…` 是把候选 [1] 的名字当任务名 + 查
+                #   harness 步骤行 ⇒ 首次实机必然假 FAIL。首跑证据见 SAQ_testresults.json。
+                all_ok &= check("用例计划 · r146 VKaiZ02 候选探针步骤",
+                                plan_text.encode(), "guide.probe ~4:0x0005FC74".encode())
+                all_ok &= check("用例计划 · r146 [5] 兜底可得断言（产品行前缀）", plan_text.encode(),
+                                "引导探针 候选可得性：快递员（0x[0-9A-F]{8}）.*"
+                                r"\[5\]「SFBGS001_VKaiZ02_LijanaStandMarker01」0x[0-9A-F]{8}=可得".encode())
+                all_ok &= check("用例计划 · r146 [5] 兜底反向断言", plan_text.encode(),
+                                "assert.nolog 引导探针 候选可得性：快递员.*"
+                                r"\[5\]「SFBGS001_VKaiZ02_LijanaStandMarker01」0x[0-9A-F]{8}=取不到".encode())
+                #   反向检查（第 147 轮防回退）：旧断言（把候选 [1] 名字当任务名、且不带
+                #   产品行前缀）不得残留 —— 它查的是永远匹配不上的文本。
+                #   ★ 只扫 `step =` 行（第 103 轮的教训）：本用例注释里解释了「旧断言
+                #   为什么错」，那几行说明文本不该把这条检查顶红。
+                bad_r146_old = bool(re.search(r"(?m)^\s*step\s*=\s*assert\.(?:log|nolog) 候选可得性：莉亚娜·杜尔可夫",
+                                              plan_text))
+                print(("MISS " if bad_r146_old else "OK  ") +
+                      " 用例计划 · r146 旧断言不再把候选 [1] 名字当任务名（反向检查，第 147 轮）")
+                all_ok &= not bad_r146_old
                 # ★★★ 第 98 轮：两条 DLC 链式用例的断言形状（防被改回「点名一条」
                 #   或写死运行期 FormID —— 六条里任意一条命中即可；ID 用 `[0x` 通配）。
                 #   ★ 第 99 轮：名字修正（「狂热逾界」「发掘过去」—— 旧版手打成了
@@ -2612,6 +2677,10 @@ def main() -> int:
             all_ok &= check("ini 模板 · [UI] 段（第 137 轮）", tmpl_112, b"[UI]")
             all_ok &= check("ini 模板 · UiMode=auto 生效键（发布默认）", tmpl_112,
                             b"UiMode=auto")
+            #   ★★ 第 146 轮（DLC world 级兜底收口）：Mode=6 的说明同步（本机 0 条）——
+            #   起因 = 最后 1 条「需要靠近」任务（VKaiZ02）补上了 DLC world 级常驻兜底。
+            all_ok &= check("ini 模板 · Mode=6 第 146 轮注记（本机 0 条）", tmpl_112,
+                            "第 146 轮起为 0 条".encode())
             gone_tmpl = b"; MaxSizeMB" not in tmpl_112
             print(("OK  " if gone_tmpl else "MISS") +
                   " ini 模板 · 旧注释示例「; MaxSizeMB」已替换(反向检查，第 112 轮)")
@@ -2877,10 +2946,13 @@ def main() -> int:
         #   同一套口径）⇒ 候选 **1020**（+19）、有目标任务 **225** 不变（兜底加在已有
         #   候选的任务上）。精确计数从本轮起钉死（`cand_total == 1020`）——
         #   候选池是运行期引导质量的直接输入，数量漂移必须是「有意改动」。
-        ok = cand_total == 1020 and n_with == 225 and n_oob == 0
+        #   ★★★★★★ 第 146 轮（DLC world 级兜底收口）：`SFBGS001_VKaiZ02`（最后 1 条
+        #   「无兜底」任务）补上 world 级常驻兜底 ⇒ 候选 **1021**（+1）；
+        #   有目标任务 225 不变（兜底加在已有候选的任务上）；「需要靠近」任务 **1 → 0**。
+        ok = cand_total == 1021 and n_with == 225 and n_oob == 0
         print(("OK  " if ok else "MISS") +
               f" 静态表 · 候选池完整（候选 {cand_total} 条 / 有目标任务 {n_with}"
-              f"（第 110 轮起 225；第 114 轮起候选 1020）"
+              f"（第 110 轮起 225；第 114 轮起 1020；第 146 轮起 1021）"
               f" / 切片越界 {n_oob}）")
         all_ok &= ok
 
@@ -2896,28 +2968,45 @@ def main() -> int:
         #   ③ 反向检查：生成器的两档实现标记必须在（旧实现只有「同 cell」一档）。
         gen_src = (ROOT / "tools" / "esm" / "gen_guide_targets.py").read_text(
             encoding="utf-8")
+        #   ★★★★★★ 第 146 轮：+ `_world_key`（DLC 的 world 池键口径归一化）与
+        #   「返回完整 in-file FormID」的实现标记（`formid = u32(mm[p + 12:p + 16])`
+        #   不再 `& 0xFFFFFF` —— 否则 DLC 兜底会丢 master 前缀）。
         ok_gen = ("collect_world_persistents" in gen_src
                   and "world 级常驻兜底" in gen_src
-                  and "_REL_MAX_EXTRA_M" in gen_src)
+                  and "_REL_MAX_EXTRA_M" in gen_src
+                  and "def _world_key(" in gen_src
+                  and "formid = u32(mm[p + 12:p + 16])" in gen_src
+                  and "formid = u32(mm[p + 12:p + 16]) & 0xFFFFFF" not in gen_src)
         print(("OK  " if ok_gen else "MISS") +
-              " 引导·生成器 world 级兜底（collect_world_persistents + 两档 src + 相关名阈值）")
+              " 引导·生成器 world 级兜底（collect_world_persistents + 两档 src + 相关名阈值"
+              " + 第 146 轮 DLC 口径归一化）")
         all_ok &= ok_gen
         cands_all = re.findall(
             r"\{\s*0x([0-9A-F]+)u,\s*(\d+)u,\s*0x([0-9A-F]+)u,\s*(\d+)u,",
             blob[blob.find("kGuideCandidates[] = {"):blob.find("kGuideCandidateCount")])
-        for q_local, fb_local, tag in [
-            (0x001E8FF7, 0x002928D3, "UCR03 -> UC_TualaTravelMaker（0.2 m）"),
-            (0x0021B1FA, 0x0004A178, "新家园 -> FlickeringLights 启用标记（20.4 m）"),
-            (0x001145EE, 0x0001531D, "传播新闻 -> NewAtlantisMapMarkerWestEnd（2.5 m）"),
+        #   ★★★★★★ 第 146 轮（DLC world 级兜底收口）：第 4 条样本 = `SFBGS001_VKaiZ02`
+        #     （0x0005FC74，master 4 = ShatteredSpace）⇒ 兜底 0x114EC2
+        #     （`SFBGS001_VKaiZ02_LijanaStandMarker01`，距目标 1.0 m，**DLC master**）——
+        #     起因 = DLC 的 world 池键（组链 label 低 24 位）与候选 world（in-file FormID）
+        #     口径不一致 ⇒ 它的 world 池从未被建过（docs/14 第五节遗留）。
+        #     ⇒ 样本判据随之升级：任务行与兜底候选都带 master 字段（不再写死 0）。
+        for q_local, q_master, fb_local, fb_master, tag in [
+            (0x001E8FF7, 0, 0x002928D3, 0, "UCR03 -> UC_TualaTravelMaker（0.2 m）"),
+            (0x0021B1FA, 0, 0x0004A178, 0, "新家园 -> FlickeringLights 启用标记（20.4 m）"),
+            (0x001145EE, 0, 0x0001531D, 0, "传播新闻 -> NewAtlantisMapMarkerWestEnd（2.5 m）"),
+            (0x0005FC74, 4, 0x00114EC2, 4, "VKaiZ02 -> LijanaStandMarker01（1.0 m，DLC master）"),
         ]:
             m = re.search(
-                r"\{\s*0x%08Xu,\s*0u,\s*\d+u,\s*0x[0-9A-F]+u,\s*(\d+)u,\s*(\d+)u,"
+                r"\{\s*0x%08Xu,\s*(\d+)u,\s*\d+u,\s*0x[0-9A-F]+u,\s*(\d+)u,\s*(\d+)u,"
                 % q_local, region)
             hit = False
             if m:
-                begin, count = int(m.group(1)), int(m.group(2))
+                q_m = int(m.group(1))
+                begin, count = int(m.group(2)), int(m.group(3))
                 window = cands_all[begin:begin + count]
-                hit = any(int(c[0], 16) == fb_local and int(c[2], 16) & 1 for c in window)
+                hit = (q_m == q_master
+                       and any(int(c[0], 16) == fb_local and int(c[1]) == fb_master
+                               and int(c[2], 16) & 1 for c in window))
             print(("OK  " if hit else "MISS") +
                   f" 静态表 · world 级兜底候选在位: {tag}")
             all_ok &= hit

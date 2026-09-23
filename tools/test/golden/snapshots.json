@@ -13,8 +13,8 @@
     },
     "ref/guide_targets.json": {
       "desc": "引导目标候选池（gen_guide_targets.py）",
-      "sha256": "023d72339e9ef5d7cb2e5e162d802e635476a8942b9f0cf40fcfc103fb1299d3",
-      "summary": "任务 217 / 候选 991"
+      "sha256": "98dd7218a0bd86e23baed6e07d898d7f6a373f103548add7aff0ed94d2641bec",
+      "summary": "任务 217 / 候选 992"
     },
     "ref/repeatable_givers.json": {
       "desc": "可重复任务 NPC 入口（gen_repeatable_givers.py）",
@@ -63,8 +63,8 @@
     },
     "plugin/src/SAQ_QuestTable.h": {
       "desc": "静态任务表（gen_quest_table.py，DLL 编译进去）",
-      "sha256": "37dff56c47f3bd3188ca789239bf55b3caa8c771d412e8dbf76bd4f3603e2436",
-      "summary": "任务 280 / 候选 1020 / 进度门槛 11 / INFO对话 425 / INFO条件 512 / 链式边 90 / 同伴 4 / 势力入口 4 / 地标 10 / 可重复 21"
+      "sha256": "8d82593dde5e46423e96c414fe20f0960a424a065351176303f63cee7654c6d2",
+      "summary": "任务 280 / 候选 1021 / 进度门槛 11 / INFO对话 425 / INFO条件 512 / 链式边 90 / 同伴 4 / 势力入口 4 / 地标 10 / 可重复 21"
     },
     "ui/missionmenu/saqdata/SaqEmbeddedPayload.inc": {
       "desc": "内嵌回退载荷（gen_quest_table.py）",

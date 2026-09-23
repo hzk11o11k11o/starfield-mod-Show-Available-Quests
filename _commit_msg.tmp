@@ -1,0 +1,21 @@
+第146/147轮：DLC world 级兜底收口 + r146 首跑收口（guide.probe 补产品行 · 红线六第二例）
+
+第 146 轮（数据侧 · 明细 = docs/14 九节）：
+- gen_guide_targets.py：world 池键口径归一（_world_key 供需同口径）+ collect_world_persistents
+  返回完整 in-file FormID（不再掩 24 位）⇒ 候选池 1020→1021、「需要靠近」1→0、
+  Mode=6 清单 1→0（模式保留作回归探针）；新增只读用例 r146_vkaiz02_fb
+- SAQ.cpp / SAQ_QuestTable.h / resources ini / 黄金快照 / docs(05/11/12/14) 同步
+
+第 147 轮（首跑检查收口 · 明细 = docs/09 十四·补三十七）：
+- 首跑 44 条 43 PASS / 1 FAIL（唯一 FAIL = r146 的 assert.log；产品零缺陷 ——
+  探针输出 [5]「SFBGS001_VKaiZ02_LijanaStandMarker01」0x01114EC2=可得 已正确）
+- 真因两处全在用例/harness 侧：① 断言把候选 [1] 名字当任务名（实际任务名 = 快递员）
+  ② guide.probe（第 60 轮）没有产品日志行 ⇒ assert.log 只认产品行 = 必然假 FAIL（红线六第二例）
+- 修法：SAQ_Test.cpp 的 kGuideProbe 照抄 kQuestProbe 补 REX::INFO("引导探针 {}", detail)；
+  SAQ_TestPlan.txt 两条断言按产品行实际格式重写（正/反）
+- verify_saq_build.py：+2 条（dev 特征串「引导探针 {}」+ 旧断言反向检查，只扫 step 行）
+  + r146 两条断言检查改产品行前缀；新增纪律：改断言后先拿首跑日志离线预演再重建
+
+判据：run-all-tests 5 步全过 + verify --dev 1063 行 / 0 MISS（1061 → +2）
++ 工作区==部署（DLL 1207808 B / SHA256 C3235C6F…C6795F1；用例文件哈希一致）
+待复跑：主计划 44 条（预期 44/44）。
