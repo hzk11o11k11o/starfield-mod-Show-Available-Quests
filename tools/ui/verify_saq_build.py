@@ -680,6 +680,11 @@ HARNESS_STRINGS = (
     ("harness GFx 注入 PoC · 监听保留说明（眼睛窗口切 tab 要靠它）",
      "眼睛=请切到第 8 个 tab 看真实列表"),
     ("harness GFx 注入 PoC · 回 ALL 段标记（｜回ALL=）", "｜回ALL="),
+    # ★★★ 第 135 轮（P3-a 实机缺陷修复 · 注入上下文未接线）：拦截 handler（设 mask +
+    #   注入 / 恢复）全部操作 `ctx.list`，而它此前从未被赋值（空 Value）⇒ 第 134 轮
+    #   P2 会话实测 mask 写失败 + 注入失败、列表没换。修复 = 快照前 `ctx.list = list;`。
+    #   这条特征串钉住「上下文自检」不被回退（dev 正向；发布构建一条都不见）。
+    ("harness GFx 注入 PoC · 上下文自检标记（｜上下文=）", "｜上下文="),
 )
 
 
@@ -2350,6 +2355,24 @@ def main() -> int:
             all_ok &= ok_134
         else:
             print(f"MISS 缺少 {saq_src_134}")
+            all_ok = False
+        # ★★★ 第 135 轮（P3-a 实机缺陷修复 · 注入上下文未接线）：拦截 handler 的
+        #   「设 mask + 注入 / 恢复」全部操作 `ctx.list`（异步 handler 必须在上下文里
+        #   持有 MissionsList 引用）—— 第 134 轮实测该字段**从未被赋值**（默认构造的
+        #   空 Value）⇒ mask 写失败 + InitializeEntries 失败（老代码之所以没暴露：
+        #   快照/扩 tab/监听用的是局部 `list`，只有切 tab 的注入路径走 ctx）。
+        #   源码级检查 = `ctx.list = list;` **恰好 1 处**（少一处 = 没接线、整个注入
+        #   链路必失败；多一处 = 出现第二条赋值路径，生命周期归属需要重新审）。
+        saq_inject_src_135 = ROOT / "plugin/src/SAQ_UiInject.cpp"
+        if saq_inject_src_135.exists():
+            wired_135 = saq_inject_src_135.read_text(encoding="utf-8").count("ctx.list = list;")
+            ok_135 = wired_135 == 1
+            print(("OK  " if ok_135 else "MISS") +
+                  f" DLL 源码 · 注入上下文接线（第 135 轮）：ctx.list = list; "
+                  f"恰好 1 处（实测 {wired_135} 处）")
+            all_ok &= ok_135
+        else:
+            print(f"MISS 缺少 {saq_inject_src_135}")
             all_ok = False
         #   ini 模板（发布包 ini 的来源 —— package-saq.ps1 从这里拷）：[Log] 段说明与
         #   示例注释必须在（玩家可发现性）。

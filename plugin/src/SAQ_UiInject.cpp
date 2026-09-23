@@ -720,6 +720,18 @@ namespace SAQ::UiInject
 		g_ctxStore = InjectCtx{};
 		g_ctx = &g_ctxStore;
 		InjectCtx& ctx = g_ctxStore;
+		// ★★★ 第 135 轮修复（P3-a 实机缺陷 · 注入上下文未接线）：把菜单打开期间持有的
+		//   `MissionsList_mc` 存进上下文 —— 拦截 handler（切到我们 tab 时设 mask + 注入 /
+		//   切走时恢复）**全部操作 `ctx.list`**，而它此前从未被赋值（默认构造的空 Value）：
+		//   第 134 轮 P2 会话实测 = mask 写入失败 + `InitializeEntries` 失败 ⇒ 列表没换
+		//   （玩家看到的还是原版那条「一小步」）；且 `恢复=ok` 是「1 == 1」巧合（假 PASS）。
+		ctx.list = list;
+		//   上下文自检（把「list 已接上」变成运行时证据 —— 上面那类缺陷以后一眼可见）：
+		{
+			double     ctxMask = -1.0;
+			const bool ctxListOk = readNum(ctx.list, "filterMask", ctxMask);
+			out += std::format("｜上下文={}", ctxListOk ? "ok" : "fail（list 没接上 ⇒ 切 tab 注入必失败）");
+		}
 
 		std::uint32_t snapCount = 0;
 		const bool    snapOk = BuildEngineSnapshot(root, list, ctx.engineSnapshot, snapCount);
@@ -812,9 +824,15 @@ namespace SAQ::UiInject
 				if (okUid && okName && okNav) {
 					++good;
 				}
-				if (i == 0 && nameBuf[0] != '\0') {
-					firstNote = std::format("0x{:08X}:{}｜可导航{}", ctx.expectUid[0],
-						EscapeForLog(nameBuf, 40), ctx.expectNav[0] ? 1 : 0);
+				if (i == 0) {
+					// ★ 第 135 轮：对账证据打**实际读回值**（期望值括注在后）—— 旧写法打
+					//   「期望 uID + 实际名字」的混合值（第 134 轮实测 `0x002C5401:一小步`），
+					//   判读时容易误以为 uID 已对上；这条线索本来要一眼看出「列表没被换」。
+					const std::string shownName = nameBuf[0] != '\0' ?
+						EscapeForLog(nameBuf, 40) : std::string{ "（读不到名字）" };
+					firstNote = std::format("实际 0x{:08X}:{}｜可导航{}（期望 0x{:08X}）",
+						uid < 0.0 ? 0u : static_cast<std::uint32_t>(uid), shownName,
+						nav ? 1 : 0, ctx.expectUid[0]);
 				}
 			}
 			const bool passCheck = check > 0 && good == check;
@@ -826,7 +844,11 @@ namespace SAQ::UiInject
 		double     entries2 = -1.0;
 		const bool sw0 = switchTab(0);
 		const bool r2 = sw0 && readNum(list, "entryCount", entries2);
-		const bool passRestore = snapOk && r2 && entries2 == static_cast<double>(ctx.engineCount);
+		// ★ 第 135 轮：恢复判据加 `passInject` 前置 —— 注入没成功时「恢复」没有意义
+		//   （列表本来就没被换过，`entries2 == engineCount` 会因「1 == 1」巧合打出
+		//   误导性的 `恢复=ok`；第 134 轮实测正是这种假 PASS）。
+		const bool passRestore = snapOk && passInject && r2 &&
+			entries2 == static_cast<double>(ctx.engineCount);
 		out += std::format("｜恢复={}（切0 后 entryCount →{}，期望 {}）",
 			passRestore ? "ok" : "fail", NumStr(entries2), NumStr(ctx.engineCount));
 
