@@ -2333,6 +2333,24 @@ def main() -> int:
         else:
             print(f"MISS 缺少 {main_src_112}")
             all_ok = False
+        # ★★★ 第 134 轮（P3-a 实机缺陷修复 · 注入数据源生命周期）：`g_pending.quests`
+        #   的生命周期 = 一次菜单打开周期（OnMissionMenuOpened 收集 → OnMissionMenuClosed
+        #   释放）—— 推送子分支（成功 / 菜单就绪超时 / notOurs / 推送放弃）一律不清数据。
+        #   起因：P2 会话 r133_inject_data FAIL —— notOurs 分支 clear 掉注入唯一数据源
+        #   ⇒ `SAQ::PendingQuests()` 读到空（`docs/15` 十三节实机收口段）。
+        #   源码级检查 = `g_pending.quests.clear();` **恰好 2 处**（少一处 = 数据被提前清 /
+        #   多一处 = 又回了「推送子分支顺手 clear」老路）。
+        saq_src_134 = ROOT / "plugin/src/SAQ.cpp"
+        if saq_src_134.exists():
+            clears_134 = saq_src_134.read_text(encoding="utf-8").count("g_pending.quests.clear();")
+            ok_134 = clears_134 == 2
+            print(("OK  " if ok_134 else "MISS") +
+                  f" DLL 源码 · 注入数据源生命周期（第 134 轮）：g_pending.quests.clear() "
+                  f"恰好 2 处（菜单开重置 / 菜单关释放；实测 {clears_134} 处）")
+            all_ok &= ok_134
+        else:
+            print(f"MISS 缺少 {saq_src_134}")
+            all_ok = False
         #   ini 模板（发布包 ini 的来源 —— package-saq.ps1 从这里拷）：[Log] 段说明与
         #   示例注释必须在（玩家可发现性）。
         ini_tmpl_112 = ROOT / "resources/SAQ_ShowAvailableQuests.ini"

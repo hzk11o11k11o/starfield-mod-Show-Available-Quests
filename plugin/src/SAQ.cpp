@@ -248,6 +248,15 @@ namespace SAQ
 		//   第 1 次推送都命中「UI 表里还没有 BSMissionMenu 条目」（菜单正在创建，0ms 就返回），
 		//   原来固定 400ms 退避 + 计入 attempts，会让列表从内嵌数据切成 C++ 数据拖到 ~0.8 秒，
 		//   而且日志每次都先来一条「推送失败（完整诊断）」。
+		// ★★★ 第 134 轮（P3-a 实机缺陷修复）：「本轮可接任务」数据的生命周期
+		//   = **一次菜单打开周期**（OnMissionMenuOpened 收集 → OnMissionMenuClosed 释放），
+		//   与推送通道状态（attempts / done / backoffMs）**解耦**。
+		//
+		//   起因（第 133 轮 P2 会话 r133_inject_data FAIL）：原实现在 4 个推送子分支里
+		//   都 `quests.clear()`，其中「UI 通道不可用（notOurs）」分支恰好是 UI 注入形态
+		//   要工作的场景 —— 收集到的 206 条在这条分支被清空 ⇒ 注入通道（P3-a `ui.inject`
+		//   / P4 产品化分时注入）拿不到数据（`PendingQuests()` 返回空）。
+		//   ⇒ 现在只在菜单关闭时释放；推送成功/超时/停推/放弃都**保留数据**。
 		struct PendingPush
 		{
 			std::vector<QuestEntry> quests;
@@ -1666,7 +1675,7 @@ namespace SAQ
 				REX::INFO("菜单打开：静态表={} 引擎里存在={} 推送条数={} (第 {} 次推送成功，另有 {} 次菜单未就绪等待)",
 					g_pending.total, g_pending.stats.live, g_pending.quests.size(),
 					g_pending.attempts + 1, g_pending.menuWaitTries);
-				g_pending.quests.clear();
+				// ★ 第 134 轮：数据不清（生命周期 = 菜单周期；见 PendingPush 注释）。
 				g_pending.done = true;
 				SyncGuideStateToUi();  // ★ 第 16 轮：新 SWF 实例不知道引导还在，把实际值同步过去
 				return;
@@ -1678,7 +1687,7 @@ namespace SAQ
 				if (g_pending.menuWaitTries >= kMaxMenuWaitTries) {
 					REX::WARN("菜单就绪等待超时：{} 次 × {} ms 仍未就绪（本次放弃，下次打开菜单再试）",
 						g_pending.menuWaitTries, kMenuNotReadyRetryMs);
-					g_pending.quests.clear();
+					// ★ 第 134 轮：数据不清（生命周期 = 菜单周期；见 PendingPush 注释）。
 					g_pending.done = true;
 				}
 				return;
@@ -1700,7 +1709,10 @@ namespace SAQ
 				} else if (id == UI::ChannelIdentity::notOurs) {
 					g_uiChannel = UI::ChannelIdentity::notOurs;
 					g_uiChannelDead = true;
-					g_pending.quests.clear();
+					// ★★★ 第 134 轮（P3-a 实机缺陷修复）：**不清空数据** ——
+					//   这条分支（原版 / 第三方 SWF）恰恰是 UI 注入形态要工作的场景
+					//   （第 133 轮实测：清了 ⇒ `ui.inject` 拿不到数据、汇总打「待推送=0」）。
+					//   数据继续供 `SAQ::PendingQuests()`（注入通道）使用到菜单关闭。
 					g_pending.done = true;
 					REX::WARN("UI 通道不可用（第 {} 次推送失败后判定）：任务菜单界面里没有在运行 "
 							  "Show Available Quests 的界面（可能被其它修改 missionmenu.swf 的 mod 覆盖、"
@@ -1715,7 +1727,7 @@ namespace SAQ
 			g_pending.backoffMs = doubled < kPushRetryMaxMs ? doubled : kPushRetryMaxMs;
 			if (g_pending.attempts >= kMaxPushAttempts) {
 				REX::WARN("推送放弃：重试 {} 次仍未成功（下次打开菜单会再试）", g_pending.attempts);
-				g_pending.quests.clear();
+				// ★ 第 134 轮：数据不清（生命周期 = 菜单周期；见 PendingPush 注释）。
 				g_pending.done = true;
 			}
 		}
@@ -3738,6 +3750,10 @@ namespace SAQ
 				REX::INFO("菜单关闭：界面状态一条都没读回来（桥没通 / SWF 是旧版 / 一次都没轮询到）");
 			}
 			ResetReportPoll();
+
+			// ★★★ 第 134 轮（P3-a 实机缺陷修复）：「本轮可接任务」数据的生命周期终点 = 菜单关闭。
+			//   （收集在 OnMissionMenuOpened；期间无论推送成功/失败/停推都保留 —— 见 PendingPush 注释。）
+			g_pending.quests.clear();
 
 			// 引导请求的「变化检测」状态跟着菜单一起重置：菜单重开时 SWF 新建，
 			// AS3 侧的序号从 0 重新开始（当前引导本身存在 GLOB 里，不受影响）。
