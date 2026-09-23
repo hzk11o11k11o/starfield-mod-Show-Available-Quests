@@ -33,6 +33,7 @@
 #include "SAQ_QuestCond.h"   // ★ 第 35 轮：进度门槛（「进度没到不显示」）
 #include "SAQ_QuestState.h"  // TESQuest 运行时状态（已开始/已完成/追踪中）
 #include "SAQ_UI.h"          // UI 通道（菜单表 → IMenu → Movie → ASMovieRoot）
+#include "SAQ_UiInject.h"    // ★★ 第 137 轮（P3-b）：「无 SWF 覆盖」的 UI 注入形态（UiMode / 激活 / watchdog）
 #if SAQ_WITH_HARNESS
 #	include "SAQ_Test.h"    // ★ 第 49 轮：引擎内 harness 的用例驱动器（ini [Test] Harness）
 #	include "SAQ_TestOps.h" // ★ 第 49 轮：harness 原语（日志环形缓冲 / 命令通道 / 菜单开关）
@@ -298,6 +299,11 @@ namespace SAQ
 		UI::ChannelIdentity g_uiChannel{ UI::ChannelIdentity::unknown };
 		bool                g_uiChannelDead{};   // notOurs ⇒ 本菜单会话停用一切 UI 交互
 		bool                g_uiNoticeSent{};    // 进程级：提示只请求一次
+		// ★★ 第 137 轮（P3-b · UI 注入形态）：HUD 提示的「延迟判定」——
+		//   非 0 = 正在计时（注入该起来但还没确认）；激活成功 ⇒ 清零（功能生效不提示）；
+		//   超时（kInjectNoticeGraceMs）仍未激活 ⇒ 补发「UI 通道不可用」提示。
+		std::uint64_t       g_uiNoticeAtMs{};
+		constexpr std::uint64_t kInjectNoticeGraceMs = 3000;
 
 		// ------------------------------------------------------------------
 		// 本地化
@@ -619,6 +625,17 @@ namespace SAQ
 				"InfoCond=1\r\n"
 				"ChainCond=1\r\n"
 				";\r\n"
+				"; ---- 界面形态（第 137 轮 · 无 SWF 覆盖的注入形态） ----\r\n"
+				"; 我们的任务 tab 有两种实现：SWF 覆盖（默认部署）与「注入原版菜单」\r\n"
+				"; （不替换任何文件 —— 与其它改 missionmenu.swf 的 mod 不冲突）。\r\n"
+				";   swf    = 只用 SWF 覆盖（行为与既有版本完全一致）；\r\n"
+				";   auto   = （默认）SWF 优先：界面是我们的 SWF 时走 SWF；被其它 mod 覆盖 /\r\n"
+				";            未安装或版本过旧时自动切「注入形态」（任务 tab 照常显示）；\r\n"
+				";   inject = 只用注入形态（不推送 SWF）。\r\n"
+				"; ★ 改完保存，关开一次任务菜单生效（不用重启游戏）。\r\n"
+				"[UI]\r\n"
+				"UiMode=auto\r\n"
+				";\r\n"
 				"; ---- 日志文件大小上限（第 112 轮） ----\r\n"
 				"; 单位 MB：写新一行时若会超过就把旧内容整体清空（不是滚动保留旧文件）。\r\n"
 				";   Nexus 发布包默认 1；开发构建默认 10 —— 想留更长的记录就改这个值。\r\n"
@@ -729,6 +746,39 @@ namespace SAQ
 				return ::GetPrivateProfileIntW(L"Filter", L"ChainCond", 1, path.c_str()) != 0;
 			}
 			return true;
+		}
+
+		// ★★ 第 137 轮（P3-b）：UI 形态开关（ini `[UI] UiMode`）——
+		//   `swf`    = 只用 SWF 推送（行为与既有版本逐字节一致，注入代码不激活）；
+		//   `auto`   = （默认）SWF 优先；判定 notOurs（原版 / 第三方 SWF）⇒ 自动切注入；
+		//   `inject` = 只用注入（菜单打开后不推送）。
+		//   未知值 ⇒ WARN + 按 auto（宁可多一层兜底，不要静默失效）。
+		UiInject::UiMode ResolveUiMode()
+		{
+			const auto path = TestModeIniPath();
+			if (!path.empty()) {
+				wchar_t    buf[32]{};
+				const auto n = ::GetPrivateProfileStringW(L"UI", L"UiMode", L"auto", buf,
+					static_cast<DWORD>(std::size(buf)), path.c_str());
+				if (n > 0) {
+					const std::wstring v{ buf };
+					if (v == L"swf") {
+						return UiInject::UiMode::kSwf;
+					}
+					if (v == L"inject") {
+						return UiInject::UiMode::kInject;
+					}
+					if (v != L"auto") {
+						std::string shown;
+						for (const auto c : v) {
+							shown += (c >= 32 && c < 127) ? static_cast<char>(c) : '?';
+						}
+						REX::WARN("界面形态：ini 的 [UI] UiMode 值不认识（{}）—— 按 auto 处理", shown);
+					}
+					return UiInject::UiMode::kAuto;
+				}
+			}
+			return UiInject::UiMode::kAuto;
 		}
 
 		// ==================================================================
@@ -1634,6 +1684,12 @@ namespace SAQ
 		//   ② 真正的推送失败：指数退避（400 → 800 → …封顶 4000ms），预算 14 次。
 		void TryPushPending()
 		{
+			// ★★ 第 137 轮（P3-b · UI 注入形态）：UiMode=inject ⇒ 不走 SWF 推送通道
+			//   （只用注入 —— 菜单打开后 Tick 会激活；数据仍由 PendingQuests() 供着）。
+			//   auto 模式照常先推（判定 notOurs 后由注入接管）；swf = 现行为。
+			if (UiInject::GetMode() == UiInject::UiMode::kInject) {
+				return;
+			}
 			if (g_pending.done || g_pending.quests.empty()) {
 				// ★ 第 18 轮：空集合原来直接 return，日志里没有任何一行说明「C++ 这次没推」
 				//   （第 17 轮实测：master 解析失败 ⇒ 待推送=0 ⇒ 整条推送路径静默停摆，
@@ -1718,7 +1774,15 @@ namespace SAQ
 							  "Show Available Quests 的界面（可能被其它修改 missionmenu.swf 的 mod 覆盖、"
 							  "未安装或版本过旧）—— 本次菜单起停用界面推送（不再空转重试）。探测：{}",
 						g_pending.attempts, probeDetail);
-					NotifyUiChannelDead();
+					// ★★ 第 137 轮（P3-b · UI 注入形态）：HUD 提示按形态分流 ——
+					//   swf：照旧立即提示（界面确实没生效）；
+					//   auto / inject：注入会接管（Tick 里激活 + watchdog）⇒ 改「延迟判定」：
+					//   激活成功 ⇒ 不提示（功能已生效）；宽限期内没起来才补发（见 Tick）。
+					if (UiInject::GetMode() == UiInject::UiMode::kSwf) {
+						NotifyUiChannelDead();
+					} else {
+						g_uiNoticeAtMs = NowMs();
+					}
 					return;
 				}
 			}
@@ -1795,7 +1859,9 @@ namespace SAQ
 		void PollUiReport()
 		{
 			// ★★★ 第 125 轮（路线 D）：已判定「界面不是我们的」⇒ 别再每 500ms 空调一次
-			if (g_uiChannelDead) {
+			//   ★ 第 137 轮（P3-b）：注入形态激活后同理（界面里没有我们的 AS3 入口，
+			//   读也是失败 —— 静默跳过）。
+			if (g_uiChannelDead || UiInject::MenuActive()) {
 				return;
 			}
 			if (g_poll.logged >= kReportPollMaxLines) {
@@ -3743,6 +3809,10 @@ namespace SAQ
 			}
 			if (!g_poll.lastReport.empty()) {
 				REX::INFO("菜单关闭：界面最后状态={}", g_poll.lastReport);
+			} else if (UiInject::MenuActive()) {
+				// ★★ 第 137 轮（P3-b）：本轮是注入形态（界面不是我们的 SWF ⇒ 无 SAQ_Report 可读）。
+				REX::INFO("菜单关闭：本轮为注入形态（已激活；watchdog 重放 {} 次）",
+					UiInject::ReplayCount());
 			} else if (g_uiChannelDead) {
 				// ★★★ 第 125 轮（路线 D）：已判定界面不是我们的 —— 说清楚（不是「读不到」）
 				REX::INFO("菜单关闭：界面状态未读取（本轮已判定 UI 通道不可用 —— 界面不是我们的 SWF）");
@@ -3754,6 +3824,11 @@ namespace SAQ
 			// ★★★ 第 134 轮（P3-a 实机缺陷修复）：「本轮可接任务」数据的生命周期终点 = 菜单关闭。
 			//   （收集在 OnMissionMenuOpened；期间无论推送成功/失败/停推都保留 —— 见 PendingPush 注释。）
 			g_pending.quests.clear();
+
+			// ★★ 第 137 轮（P3-b）：注入层引用随菜单关闭清理（GFx 对象随 Movie 销毁；
+			//   拦截 handler 是静态实例、保留 —— 菜单关闭后不会再收到事件）。
+			UiInject::OnMenuClosed();
+			g_uiNoticeAtMs = 0;
 
 			// 引导请求的「变化检测」状态跟着菜单一起重置：菜单重开时 SWF 新建，
 			// AS3 侧的序号从 0 重新开始（当前引导本身存在 GLOB 里，不受影响）。
@@ -3796,6 +3871,15 @@ namespace SAQ
 			//   g_uiNoticeSent 不重置（进程级：HUD 提示每次启动游戏最多一次）。
 			g_uiChannel = UI::ChannelIdentity::unknown;
 			g_uiChannelDead = false;
+
+			// ★★ 第 137 轮（P3-b · UI 注入形态）：每菜单打开读一次形态开关（改 ini
+			//   关开菜单生效，与 [Filter] 同款）；inject 形态从此时起为「提示延迟判定」
+			//   计时（注入激活成功即清零 —— 见 Tick）。
+			const auto uiMode = ResolveUiMode();
+			UiInject::SetMode(uiMode);
+			g_uiNoticeAtMs = uiMode == UiInject::UiMode::kInject ? NowMs() : 0;
+			REX::INFO("界面形态：UiMode={}（swf=只用 SWF 推送 / auto=SWF 优先、冲突时自动切注入 / inject=只用注入）",
+				UiInject::ModeName(uiMode));
 
 			// ★ 第 27 轮：「菜单还开着，脚本不会响应」说明是**每菜单一次**（见 PollGuideVerify）。
 			g_guide.verifyWaitNoted = false;
@@ -3887,6 +3971,19 @@ namespace SAQ
 				OnMissionMenuOpened();
 			} else if (open) {
 				TryPushPending();   // 上一轮没成功的话接着重试
+				// ★★ 第 137 轮（P3-b · UI 注入形态）：激活尝试（auto 判定冲突后 / inject
+				//   形态从菜单打开起）+ watchdog（我们的 tab 上列表被引擎刷新覆盖 ⇒ 重放）。
+				UiInject::OnMenuTick(g_uiChannelDead);
+				//   提示兜底（「延迟判定」的另一半）：注入该起来但没起来 ⇒ 补发提示。
+				//   正常路径 = 激活成功（MenuActive ⇒ 清零，不打扰玩家）。
+				if (g_uiNoticeAtMs != 0) {
+					if (UiInject::MenuActive()) {
+						g_uiNoticeAtMs = 0;
+					} else if (NowMs() - g_uiNoticeAtMs >= kInjectNoticeGraceMs) {
+						g_uiNoticeAtMs = 0;
+						NotifyUiChannelDead();
+					}
+				}
 				PollUiReport();     // 界面状态「变化即记」
 				PollGuideRequest(); // 玩家按了引导键就下发给 ESM 通道（第 10 轮）
 			} else if (wasOpen) {

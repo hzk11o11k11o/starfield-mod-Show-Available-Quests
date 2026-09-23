@@ -687,6 +687,26 @@ HARNESS_STRINGS = (
     ("harness GFx 注入 PoC · 上下文自检标记（｜上下文=）", "｜上下文="),
 )
 
+# ★★ 第 137 轮（P3-b · UI 注入形态产品化）：**产品路径**的特征串 ——
+#   dev / release **双向正向检查**（不进 HARNESS_STRINGS：那张表在发布构建是反向的，
+#   而注入产品路径**发布构建也编译** —— 这正是 UiMode 开关的意义）。
+#   钉住：UiMode 形态开关 / 激活与失败日志 / watchdog 重放 / 完整描述文案
+#   （SWF 版 SaqDescriptionText 逐字迁移，按分支各留一条）/ KeyHelper 按键名调用。
+UI_INJECT_PRODUCT_STRINGS = [
+    ("产品 · 注入激活日志（界面注入：已激活）", "界面注入：已激活（UiMode="),
+    ("产品 · 注入激活失败告警", "界面注入：激活失败（快照="),
+    ("产品 · watchdog 重放日志（引擎刷新覆盖）", "界面注入：列表被引擎刷新覆盖"),
+    ("产品 · 形态日志（界面形态：UiMode=）", "界面形态：UiMode="),
+    ("产品 · 形态未知值告警（按 auto 处理）", "—— 按 auto 处理"),
+    ("产品 · 完整描述 · 入口取不到分支", "暂时无法导航 —— 这个位置此刻取不到"),
+    ("产品 · 完整描述 · 任务板分支", "这是一块任务板"),
+    ("产品 · 完整描述 · 同伴完整句", "这条同伴任务会在你与这位同伴的好感度达到一定水平后自动开始"),
+    ("产品 · 完整描述 · 需要靠近句", "注意：它的导航目标要靠近目标区域后才加载"),
+    ("产品 · 完整描述 · 势力说明「按上面的说明推进」", "它没有可以直接导航的接取地点"),
+    ("产品 · 按键名调用（KeyHelper）", "GetButtonNameForEvent"),
+    ("产品 · 菜单关闭（注入形态）", "本轮为注入形态"),
+]
+
 
 def dll_build_mode(blob: bytes) -> str:
     """探测 DLL 是开发构建（含 harness）还是发布构建（无 harness）。
@@ -1444,6 +1464,11 @@ def main() -> int:
         #   ★★ 第 53 轮（大项 F · 发布就绪）：这些条目在**发布构建**
         #     （SAQ_WITH_HARNESS=0）里一条都不该出现 —— 同一张表反向检查
         #     （漏一条 = 发布包里带着测试代码，正是本层要挡的事）。
+        # ★★ 第 137 轮（P3-b · UI 注入产品路径）：dev / release **双向正向**检查 ——
+        #   注入产品路径发布构建也编译（UiMode 开关的落地形态），特征串两个模式
+        #   都必须有（与下面 HARNESS_STRINGS 在发布构建的反向检查相对）。
+        for name_p137, needle_p137 in UI_INJECT_PRODUCT_STRINGS:
+            all_ok &= check(f"DLL · {name_p137}", blob, needle_p137.encode())
         if release_mode:
             leaked = [name for name, needle in HARNESS_STRINGS if needle.encode() in blob]
             if leaked:
@@ -1949,6 +1974,16 @@ def main() -> int:
                         #  ★ 眼睛窗口：用例结束时界面停在**第 8 个 tab「可接任务」**，
                         #    列表 = 真实可接任务（真任务名/描述）—— 30 秒供玩家亲自确认。
                         ("P2 注入 PoC 眼睛窗口（30 秒）", "step = wait 30000".encode()),
+                        # ★★ 第 137 轮（P3-b · UI 注入形态产品化）：`r137_product_inject`
+                        #   —— **产品路径**验收（UiMode=auto ⇒ 冲突环境自动激活注入；
+                        #   不走 harness 原语 ui.inject）。
+                        ("P2 产品路径用例段头", "[case:r137_product_inject]".encode()),
+                        ("P2 产品路径 · 形态日志断言",
+                         "assert.log 界面形态：UiMode=auto".encode()),
+                        ("P2 产品路径 · 自动激活断言",
+                         "assert.log 界面注入：已激活（UiMode=auto".encode()),
+                        ("P2 产品路径 · 关菜单注入形态断言",
+                         "assert.log 菜单关闭：本轮为注入形态".encode()),
                     ):
                         all_ok &= check(f"用例计划 · r120 {label}", p2_text.encode(), needle)
                     # 反向检查：原版 SWF 下我们 SWF 的测试入口（ui.tab / ui.select / ui.key /
@@ -2361,16 +2396,47 @@ def main() -> int:
         #   持有 MissionsList 引用）—— 第 134 轮实测该字段**从未被赋值**（默认构造的
         #   空 Value）⇒ mask 写失败 + InitializeEntries 失败（老代码之所以没暴露：
         #   快照/扩 tab/监听用的是局部 `list`，只有切 tab 的注入路径走 ctx）。
-        #   源码级检查 = `ctx.list = list;` **恰好 1 处**（少一处 = 没接线、整个注入
-        #   链路必失败；多一处 = 出现第二条赋值路径，生命周期归属需要重新审）。
+        #   ★★ 第 137 轮（P3-b 分层）：两条路径**各自**接线 ⇒ **恰好 2 处**
+        #   （产品路径 ActivateForMenu + harness 探针 RunInjectPoC；少一处 = 那条
+        #   路径没接线、其注入链路必失败；多一处 = 出现第三条赋值路径，生命周期
+        #   归属需要重新审）。
         saq_inject_src_135 = ROOT / "plugin/src/SAQ_UiInject.cpp"
         if saq_inject_src_135.exists():
             wired_135 = saq_inject_src_135.read_text(encoding="utf-8").count("ctx.list = list;")
-            ok_135 = wired_135 == 1
+            ok_135 = wired_135 == 2
             print(("OK  " if ok_135 else "MISS") +
-                  f" DLL 源码 · 注入上下文接线（第 135 轮）：ctx.list = list; "
-                  f"恰好 1 处（实测 {wired_135} 处）")
+                  f" DLL 源码 · 注入上下文接线（第 135/137 轮）：ctx.list = list; "
+                  f"恰好 2 处（实测 {wired_135} 处）")
             all_ok &= ok_135
+            # ★★ 第 137 轮（P3-b）· 注入产品路径的源码结构 ——
+            #   产品路径（激活 / watchdog / 形态开关 / 监听挂载复用）必须齐全；
+            #   **分层**：产品路径必须在 `#if SAQ_WITH_HARNESS` **之外**（发布构建也
+            #   编译 —— UiMode 开关的意义所在；漏了 = 发布版永远只有 SWF 形态）。
+            src_137 = saq_inject_src_135.read_text(encoding="utf-8")
+            struct_pairs = [
+                ("产品路径 · 激活（ActivateForMenu）", "bool ActivateForMenu()"),
+                ("产品路径 · watchdog（OnMenuTick）", "void OnMenuTick(bool a_uiChannelDead)"),
+                ("产品路径 · 形态开关（WantInject）", "bool WantInject(bool a_uiChannelDead)"),
+                ("产品路径 · 监听挂载复用（AttachInterceptListener）", "bool AttachInterceptListener("),
+                ("产品路径 · 完整描述迁移（GetCourseKeyName 按键名）", "GetButtonNameForEvent"),
+            ]
+            for name_137, needle_137 in struct_pairs:
+                all_ok &= check(f"DLL 源码 · {name_137}", src_137.encode(), needle_137.encode())
+            #   （★ 定位必须按**独立成行的真实预处理指令** —— 文件头注释里也出现过
+            #   `#if SAQ_WITH_HARNESS` 字样；按子串切会把检查切错位置、报假 MISS。）
+            lines_137 = src_137.splitlines()
+            guard_idx = next((i for i, l in enumerate(lines_137)
+                              if l.strip() == "#if SAQ_WITH_HARNESS"), None)
+            if guard_idx is not None:
+                head_137 = "\n".join(lines_137[:guard_idx])
+                tail_137 = "\n".join(lines_137[guard_idx:])
+                layered_137 = ("bool ActivateForMenu()" in head_137 and
+                               "std::string RunInjectPoC(" in tail_137)
+            else:
+                layered_137 = False
+            print(("OK  " if layered_137 else "MISS") +
+                  " DLL 源码 · 注入分层（产品路径在 harness 段之外 —— 发布也编译；第 137 轮）")
+            all_ok &= layered_137
         else:
             print(f"MISS 缺少 {saq_inject_src_135}")
             all_ok = False
@@ -2384,6 +2450,11 @@ def main() -> int:
             #   （不是注释示例）—— 发布包默认 1。
             all_ok &= check("ini 模板 · MaxSizeMB=1 生效键（发布默认）", tmpl_112,
                             b"MaxSizeMB=1")
+            #   ★★ 第 137 轮（P3-b）：[UI] 段（界面形态开关）—— 同样必须在模板里
+            #   （玩家可发现性；发布包 ini 从模板拷贝）。
+            all_ok &= check("ini 模板 · [UI] 段（第 137 轮）", tmpl_112, b"[UI]")
+            all_ok &= check("ini 模板 · UiMode=auto 生效键（发布默认）", tmpl_112,
+                            b"UiMode=auto")
             gone_tmpl = b"; MaxSizeMB" not in tmpl_112
             print(("OK  " if gone_tmpl else "MISS") +
                   " ini 模板 · 旧注释示例「; MaxSizeMB」已替换(反向检查，第 112 轮)")

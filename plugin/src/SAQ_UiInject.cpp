@@ -5,6 +5,9 @@
 // ★ 第 36/84 轮同款依赖：日志截断按 UTF-8 字符边界（证据通道纪律）。
 #include "SAQ_Decision.h"
 
+// ★ 第 137 轮（P3-b）：产品路径的数据源（`SAQ::PendingQuests()` —— 与 SWF 推送同一份数据）。
+#include "SAQ.h"
+
 // 解析层复用（找菜单那条链与通道形态无关 —— 见头文件说明）。
 #include "SAQ_UI.h"
 
@@ -22,8 +25,10 @@
 #include <format>
 #include <string>
 
-#if SAQ_WITH_HARNESS
-
+// ★★ 第 137 轮（P3-b）：本文件**不再整体**包在 SAQ_WITH_HARNESS 里 ——
+//   上部 = 产品路径（发布构建也编译：前缀探测 / 完整描述 / 激活 / watchdog），
+//   下部（文件末尾的 `#if SAQ_WITH_HARNESS`）= harness 探针 `RunInjectPoC`
+//   （`ui.inject` 原语的判据链路，输出格式与第 133~135 轮逐字一致）。
 namespace SAQ::UiInject
 {
 	namespace
@@ -262,6 +267,12 @@ namespace SAQ::UiInject
 			return std::format("0x{:08X}", static_cast<std::uint32_t>(static_cast<std::uint64_t>(a_mask)));
 		}
 
+		// 单调毫秒（watchdog / 激活节流用；与 SAQ.cpp 的 NowMs 同源 = GetTickCount64）。
+		std::uint64_t NowMs()
+		{
+			return ::GetTickCount64();
+		}
+
 		// UTF-8 里的 CJK 统计（3 字节序列、前导字节 E4~E9 = U+4000~U+9FFF）——
 		// 与 SWF 版 `SaqNameVerdict` / 探针 U8a 同源（引擎任务名是本地化的）。
 		std::size_t CountCjkUtf8(const std::string& a_text)
@@ -286,6 +297,13 @@ namespace SAQ::UiInject
 		constexpr std::uint32_t kInterceptPriority = 100;                  // 原版 onFilterChanged 是 0
 		constexpr const char*   kTabTitleZh = "可接任务";
 		constexpr const char*   kTabTitleEn = "Available";
+		// 入口条目类型（与 SWF 版同源：MissionMenu.as 的 SAQ_ENTRY_TYPE / SAQ_REPEAT_NPC_TYPE）。
+		constexpr std::int32_t  kEntryBoardType = 100;   // 任务板（无限任务入口）
+		constexpr std::int32_t  kNpcEntryType = 101;     // 提供无限任务的 NPC
+		// ★★ 第 137 轮（P3-b）：产品路径节拍 —— 激活重试 150ms（菜单可能还没建好）、
+		//   watchdog 500ms（与 SAQ.cpp 的界面状态轮询同拍）。
+		constexpr std::uint64_t kActivateRetryMs = 150;
+		constexpr std::uint64_t kWatchdogIntervalMs = 500;
 
 		// 原版 7 个 tab（text = 本地化键、flag = 掩码位）—— 从 SWF 版 PopulateTabs 逐项抄来
 		//   （QuestUtils 枚举：ACTIVITY=0 / MAIN=1 / FACTION=2 / MISC=3 / MISSION=4 /
@@ -329,6 +347,11 @@ namespace SAQ::UiInject
 			std::uint32_t expectUid[2]{};
 			std::string   expectName[2];
 			bool          expectNav[2]{};
+			// ★★ 第 137 轮（P3-b 产品路径）：
+			bool                      menuActive{ false };   // 本菜单已激活注入形态
+			bool                      listening{ false };    // 本菜单已挂过拦截监听（防重复挂）
+			std::uint32_t             replayCount{};         // watchdog 重放次数（引擎覆盖后）
+			std::uint64_t             lastWatchdogMs{};      // watchdog 节拍（500ms）
 		};
 
 		InjectCtx  g_ctxStore;
@@ -408,6 +431,34 @@ namespace SAQ::UiInject
 		std::atomic<int> InjectHandler::s_restores{ 0 };
 		std::atomic<int> InjectHandler::s_lastIndex{ -1 };
 
+		// ★★ 第 137 轮（P3-b）：静态实例 —— 产品路径每次菜单激活都会挂拦截监听，
+		//   复用同一实例（`new` 一次性的旧写法在「每菜单激活」下会累积泄漏）。
+		//   AS3 的 addEventListener 对同一 listener 重复添加会被引擎忽略，安全。
+		InjectHandler g_handler;
+
+		// 挂 priority=100 的拦截监听（产品路径与 harness 共用）。
+		bool AttachInterceptListener(RE::Scaleform::GFx::ASMovieRootBase* a_root,
+			RE::Scaleform::GFx::Value& a_tabSel)
+		{
+			RE::Scaleform::GFx::Value fn;
+			if (!(VtableSlotInModule(a_root, kSlotAsRootCreateFunction) &&
+					SafeCreateFunction(a_root, &fn, &g_handler, nullptr))) {
+				return false;
+			}
+			RE::Scaleform::GFx::Value evTitle;
+			if (!SafeCreateString(a_root, &evTitle, kEventName)) {
+				return false;
+			}
+			RE::Scaleform::GFx::Value args[5];
+			args[0] = evTitle;
+			args[1] = fn;
+			args[2] = false;
+			args[3] = static_cast<std::uint32_t>(kInterceptPriority);
+			args[4] = false;
+			RE::Scaleform::GFx::Value ret;
+			return SafeValueInvoke(&a_tabSel, "addEventListener", &ret, args, 5);
+		}
+
 		// ====================================================================
 		// 四、数据构造（QuestEntry → AS3 条目 / 名字 / 描述 / 置灰）
 		// ====================================================================
@@ -460,49 +511,159 @@ namespace SAQ::UiInject
 			return out;
 		}
 
-		// 描述文案 —— P3-a = **主干简化版**（完整 SaqDescriptionText 迁移 = P3-b）：
-		//   首句（说明 / 同伴 / 入口 / 普通）+ 目标句（有 / 无导航）。
-		//   语言与精度（任务名/说明/前缀）全部与 SWF 版同源；差异只在「按键名提示」等
-		//   细节分支（P3-b 补齐）。
-		std::string BuildDescription(const QuestEntry& a_e, bool a_zh)
+		// ★ 第 15 轮（SWF 版 SaqCourseKeyName 同源）：按键名 ——「设定航线」在当前控制
+		//   映射下 = 键盘 R / 手柄 X 键等（**不要写死键名**）。取不到 ⇒ 空串
+		//   （文案走「使用底部的『设定航线』」分支，安全降级）。
+		std::string GetCourseKeyName(RE::Scaleform::GFx::ASMovieRootBase* a_root,
+			RE::Scaleform::GFx::Value& a_menu)
 		{
+			RE::Scaleform::GFx::Value helper;
+			if (!(SafeValueGetMember(&a_menu, "KeyHelper", &helper) && helper.IsObject())) {
+				return {};
+			}
+			RE::Scaleform::GFx::Value args[2];
+			if (!(SafeCreateString(a_root, &args[0], "XButton") &&
+					SafeCreateString(a_root, &args[1], ""))) {
+				return {};
+			}
+			RE::Scaleform::GFx::Value ret;
+			if (!SafeValueInvoke(&helper, "GetButtonNameForEvent", &ret, args, 2)) {
+				return {};
+			}
+			char buf[64]{};
+			if (SafeReadValueString(ret, buf, sizeof(buf))) {
+				return buf;
+			}
+			return {};
+		}
+
+		// 描述文案 —— ★★ 第 137 轮（P3-b）：SWF 版 `SaqDescriptionText`
+		//   （MissionMenu.as 882~983 行）的**逐字迁移** —— 中英两套 / 按键名分支 /
+		//   入口（板 100 / NPC 101）/ 同伴 / 简要说明 / 「需要靠近」全部分支。
+		//   参数对齐（同 SWF 版）：hasGuideTarget / type / needsApproach /
+		//   companionPinned / note（noteZh·En）；a_key = 按键名（空串 = 取不到）。
+		//   ★ 改文案时两处要同步（SWF 版 SaqDescriptionText + 这里）。
+		std::string BuildDescription(const QuestEntry& a_e, bool a_zh, const std::string& a_key)
+		{
+			// —— 入口分支（任务板 / 可重复 NPC；uID = 世界引用，没有「接取地点」）——
+			if (a_e.type == kEntryBoardType || a_e.type == kNpcEntryType) {
+				if (!a_e.hasGuideTarget) {
+					return a_zh ?
+						"暂时无法导航 —— 这个位置此刻取不到（多半是所在区域还没加载出来）。"
+						"稍后重新打开一次任务菜单再试。" :
+						"Cannot navigate right now - the location is not available at the moment "
+						"(its area has not loaded yet). Reopen the mission menu and try again.";
+				}
+				const bool hasKey = !a_key.empty();
+				if (a_e.type == kNpcEntryType) {
+					if (!hasKey) {
+						return a_zh ?
+							"这位 NPC 会不断提供可重复任务 —— 与他交谈就能接到赏金、运输、勘探等不断刷新"
+							"的任务。使用底部的「设定航线」即可引导到他的位置。" :
+							"This NPC offers repeatable jobs - talk to them to pick up endlessly "
+							"refreshing missions (bounties, transport, survey...). "
+							"Use SET COURSE to be guided to their location.";
+					}
+					return a_zh ?
+						"这位 NPC 会不断提供可重复任务 —— 与他交谈就能接到赏金、运输、勘探等不断刷新"
+						"的任务。按 " + a_key + "（设定航线）即可引导到他的位置。" :
+						"This NPC offers repeatable jobs - talk to them to pick up endlessly "
+						"refreshing missions (bounties, transport, survey...). Press " + a_key +
+						" (SET COURSE) to be guided to their location.";
+				}
+				if (!hasKey) {
+					return a_zh ?
+						"这是一块任务板 —— 与它交互就能接到赏金、运输、勘探等不断刷新的任务。"
+						"使用底部的「设定航线」即可引导到它的位置。" :
+						"This is a mission board - interact with it to pick up endlessly refreshing "
+						"jobs (bounties, transport, survey...). Use SET COURSE to be guided to its location.";
+				}
+				return a_zh ?
+					"这是一块任务板 —— 与它交互就能接到赏金、运输、勘探等不断刷新的任务。"
+					"按 " + a_key + "（设定航线）即可引导到它的位置。" :
+					"This is a mission board - interact with it to pick up endlessly refreshing "
+					"jobs (bounties, transport, survey...). Press " + a_key +
+					" (SET COURSE) to be guided to its location.";
+			}
+
+			// —— 首句：简要说明（势力开头任务）> 同伴 > 普通 ——
 			std::string s;
 			const std::string& note = a_zh ? a_e.noteZh : a_e.noteEn;
 			if (!note.empty()) {
 				s = note;
 			} else if (a_e.companionPinned) {
 				s = a_zh ?
-					"这条同伴任务需要与同伴的好感度达到一定水平后才会自动开始（不需要找地方接取）。"
-					"使用底部的「设定航线」即可引导到这位同伴的位置。" :
+					"这条同伴任务会在你与这位同伴的好感度达到一定水平后自动开始，不需要找地方接取"
+					"（在那之前它会一直显示在这里）。好感度要靠带这位同伴一起冒险来提升；"
+					"「设定航线」引导到的是这位同伴当前所在的位置。" :
 					"This companion quest starts automatically once your affinity with the companion is "
-					"high enough (there is no pickup location). Use SET COURSE to be guided to the "
-					"companion's location.";
-			} else if (a_e.type == 100 || a_e.type == 101) {
-				s = a_zh ?
-					"这是一个无限任务入口 —— 与它交互就能接到不断刷新的任务。"
-					"使用底部的「设定航线」即可引导到它的位置。" :
-					"This is an endless-jobs entry point - interact with it to pick up endlessly "
-					"refreshing jobs. Use SET COURSE to be guided to its location.";
+					"high enough - there is nothing to accept (it stays listed here until then). "
+					"Affinity grows while the companion travels with you; SET COURSE leads to wherever "
+					"the companion currently is.";
 			} else {
 				s = a_zh ? "这条任务当前可以接取。" : "This quest is currently available.";
 			}
+			// 「需要靠近」句（第 46 轮；只有全非常驻候选的任务会带）。
+			const std::string approach = a_e.needsApproach ?
+				(a_zh ?
+					" 注意：它的导航目标要靠近目标区域后才加载 —— 距离较远时按「设定航线」可能暂时"
+					"看不到标记（靠近后会自动生效）。" :
+					" Note: its navigation target loads only when you are near its area - from a "
+					"distance SET COURSE may show no marker at first (it starts automatically once "
+					"you get closer).") :
+				std::string{};
+
+			// —— 无导航目标（第 23/75/82 轮三分支）——
 			if (!a_e.hasGuideTarget) {
-				s += a_zh ?
-					"但它暂时还没有导航目标 —— 无法引导到接取地点（任务本身照常显示）。" :
-					" It has no navigation target yet, so it cannot guide you to the pickup location.";
-			} else {
+				if (!note.empty()) {
+					s += a_zh ?
+						"它没有可以直接导航的接取地点 —— 按上面的说明推进即可。" :
+						" There is no direct pickup location to navigate to - follow the note above.";
+				} else if (a_e.companionPinned) {
+					s += a_zh ?
+						"但它暂时还没有导航目标 —— 无法引导到这位同伴的位置（条目照常显示）。" :
+						" It has no navigation target yet, so it cannot guide you to the companion's "
+						"location (the entry stays listed).";
+				} else {
+					s += a_zh ?
+						"但它暂时还没有导航目标 —— 无法引导到接取地点（任务本身照常显示）。" :
+						" It has no navigation target yet, so it cannot guide you to the pickup location.";
+				}
+				return s + approach;
+			}
+
+			// —— 有导航目标（尾部句：同伴 / 普通 × 有无按键名）——
+			if (a_e.companionPinned) {
+				if (a_key.empty()) {
+					s += a_zh ?
+						"使用底部的「设定航线」即可引导到这位同伴的位置。" :
+						" Use SET COURSE to be guided to the companion's location.";
+				} else {
+					s += a_zh ?
+						"按 " + a_key + "（设定航线）即可引导到这位同伴的位置。" :
+						" Press " + a_key + " (SET COURSE) to be guided to the companion's location.";
+				}
+				return s + approach;
+			}
+			if (a_key.empty()) {
 				s += a_zh ?
 					"展开后选中目标，或使用底部的「设定航线」即可引导到接取地点。" :
 					" Expand it, then select the objective or use SET COURSE to be guided to the "
 					"pickup location.";
+			} else {
+				s += a_zh ?
+					"展开后选中目标，或按 " + a_key + "（设定航线）即可引导到接取地点。" :
+					" Expand it, then select the objective or press " + a_key +
+					" (SET COURSE) to be guided to the pickup location.";
 			}
-			return s;
+			return s + approach;
 		}
 
 		// 构造我们的条目数组。字段集 = 探针 v4 已验证的最小集 + 真实值（第 130/131 轮）。
+		//   ★ 第 137 轮：a_courseKey = 按键名（完整描述文案的分支用；空串 = 取不到）。
 		bool BuildOurEntries(RE::Scaleform::GFx::ASMovieRootBase* a_root,
-			const std::vector<QuestEntry>& a_quests, bool a_zh, RE::Scaleform::GFx::Value& a_out,
-			InjectCtx& a_ctx, const char*& a_why)
+			const std::vector<QuestEntry>& a_quests, bool a_zh, const std::string& a_courseKey,
+			RE::Scaleform::GFx::Value& a_out, InjectCtx& a_ctx, const char*& a_why)
 		{
 			RE::Scaleform::GFx::Value arr;
 			if (!(VtableSlotInModule(a_root, kSlotAsRootCreateArray) && SafeCreateArray(a_root, &arr))) {
@@ -553,7 +714,7 @@ namespace SAQ::UiInject
 					}
 				}
 				setStr("sName", BuildDisplayName(e, a_zh));
-				setStr("sDescription", BuildDescription(e, a_zh));
+				setStr("sDescription", BuildDescription(e, a_zh, a_courseKey));
 				// 「不可导航 ⇒ SET COURSE 置灰」是**数据驱动**的（docs/15 11.4-⑦ 已实测）。
 				setBool("bCanShowOnMap", e.hasGuideTarget);
 				if (i < 2) {
@@ -640,7 +801,239 @@ namespace SAQ::UiInject
 	}
 
 	// ====================================================================
-	// 五、PoC 主流程（harness 原语 `ui.inject` 的唯一入口）
+	// 五、产品路径（P3-b：UiMode 开关 / 菜单激活 / watchdog）
+	//
+	// 与 harness 探针（第六节 `RunInjectPoC`）的关系：两者共用第三节的上下文与
+	// 第四节的构造器；探针跑「固定判据链路」（切 7 / 对账 / 切 0 / 再切 7），
+	// 产品路径只做「激活 + 等玩家切 tab（拦截 handler 分时注入）+ watchdog」。
+	// ====================================================================
+
+	UiMode        g_mode{ UiMode::kAuto };   // 默认 auto（ini 未配置时）
+	std::uint64_t g_lastActivateTryMs{};
+
+	void SetMode(UiMode a_mode)
+	{
+		g_mode = a_mode;
+	}
+
+	UiMode GetMode()
+	{
+		return g_mode;
+	}
+
+	const char* ModeName(UiMode a_mode)
+	{
+		switch (a_mode) {
+		case UiMode::kSwf:    return "swf";
+		case UiMode::kInject: return "inject";
+		default:              return "auto";
+		}
+	}
+
+	bool MenuActive()
+	{
+		return g_ctx != nullptr && g_ctx->menuActive;
+	}
+
+	std::uint32_t ReplayCount()
+	{
+		return g_ctx != nullptr ? g_ctx->replayCount : 0;
+	}
+
+	// 形态是否需要注入（auto = 已判定「界面不是我们的」）。
+	bool WantInject(bool a_uiChannelDead)
+	{
+		switch (g_mode) {
+		case UiMode::kInject: return true;
+		case UiMode::kAuto:   return a_uiChannelDead;
+		default:              return false;   // swf：行为与现状逐字节不变
+		}
+	}
+
+	// 激活（产品路径）—— 与探针的 R1~R6 同源，但不做「切 7 / 对账 / 恢复」
+	//   （那是探针的判据链路；产品路径等玩家自己切 tab，由拦截 handler 完成分时注入）。
+	//   幂等：OnMenuTick 每拍都会来问，成功激活后直接返回 true。
+	bool ActivateForMenu()
+	{
+		if (g_ctxStore.menuActive && g_ctx == &g_ctxStore) {
+			return true;
+		}
+		const auto& quests = SAQ::PendingQuests();
+		if (quests.empty()) {
+			// 数据还没收集好（菜单刚开）/ 这次没有可接任务 —— 静默（节流在 OnMenuTick）。
+			return false;
+		}
+		std::string why;
+		if (!UI::EnsureResolved(why)) {
+			return false;   // 桥还没通（菜单刚创建）—— 下一拍再试
+		}
+		auto* root = reinterpret_cast<RE::Scaleform::GFx::ASMovieRootBase*>(UI::ResolvedAsMovieRoot());
+		if (!root) {
+			return false;
+		}
+		RE::Scaleform::GFx::Value menu;
+		if (!(SafeGetVariable(root, "_root.Menu_mc", &menu) && menu.IsObject())) {
+			return false;   // 原版 SWF 之外（我们的 SWF / 第三方）—— 不该走到这
+		}
+		RE::Scaleform::GFx::Value tabSel;
+		RE::Scaleform::GFx::Value list;
+		if (!(SafeValueGetMember(&menu, "TabbedFilterSelection_mc", &tabSel) && tabSel.IsObject() &&
+				SafeValueGetMember(&menu, "MissionsList_mc", &list) && list.IsObject())) {
+			return false;
+		}
+
+		auto readNum = [](RE::Scaleform::GFx::Value& a_obj, const char* a_name, double& a_out) -> bool {
+			RE::Scaleform::GFx::Value v;
+			return SafeValueGetMember(&a_obj, a_name, &v) && SafeReadValueNumber(v, a_out);
+		};
+
+		// 语言判定（引擎条目名 CJK；与探针 U8a 同源）。
+		bool        zh = true;
+		std::size_t sampleCjk = 0;
+		(void)DetectUseChinese(list, zh, sampleCjk);
+
+		// 读原 tab —— 激活对玩家「无感」：快照完切回去（原版读档恢复上次分类、
+		//   玩家可能正停在某个分类上；切 0 只是拿全量快照的手段）。
+		double originalTab = 0.0;
+		(void)readNum(tabSel, "selectedIndex", originalTab);
+
+		auto switchTab = [&tabSel](std::uint32_t a_idx) -> bool {
+			RE::Scaleform::GFx::Value arg(static_cast<std::uint32_t>(a_idx));
+			RE::Scaleform::GFx::Value ret;
+			return SafeValueInvoke(&tabSel, "SetSelectedCategoryIndex", &ret, &arg, 1);
+		};
+
+		// 上下文（每次激活重建 —— 与探针同一纪律：handler 的全部路径都走 ctx.list，
+		//   它在下面**立刻**被赋值；「上下文未接线」那类缺陷在第 135 轮已收口）。
+		g_ctxStore = InjectCtx{};
+		g_ctx = &g_ctxStore;
+		InjectCtx& ctx = g_ctxStore;
+		ctx.list = list;
+
+		// 切 0（$ALL）→ 引擎快照（全量）→ 切回原 tab（在挂监听**之前**，走原版路径）。
+		(void)switchTab(0);
+		std::uint32_t snapCount = 0;
+		const bool    snapOk = BuildEngineSnapshot(root, list, ctx.engineSnapshot, snapCount);
+		ctx.engineCount = snapCount;
+
+		// 我们的条目（真实数据 + 完整描述；按键名 = KeyHelper）。
+		const std::string courseKey = GetCourseKeyName(root, menu);
+		const char*       buildWhy = "ok";
+		const bool        buildOk = BuildOurEntries(root, quests, zh, courseKey, ctx.ourEntries,
+			ctx, buildWhy);
+
+		// 扩 tab（原版 7 项 + 我们的 → SetTabsData）。
+		RE::Scaleform::GFx::Value tabsArr;
+		double                   tabs0 = -1.0, tabs1 = -1.0;
+		bool                     tabsOk = false;
+		if (readNum(tabSel, "numTabs", tabs0) &&
+			BuildTabsArray(root, zh ? kTabTitleZh : kTabTitleEn, tabsArr)) {
+			RE::Scaleform::GFx::Value ret;
+			tabsOk = SafeValueInvoke(&tabSel, "SetTabsData", &ret, &tabsArr, 1) &&
+				readNum(tabSel, "numTabs", tabs1) && tabs1 == tabs0 + 1.0;
+			ctx.ourTabIndex = static_cast<int>(tabs0);
+		}
+
+		// 挂拦截监听（priority=100）。
+		ctx.listening = tabsOk && AttachInterceptListener(root, tabSel);
+
+		// 切回原 tab（此刻监听已挂、inOurTab=false ⇒ handler 无动作、放行原版）。
+		if (tabsOk && originalTab > 0.5) {
+			(void)switchTab(static_cast<std::uint32_t>(originalTab));
+		}
+
+		const bool ok = snapOk && buildOk && tabsOk && ctx.listening;
+		ctx.menuActive = ok;
+		if (!ok) {
+			REX::WARN("界面注入：激活失败（快照={} 构造={} 扩tab={} 监听={}）—— 本次菜单不用注入形态",
+				snapOk ? "ok" : "fail", buildOk ? "ok" : "fail",
+				tabsOk ? "ok" : "fail", ctx.listening ? "ok" : "fail");
+			return false;
+		}
+		REX::INFO("界面注入：已激活（UiMode={}，tab {}→{}，条目 {}，按键名={}，语言={}）",
+			ModeName(g_mode), NumStr(tabs0), NumStr(tabs1), NumStr(ctx.injectCount),
+			courseKey.empty() ? "(空)" : courseKey, zh ? "zh" : "en");
+		g_lastActivateTryMs = 0;   // 成功后清节流（下次菜单重新开始）
+		return true;
+	}
+
+	void OnMenuClosed()
+	{
+		// GFx 引用随 Movie 销毁失效 —— 只清引用（handler 是静态实例、保留；
+		//   菜单关闭后不会再收到事件，读失效值被 SEH 挡下返回失败）。
+		g_ctxStore = InjectCtx{};
+		g_ctx = nullptr;
+		g_lastActivateTryMs = 0;
+	}
+
+	void OnMenuTick(bool a_uiChannelDead)
+	{
+		if (!WantInject(a_uiChannelDead)) {
+			return;   // swf 模式 / auto 还没判定 ⇒ 零动作
+		}
+		if (!(g_ctx != nullptr && g_ctx->menuActive)) {
+			// 激活尝试（节流 150 ms —— 菜单刚打开那几拍桥还没通 / 数据还没收集好）。
+			const auto now = NowMs();
+			if (g_lastActivateTryMs != 0 && now - g_lastActivateTryMs < kActivateRetryMs) {
+				return;
+			}
+			g_lastActivateTryMs = now;
+			(void)ActivateForMenu();
+			return;
+		}
+
+		// ---- watchdog：玩家在我们的 tab 上 ⇒ 列表应始终是我们的注入数据 ----
+		//   引擎刷新（任务状态推送 / 原版重建列表）会把列表换回引擎条目
+		//   （此时 mask=1<<6 会把它们全过滤掉 ⇒ 空列表，看起来像坏了）——
+		//   检测到就重放注入。开销 = 500 ms 两次 GFx 读（与界面轮询同拍）。
+		InjectCtx& ctx = *g_ctx;
+		if (!ctx.inOurTab) {
+			return;
+		}
+		const auto now = NowMs();
+		if (ctx.lastWatchdogMs != 0 && now - ctx.lastWatchdogMs < kWatchdogIntervalMs) {
+			return;
+		}
+		ctx.lastWatchdogMs = now;
+
+		double count = -1.0;
+		{
+			RE::Scaleform::GFx::Value v;
+			if (!(SafeValueGetMember(&ctx.list, "entryCount", &v) && SafeReadValueNumber(v, count))) {
+				return;   // 读不到（菜单收尾 / 销毁中）—— 静默
+			}
+		}
+		bool ours = count == static_cast<double>(ctx.injectCount);
+		if (ours && ctx.injectCount > 0) {
+			// 首条 uID 复核（entryCount 相同 ≠ 内容相同）。
+			RE::Scaleform::GFx::Value arg(static_cast<std::int32_t>(0));
+			RE::Scaleform::GFx::Value entry;
+			RE::Scaleform::GFx::Value uv;
+			double                   uid = -1.0;
+			if (SafeValueInvoke(&ctx.list, "GetDataForEntry", &entry, &arg, 1) && entry.IsObject() &&
+				SafeValueGetMember(&entry, "uID", &uv) && SafeReadValueNumber(uv, uid)) {
+				ours = static_cast<std::uint32_t>(uid) == ctx.expectUid[0];
+			} else {
+				ours = false;
+			}
+		}
+		if (ours) {
+			return;
+		}
+		// 重放：设 mask + 重新注入；日志节流（首次 + 每 10 次 —— 引擎频繁刷新不刷屏）。
+		RE::Scaleform::GFx::Value f(static_cast<std::uint32_t>(kOurTabFlag));
+		(void)SafeValueSetMember(&ctx.list, "filterMask", f);
+		const bool inj = InjectOurEntries(ctx);
+		++ctx.replayCount;
+		if (ctx.replayCount == 1 || ctx.replayCount % 10 == 0) {
+			REX::INFO("界面注入：列表被引擎刷新覆盖 → 已重放（第 {} 次，注入 {}）",
+				ctx.replayCount, inj ? "ok" : "fail");
+		}
+	}
+
+#if SAQ_WITH_HARNESS
+	// ====================================================================
+	// 六、PoC 主流程（harness 原语 `ui.inject` 的唯一入口）
 	// ====================================================================
 	std::string RunInjectPoC(const std::vector<QuestEntry>& a_quests)
 	{
@@ -741,9 +1134,14 @@ namespace SAQ::UiInject
 			// 快照失败不致命（注入/对账仍可跑），但恢复段必然 fail —— 继续，让一行汇总说全。
 		}
 
+		// ---- R2b 按键名（完整描述文案的「按 R（设定航线）」分支；取不到 = 空串）----
+		//   （不进判据行：输出格式与第 135 轮逐字一致 —— verify / P2 计划依赖它。）
+		const std::string courseKey = GetCourseKeyName(root, menu);
+
 		// ---- R4 我们的条目数组（真实数据） ----
 		const char* buildWhy = "ok";
-		const bool  buildOk = BuildOurEntries(root, a_quests, zh, ctx.ourEntries, ctx, buildWhy);
+		const bool  buildOk = BuildOurEntries(root, a_quests, zh, courseKey, ctx.ourEntries,
+			ctx, buildWhy);
 
 		// ---- R5 扩 tab（7 项原样 + 我们的 → SetTabsData → numTabs 读回） ----
 		RE::Scaleform::GFx::Value tabsArr;
@@ -767,23 +1165,8 @@ namespace SAQ::UiInject
 		}
 
 		// ---- R6 挂拦截监听（priority=100）----
-		auto* handler = new InjectHandler();
-		RE::Scaleform::GFx::Value fn;
-		bool                     listenOk = false;
-		if (VtableSlotInModule(root, kSlotAsRootCreateFunction) &&
-			SafeCreateFunction(root, &fn, handler, nullptr)) {
-			RE::Scaleform::GFx::Value evTitle;
-			if (SafeCreateString(root, &evTitle, kEventName)) {
-				RE::Scaleform::GFx::Value args[5];
-				args[0] = evTitle;
-				args[1] = fn;
-				args[2] = false;
-				args[3] = static_cast<std::uint32_t>(kInterceptPriority);
-				args[4] = false;
-				RE::Scaleform::GFx::Value ret;
-				listenOk = SafeValueInvoke(&tabSel, "addEventListener", &ret, args, 5);
-			}
-		}
+		const bool listenOk = AttachInterceptListener(root, tabSel);
+		ctx.listening = listenOk;
 		out += std::format("｜监听={}", listenOk ? "ok" : "fail");
 
 		// ---- R7 切到我们 tab（拦截 + 注入）→ 读回 ----

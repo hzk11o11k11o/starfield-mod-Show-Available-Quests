@@ -141,3 +141,26 @@ step = assert.log 界面注入PoC .*快照=ok.*扩tab=ok.*注入数据=ok.*对�
 ;  眼睛窗口（30 秒）：切到第 8 个 tab 应看到真实的可接任务列表。
 step = wait 30000
 step = menu.close
+
+[case:r137_product_inject]
+desc = 第 137 轮（P3-b）：UiMode=auto 产品路径 —— 冲突环境自动激活注入（不依赖 ui.inject 原语）
+;  判据（P3-b 的产品形态验收 —— 全部走产品代码路径）：
+;    ① 每菜单打开一行形态日志 `界面形态：UiMode=auto（…）`（ini [UI] 默认值）；
+;    ② 推送失败（原版 SWF ⇒ notOurs）后由 Tick **自动激活**注入 ——
+;       `界面注入：已激活（UiMode=auto，tab 7→8，条目 N，按键名=…，语言=…）`
+;       （时机 ≈ 菜单打开后 1~2 秒：推送 2 次失败 + 判定 + 150ms 节流；wait 5000 留足）；
+;    ③ 关菜单时 `菜单关闭：本轮为注入形态（已激活；watchdog 重放 N 次）`。
+;  ★ 与 r133 的区别：**不用 harness 原语**（ui.inject）—— tab 扩展 / 引擎快照 /
+;    拦截监听 / 分时注入全部由产品路径完成；HUD「UI 通道不可用」提示也不该出现
+;    （注入生效 = 功能可用 ⇒ 提示被抑制 —— 见 SAQ.cpp 的「延迟判定」）。
+;  眼睛窗口（30 秒）：玩家切到第 8 个 tab「可接任务」应看到真实的可接任务列表。
+step = ping
+step = menu.open
+step = wait 5000
+step = assert.log 界面形态：UiMode=auto scope=case timeout=8000
+step = assert.log 界面注入：已激活（UiMode=auto scope=case timeout=8000
+step = wait 30000
+step = menu.close
+;  关菜单后的短窗口：让「菜单关闭：本轮为注入形态」一行落进日志（同一次 Tick）。
+step = wait 2000
+step = assert.log 菜单关闭：本轮为注入形态 scope=case timeout=8000

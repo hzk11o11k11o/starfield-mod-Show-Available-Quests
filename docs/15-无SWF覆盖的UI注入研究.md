@@ -38,147 +38,11 @@
 > 五段判据与预测**逐字一致**；判据五连全绿；**P3-a 判据收口**；眼睛 = 第 8 个 tab
 > 「可接任务」+ 真实 206 条列表（待玩家确认））**。
 
-## 一、问题定义与成功判据
+## 一 ~ 八、研究初期（问题定义 / 现状回顾 / 离线取证 / 路线盘点 / 技术未知点 / 实验设计 / 迁移清单雏形 / 阶段结论）—— 已迁 `docs/90`
 
-**现状**：我们发布 `Data\Interface\missionmenu.swf`（松散文件覆盖）—— 里面是
-「原版字节码 + 我们重编译的 3 个类」。任何同样替换该文件的 mod（如任务菜单重排 /
-美化类）与我们是**同一个文件的二选一**（MO2 VFS 后加载者胜），用户的另一个 mod
-或我们的 tab 必然有一个失效。
-
-**"无 SWF 覆盖"的三档判据**：
-
-| 档 | 判据 | 说明 |
-| --- | --- | --- |
-| 最低 | 磁盘上不含 `missionmenu.swf`，功能不减 | tab / 列表 / 交互 / 引导 / 三类门槛全在 |
-| 目标 | 能寄生在**第三方版本**的 missionmenu.swf 上 | 对方保留原版 AS3 类结构（只改布局/资源）时叠加生效 |
-| 不要求 | 合并对方对 AS3 **逻辑**的修改 | 那需要对方的源码，不现实（见第四节 F 路线） |
-
-## 二、现状回顾（为什么现在"必须"改 SWF）
-
-`missionmenu.swf` 的菜单结构**全部在 AS3 里硬编码**：
-
-- tab 列表 = `MissionMenu.PopulateTabs()` 里 `FilterInfoA` 的 7 项
-  （`$ALL / $Main / $Faction / $Misc / $MISSION / $Activity / $Completed`，
-  原版 `$ALL` 掩码 = `0xFFFFFFFF`）；
-- 列表数据 = `BSUIDataManager.Subscribe("QuestData")` 推来的**玩家任务日志**
-  （原版不认未接任务）；
-- 过滤 = `MissionsList` 的 `filterMask & (1 << iType)`（原版逻辑）；
-- 交互（跟踪 / 引导 / 展开）全部在 AS3 类方法里。
-
-**我们的改动面**（第 117 轮实测统计，`tools/esm/_tmp_r117_diff_patch.py`）：
-**只改了 3 个文件**（其余 71 个类保持原版字节码）：
-
-| 文件 | 原版 → patch | 增量 |
-| --- | --- | --- |
-| `MissionMenu.as` | 735 → 2848 行 | **+2113**（载荷解析 / 合并列表 / 排序 / 前缀 / 描述文案 / 引导交互 / 诊断探针 / 测试入口 / 入口发布） |
-| `MissionsList.as` | 403 → 589 行 | +186（`bSaqAvailable` 过滤 + 按 uID 找行/子项 + 顺序探针） |
-| `Shared/QuestUtils.as` | 66 → 68 行 | +2（`AVAILABLE_QUEST_TYPE` 常量） |
-
-⇒ 这 2301 行就是"运行时注入"形态**要么数据化、要么用事件/C++ 替代**的全部内容。
-
-## 三、离线取证（本轮新增的关键事实）
-
-反编译命令见附录。**所有事实都有原始文件出处**：
-
-| # | 事实 | 证据（出处） |
-| --- | --- | --- |
-| 1 | **root 上 MissionMenu 实例名 = `Menu_mc`**（characterId=94 = `MissionMenu` 类，depth=1）—— 原版与我们的 SWF **一致** | `_tmp_ffdec_base/missionmenu.xml:3378` + patch SWF 同款 PlaceObject2 |
-| 2 | `FilterInfoA` 是 **private**，且原版**只有 3 处使用**：声明 / `currentFilterFlag` / `PopulateTabs` | 原版 `MissionMenu.as:109,169-172,244-273` |
-| 3 | `currentFilterFlag` 的**唯一消费者** = `onFilterChanged`（`filterMask = currentFilterFlag`）⇒ 第 8 个 tab 的**越界风险点单一** | 原版 `MissionMenu.as:347` |
-| 4 | `BSTabbedSelection.SetTabsData(Array, uint=0)` 是 **public** | `Shared/AS3/BSTabbedSelection.as:141` |
-| 5 | `MissionsList.InitializeEntries(Array)` 是 **override public** | `MissionsList.as:35` |
-| 6 | `MissionsList.ITEM_ACTIVATED = "MissionsList::itemActivated"`（public static const，**事件名字符串可硬编码在 C++**）；派发点 `onEntryPress`（冒泡 + cancelable） | `MissionsList.as:16,333-337` |
-| 7 | `MissionMenu` 的 FLA 元件成员都是 **public var**：`MissionsList_mc` / `TabbedFilterSelection_mc` / `MissionInfo_mc` / `ButtonBar_mc` … | 原版 `MissionMenu.as:79-92` |
-| 8 | `BSUIDataManager.Subscribe(String, Function, Boolean=false)` 是 **public static**（引擎数据订阅；`QuestData` / `MissionMenuStateData` …） | `Shared/AS3/Data/BSUIDataManager.as:70` |
-| 9 | GFx `Value` 的**全部对象接口** commonlibsf 已封装：`GetMember` / `SetMember` / `HasMember` / `Invoke` / `VisitMembers` / `PushBack` / `SetArraySize` / `GetArraySize` … | `tools/commonlibsf-main/include/RE/S/ScaleformGFxValue.h` |
-| 10 | `ASMovieRootBase` 有 `GetVariable`（槽 0x32，**未验证**）/ `SetVariable`（槽 0x31）/ `Invoke`（槽 0x39）/ `CreateFunction`（槽 0x30）/ `IsAvailable`（槽 0x37） | `ScaleformGFxASMovieRootBase.h` |
-
-**推论**（待实验确认）：
-- 位置链 `_root.Menu_mc` → `.MissionsList_mc` / `.TabbedFilterSelection_mc` 都可访问
-  （实例名是动态属性、FLA 成员是 public trait；我们已实测 `_root.<动态属性>` 路径可用）；
-- 加 tab（显示层面）= `SetTabsData(我们自己构造的 8 项数组)` —— public ✓；
-- 剩余两个硬骨头 = **写 private `FilterInfoA`**（决定"不越界"）与**事件接管**（决定交互）。
-
-## 四、候选路线盘点
-
-| 路线 | 机制 | 能解决 | 判定 |
-| --- | --- | --- | --- |
-| **A 运行时 GFx 注入** | C++ 用 GFx API 直接操作原版 `MissionMenu` 的 AS3 对象（写 `FilterInfoA` / 调 `SetTabsData` / `InitializeEntries` / 挂事件监听） | 文件级零冲突；可寄生第三方 SWF；**唯一能真正共存** | ★ **首推，做 PoC** |
-| B 数据层注入 | hook 引擎 → `QuestData` 数据通道追加假条目 | 数据自动进原版列表 | 只解决数据、**不解决 tab**（要新增 tab 仍需 A）⇒ 作 A 的备选/补充 |
-| C AVMPlus 内存 patch | 改类的方法表（替换 `PopulateTabs` 等） | 完全控制 | 高风险、完全不可维护、换版本即碎 ⇒ **不做** |
-| D 现状 + 冲突检测 | 继续 SWF 覆盖，加"检测到第三方 missionmenu.swf"提示 | 体验缓解（不让用户一脸问号） | 与 A 并行、低成本，值得顺手做 |
-| E 独立菜单 / 热键 | 自建 UI 菜单（不碰 missionmenu.swf） | 零冲突 | **产品形态变了**（不是"原版任务菜单里加 tab"）⇒ 不满足需求 |
-| F 合并构建（反编译对方 SWF → 打我们的补丁 → 重编译） | 发布"合并版" | 真共存 | 版权（不能分发他人资源）+ 每个版本都要重做 ⇒ **不可行** |
-
-## 五、A 路线的 4 个技术未知点（= 探针实验清单）
-
-| # | 未知点 | 为什么关键 | 失败的后果 |
-| --- | --- | --- | --- |
-| **U1** | **GFx `SetMember`/`GetMember` 能否读写 AS3 private 成员**（`FilterInfoA`） | 决定"第 8 个 tab"能否存在（`currentFilterFlag` 越界） | 若不能 ⇒ 换"事件拦截"方案（U3）或路线终止 |
-| **U2** | **public 方法/属性调用**：`SetTabsData` / `InitializeEntries` / `numTabs` / `entryCount` / `filterMask`（含 getter 能否被 `Invoke`） | 注入的"手脚" | 若 getter 不可 Invoke ⇒ 用 `GetVariable` 槽（0x32，需先验证） |
-| **U3** | **事件注入与拦截**：`addEventListener(…, 高 priority)` + `stopImmediatePropagation` + C++ `CreateFunction` 回调 | 决定交互（点击引导 / 双击 / 阻止原版误处理） | 若不能拦截 ⇒ 我们的 tab 点击会走原版逻辑（异常/无反应） |
-| **U4** | **刷新时机**：引擎 `QuestData` 更新会覆盖我们的合并列表 | 列表是否稳定 | 备选 = 500ms 轮询重建（现有节奏可复用）或 `BSUIDataManager.Subscribe` 静态可达性 |
-
-## 六、实验设计（`ui.research` 探针，dev-only）
-
-**形态**：新增一个只读优先的研究探针 op（走 harness 驱动，结果进日志 + 步骤 JSON），
-**只在 `SAQ_WITH_HARNESS` 构建里存在**（与 `quest.probe`/`info.probe` 同款纪律：
-探针结果必须同时打一行**产品日志**，供 `assert.log` 取证）。
-
-**步骤**（一次调用跑完全部，逐项打印，任一步失败不中断）：
-
-| 步 | 动作 | 判据 |
-| --- | --- | --- |
-| 1 | 读 `_root` / `_root.Menu_mc`（`GetVariable` 或 `GetMember`） | 拿到对象 ⇒ 路径基础设施可用 |
-| 2 | 读 `_root.Menu_mc.FilterInfoA`（**private**）→ 报 类型 / 长度 / 每项 text,flag | **U1 读**：能读到 7 项（原版 SWF）/ 8 项（我们的 SWF） |
-| 3 | 读 `TabbedFilterSelection_mc.numTabs` / `MissionsList_mc.entryCount` / `filterMask` | **U2 读**：getter/属性可达性 |
-| 4 | 写 `FilterInfoA`（复制 + 追加 1 项 `{text:"SAQ研究", flag:64}`，幂等：已有则替换）→ 读回验证长度 +1 | **U1 写**：写成功 ⇒ tab 注入可行 |
-| 5 | 调 `TabbedFilterSelection_mc.SetTabsData(数组)` → 读回 `numTabs` | **U2 调用**：tab 数 +1（屏幕上应出现第 9/8 个 tab） |
-| 6 | 给 `MissionsList_mc` 挂 C++ 回调（`CreateFunction` + `addEventListener("MissionsList::itemActivated", …, priority 100)`）→ 打印"已注册" | **U3**：随后玩家点列表条目 ⇒ 日志应出现"回调收到" |
-| 7 | 汇总一行（`ui.research：…`）+ 步骤 JSON | 判读入口 |
-
-**副作用处理**：写测试会改内存里的界面状态 —— **天然被"关菜单 ⇒ Movie 销毁
-⇒ 下次打开重建"清理**（第 27/50 轮已定案），不需要额外还原。
-
-**两阶段执行**：
-
-| 阶段 | 环境 | 验证什么 | 成本 |
-| --- | --- | --- | --- |
-| **P1** | 我们的补丁 SWF（现状部署） | U1/U2/U3 的**能力边界**（FilterInfoA 已是 8 项，写第 9 项同样是"写 private"） | 零（跑一轮 harness 即可） |
-| **P2** | **原版 SWF**（MO2 临时禁用我们的 SWF 覆盖） | 完整 PoC：7 项 → 8 项 tab + 数据注入 + 事件接管 —— **"无覆盖"目标形态** | 一轮（要改部署 + 恢复） |
-
-> P2 通过之前，**不投入**任何产品化改造（迁移 2301 行 AS3 逻辑是大工程）。
-
-## 七、若 A 成立：功能迁移清单（AS3 → C++/数据侧）
-
-| 现有 AS3 功能 | 运行时注入形态的替代 | 难度 |
-| --- | --- | --- |
-| 载荷解析 / 合并列表 | 直接由 C++ 构造 AS3 数组（`CreateArray` + `PushBack`） | 低 |
-| 排序（同伴 / 势力 / 可重复 / 入口固定） | 数据侧（现有 C++ 已有全部字段） | 低 |
-| 名称前缀（（不可导航）/（可重复）） | 数据侧（`sName` 直接带前缀） | 低 |
-| 描述文案 / 简要说明 | 数据侧（`sDescription`） | 低 |
-| 列表过滤（`bSaqAvailable`） | 原版逻辑即可：`iType=6` + 第 8 tab 掩码 `1<<6`（**「全部」掩码需改 `FilterInfoA[0].flag`** ⇒ 依赖 U1） | 低（依赖 U1） |
-| 点击 / 双击 / 引导 / 跟踪 | 事件接管（U3）+ C++ 现有 `Guide::` 实现 | 中 |
-| 「不可导航」点击不闪烁 / SET COURSE 置灰 | 数据字段（`bCanShowOnMap` 等）+ 事件接管 | 中 |
-| 诊断探针（`SAQ_Report` 等） | C++ 直接读 GFx 状态（本探针即是雏形） | 中 |
-| 测试入口（`SAQ_TestDrive*`） | C++ 直接操作 GFx（替代 `ui.*` 的 AS3 侧） | 中 |
-
-**风险（即使 A 成立）**：
-- 依赖原版 AS3 的**内部名**（`Menu_mc`、`FilterInfoA`、事件字符串）—— 换游戏版本若改动它们，
-  注入会静默失效（可加"自检日志"）；而"自定义 SWF"方案不受影响。
-- 交互接管与**其它 UI mod** 的行为可能叠加出预期外结果（对方也改了同一段逻辑时）。
-- ⇒ 建议形态：**可选的"兼容模式"**（默认仍走 SWF，检测到冲突时提示可切注入），
-  而不是立即替换默认发布形态。
-
-## 八、结论与下一步
-
-1. **离线取证已把方案收敛到 3 个可实验的未知点（U1/U2/U3）** ——
-   原版结构对我们的注入**友好**（root 实例名固定、关键接口 public、越界风险点单一）；
-2. **U1（private 可写性）是成败关键**：GFx 的 `SetMember` 走 AS3 运行时属性语义，
-   理论上可能成功（运行时 `setProperty` 不经过编译期命名空间检查），**必须实机验证**；
-3. 下一步 = **实现 `ui.research` 探针 + 跑 P1**（记录 see `docs/99` 下一轮）；
-   P1 全绿 ⇒ 做 P2（原版 SWF 完整 PoC）；
-4. 无论 A 是否成立，**路线 D（冲突检测 + 文档说明）都值得顺手做**（低成本、直接改善体验）。
+> 第 137 轮瘦身：这八节是研究初期的分析（其结论已被后续全部实测取代）——
+> **逐字迁移**到 `docs/90-历史记录（UI注入研究 第117轮初期取证）.md`，保留原文备查。
+> ★ 本文后续段落里对「第七节 / 第八节」的引用 = `docs/90` 的同名节。
 
 ## 九、本轮产物（第 117 轮已落地）与待实机判读
 
@@ -1069,6 +933,57 @@ tab「可接任务」+ **真实 206 条列表**（真任务名/描述）—— �
 文案迁移 + watchdog（引擎推送覆盖我们的注入后重放）+ `UiMode` 运行期开关
 （ini `[UI] UiMode=swf|auto|inject`，默认 `auto`；`swf` = 行为与现状逐字节不变）
 ⇒ P4 交互接管。
+
+### 十三·补三、P3-b 落地（2026-09-23 · 第 137 轮 —— 注入形态产品化）
+
+**三块内容**（玩家已定「直接进 P3-b、P2 实验态继续保留」）：
+
+① **完整 `SaqDescriptionText` 迁移**（`SAQ_UiInject.cpp` `BuildDescription`）：SWF 版
+   `MissionMenu.as` 882~983 行的**逐字搬运** —— 入口（板 100 / NPC 101）× 有无按键名 /
+   同伴完整句 / 势力「简要说明」/「需要靠近」句 / 无导航目标三分支 / 尾部句（同伴 vs
+   普通）× 有无按键名；按键名 = `Menu_mc.KeyHelper.GetButtonNameForEvent("XButton","")`
+   （取不到 ⇒ 空串 ⇒ 走「使用底部的『设定航线』」分支）。**两形态描述从此一致**
+   （以后改文案要两处同步：`SaqDescriptionText` + `BuildDescription`）。
+
+② **watchdog**（`OnMenuTick`，500 ms 节拍）：玩家在我们的 tab 上时，检查列表是否仍是
+   我们的注入数据（`entryCount` + 首条 `uID` 双判据）—— 引擎刷新覆盖（任务状态推送 /
+   原版重建列表）⇒ 重放（设 mask + `InitializeEntries(ourEntries)`）；日志节流
+   （首次 + 每 10 次 —— 引擎频繁刷新不刷屏）。
+
+③ **`UiMode` 运行期开关**（ini `[UI] UiMode=swf|auto|inject`，默认 `auto`）：
+   · `swf` = 行为与现状逐字节不变（注入代码不激活）；
+   · `auto` = SWF 优先；推送失败判定 notOurs ⇒ **自动切注入**（Tick 里 150 ms 节流激活）；
+   · `inject` = 只用注入（菜单打开后不推送）。
+   ★ HUD 提示改「延迟判定」：auto / inject 下注入激活成功 ⇒ **不提示**（功能已生效）；
+   3 秒（`kInjectNoticeGraceMs`）还没起来才补发「UI 通道不可用」（与第 125 轮语义衔接，
+   且保持进程内一次）。
+   ★ 激活对玩家「无感」：记原 tab（`selectedIndex`）→ 切 0 取全量快照 → 切回原 tab
+   （挂监听之前走原版路径）。
+
+**分层改造**（隔离纪律的延续）：
+- `SAQ_UiInject.{h,cpp}` 不再整体包在 `SAQ_WITH_HARNESS` 里：**产品路径**（类型探测 /
+  完整描述 / 激活 / watchdog / UiMode）**发布构建也编译**；harness 探针
+  （`RunInjectPoC` / `ui.inject`）仍在 harness 段（输出格式与第 135 轮**逐字一致** ——
+  verify / P2 计划依赖它）。
+- `SAQ.cpp` 接线：`ResolveUiMode()`（ini 读取，未知值 WARN + 按 auto）+ Tick 的 open
+  分支（`UiInject::OnMenuTick` + 提示兜底）+ 菜单打开读形态 + 菜单关闭清理
+  （`UiInject::OnMenuClosed`）+ `TryPushPending` 的 inject 短路 + `PollUiReport` 跳过。
+
+**离线判据（全绿）**：DLL 开发构建（harness）**1160704 B**（1142272 → +18432）；
+P2 实验态部署（工作区 == 部署；SWF 覆盖 `*.p2off` + `Harness=1` + `Plan=SAQ_TestPlan_p2.txt`
++ `AutoLoad=…142854_2_0_4`）；`verify --dev --p2` **824 行 / 0 MISS**（+12 条产品路径
+特征串 dev/release **双向**正向 + 源码级结构/分层检查 + ini 模板 [UI] 段 + P2 计划形状）；
+离线层 **5 步全过**（P2 正则自检 **12 条正则 / 9 条样例**）；ini 模板
+（`resources/`）与部署 ini 均含 `[UI] UiMode=auto`。
+
+**P2 计划 +1 条用例 = `r137_product_inject`**（产品路径验收 —— **不依赖 `ui.inject`
+原语**）：`界面形态：UiMode=auto` + `界面注入：已激活（UiMode=auto，…）`（约菜单打开后
+1~2 秒：推送 2 次失败 + 判定 + 节流）+ `菜单关闭：本轮为注入形态（已激活；watchdog
+重放 N 次）`；30 秒眼睛窗口（玩家切到第 8 个 tab 看真实列表）。
+
+**待实机（下一次 P2 会话 5 条）**：`r120` / `r125` / `r130` / `r133` / **`r137`**；
+眼睛 = 第 8 个 tab「可接任务」+ 真实列表（**产品路径**，不靠探针）；观察项 = watchdog
+是否触发（引擎刷新场景 —— 平时应保持 0 次）。
 
 ## 附：复现命令（离线证据）
 

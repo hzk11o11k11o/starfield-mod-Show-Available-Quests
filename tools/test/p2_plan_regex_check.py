@@ -43,6 +43,19 @@ SAMPLES = {
         "再注入=ok（entryCount →206，供眼睛）｜拦截=(3 次回调/2 注入/1 恢复)｜"
         "眼睛=请切到第 8 个 tab 看真实列表"
     ),
+    # ★★ 第 137 轮（P3-b · UI 注入形态产品化）：`r137_product_inject` 的三条产品行 ——
+    # 产品路径（UiMode=auto ⇒ 冲突环境自动激活注入；不依赖 harness 原语）。
+    # 文本照 SAQ.cpp / SAQ_UiInject.cpp 的实际拼装写死；数值用占位值。
+    "界面形态：UiMode=auto": (
+        "界面形态：UiMode=auto（swf=只用 SWF 推送 / auto=SWF 优先、冲突时自动切注入 / "
+        "inject=只用注入）"
+    ),
+    "界面注入：已激活": (
+        "界面注入：已激活（UiMode=auto，tab 7→8，条目 206，按键名=R，语言=zh）"
+    ),
+    "菜单关闭：本轮为注入形态": (
+        "菜单关闭：本轮为注入形态（已激活；watchdog 重放 0 次）"
+    ),
 }
 
 
