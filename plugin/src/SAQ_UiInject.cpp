@@ -11,6 +11,14 @@
 // 解析层复用（找菜单那条链与通道形态无关 —— 见头文件说明）。
 #include "SAQ_UI.h"
 
+// ★★★ 第 140 轮（P4 交互接管）：`ui.interact state` 要读「星图开着没有」—— 复用
+//   harness 原语层的 MenuIsOpen（项目里查任意菜单的标准入口）。
+//   ★ 必须放在**本文件顶部**（namespace 之外）：这个头文件里又开了 `namespace SAQ`
+//   —— 在 `namespace SAQ::UiInject` 里面 include 会造出 `SAQ::UiInject::SAQ` 这个
+//   嵌套命名空间，把 `SAQ::CurrentGuideQuestID()` 这类写法全部带偏（编译期就会报错）。
+//   harness 段未启用时（发布构建）这个头文件是空的（自带 #if 守卫）。
+#include "SAQ_TestOps.h"
+
 #include "RE/B/BSFixedString.h"
 // 注意 include 顺序：ASMovieRootBase.h 不自包含（Value/Movie/FunctionHandler 都要先有），
 // 顺序错了会报 C4430/C2061 一连串语法错误（与 SAQ_UI.cpp 同款，见 docs/01 坑 1）。
@@ -326,6 +334,150 @@ namespace SAQ::UiInject
 		};
 
 		// ====================================================================
+		// 二·补、交互接管常量与工具（★ 第 140 轮 · P4）
+		//
+		// 名字全部取自**原版 AS3 源码**（`_tmp_ffdec_base/scripts/`）：
+		//   · 按钮 clip 名 / 事件名 / label 键：MissionMenu.PopulateButtonBar；
+		//   · 条目激活事件：MissionsList.ITEM_ACTIVATED；
+		//   · 委托复刻的事件名：MissionMenu 的 MissionMenu_PlotToLocation /
+		//     SHOW_ITEM_LOCATION_EVENT（常量值就是字符串本身）；
+		//   · 音效 ID：MissionMenu 的 MISSION_*_SOUND 常量值。
+		// ====================================================================
+
+		constexpr const char* kBtnPlotToLocation = "PlotToLocationButton_mc";  // X（设定航线）
+		constexpr const char* kBtnShowOnMap = "ShowOnMapButton_mc";            // Y（显示在地图上）
+		constexpr const char* kKeyPlotToLocation = "XButton";                  // 原版事件名（键盘 R / 手柄 X）
+		constexpr const char* kKeyShowOnMap = "YButton";
+		constexpr const char* kLabelPlotToLocation = "$SET COURSE";            // 原版 label 键（不能改 —— 按钮文本）
+		constexpr const char* kLabelShowOnMap = "$SHOWONMAP";
+		// 惰性事件码（没人监听；换按钮 Data 后防引擎收到「不存在的 questID」—— 与探针同款）。
+		constexpr const char* kInertEventCode = "SAQ_Inject";
+		constexpr const char* kItemActivatedEvent = "MissionsList::itemActivated";
+		constexpr const char* kEventShowItemLocation = "MissionMenu_ShowItemLocation";
+		constexpr const char* kEventPlotToLocation = "MissionMenu_PlotToLocation";
+		constexpr const char* kSoundTrackingOn = "UIMenuMissionsMenuTrackingToggleOn";
+		constexpr const char* kSoundTrackingOff = "UIMenuMissionsMenuTrackingToggleOff";
+		constexpr const char* kSoundShowOnMap = "UIMenuMissionsMenuShowOnMap";
+		// AS3 类名（CreateObject 带类名 / applicationDomain.getDefinition）。
+		constexpr const char* kBsUiDataManagerClass = "Shared.AS3.Data.BSUIDataManager";
+		constexpr const char* kGlobalFuncClass = "Shared.GlobalFunc";
+		constexpr std::size_t kClassNameCount = 3;
+		const char* const     kUserEventDataNames[] = {
+			"Shared.Components.ButtonControls.ButtonData.UserEventData",
+			"UserEventData",
+			"Shared.Components.ButtonControls.ButtonData::UserEventData"
+		};
+		const char* const kButtonBaseDataNames[] = {
+			"Shared.Components.ButtonControls.ButtonData.ButtonBaseData",
+			"ButtonBaseData",
+			"Shared.Components.ButtonControls.ButtonData::ButtonBaseData"
+		};
+		const char* const kCustomEventNames[] = {
+			"Shared.AS3.Events.CustomEvent",
+			"CustomEvent",
+			"Shared.AS3.Events::CustomEvent"
+		};
+		const char* const kEventClassNames[] = {
+			"flash.events.Event",
+			"Event",
+			"flash.events::Event"
+		};
+
+		// `CreateObject(Value*, className, args, n)` —— 带类名造**真 AS3 类实例**
+		//   （探针 v4 的新发现：commonlibsf 的 0x2E 槽本来就带 className 参数）。
+		bool SafeCreateObjectOfClass(RE::Scaleform::GFx::ASMovieRootBase* a_root,
+			RE::Scaleform::GFx::Value* a_out, const char* const* a_names, std::size_t a_nameCount,
+			const RE::Scaleform::GFx::Value* a_args, std::uint32_t a_numArgs)
+		{
+			if (!VtableSlotInModule(a_root, kSlotAsRootCreateObject)) {
+				return false;
+			}
+			for (std::size_t i = 0; i < a_nameCount; ++i) {
+				__try {
+					a_root->CreateObject(a_out, a_names[i], a_args, a_numArgs);
+				} __except (EXCEPTION_EXECUTE_HANDLER) {
+					continue;
+				}
+				if (a_out->IsObject()) {
+					return true;
+				}
+			}
+			return false;
+		}
+
+		// applicationDomain.getDefinition（U10 实测的类通道）—— 从界面对象取一个 AS3 类。
+		bool GetClassFromMovie(RE::Scaleform::GFx::ASMovieRootBase* a_root,
+			RE::Scaleform::GFx::Value& a_holder, const char* a_className,
+			RE::Scaleform::GFx::Value& a_out)
+		{
+			RE::Scaleform::GFx::Value loaderInfo, appDomain;
+			if (!(SafeValueGetMember(&a_holder, "loaderInfo", &loaderInfo) && loaderInfo.IsObject() &&
+					SafeValueGetMember(&loaderInfo, "applicationDomain", &appDomain) && appDomain.IsObject())) {
+				return false;
+			}
+			RE::Scaleform::GFx::Value nameVal;
+			if (!SafeCreateString(a_root, &nameVal, a_className)) {
+				return false;
+			}
+			RE::Scaleform::GFx::Value args[1]{ nameVal };
+			RE::Scaleform::GFx::Value def;
+			if (SafeValueInvoke(&appDomain, "getDefinition", &def, args, 1) && def.IsObject()) {
+				a_out = def;
+				return true;
+			}
+			return false;
+		}
+
+		// 原版音效（best-effort：取不到类 / 调用失败 ⇒ 静默 —— 音效不是判据）。
+		void PlaySound(RE::Scaleform::GFx::ASMovieRootBase* a_root, RE::Scaleform::GFx::Value& a_holder,
+			const char* a_soundId)
+		{
+			RE::Scaleform::GFx::Value cls;
+			if (!GetClassFromMovie(a_root, a_holder, kGlobalFuncClass, cls)) {
+				return;
+			}
+			RE::Scaleform::GFx::Value arg;
+			if (!SafeCreateString(a_root, &arg, a_soundId)) {
+				return;
+			}
+			RE::Scaleform::GFx::Value args[1]{ arg };
+			RE::Scaleform::GFx::Value ret;
+			(void)SafeValueInvoke(&cls, "PlayMenuSound", &ret, args, 1);
+		}
+
+		// 委托复刻：`BSUIDataManager.dispatchEvent(new CustomEvent(名, {questID, objectiveID}))`
+		//   —— 与原版 OnPlotCourseEvent / OnShowOnMapEvent 逐行同义（questID/objectiveID 由
+		//   调用方按 IsMission 判定给）。
+		bool DispatchEngineEvent(RE::Scaleform::GFx::ASMovieRootBase* a_root,
+			RE::Scaleform::GFx::Value& a_holder, const char* a_eventName,
+			double a_questId, double a_objectiveId)
+		{
+			RE::Scaleform::GFx::Value cls;
+			if (!GetClassFromMovie(a_root, a_holder, kBsUiDataManagerClass, cls)) {
+				return false;
+			}
+			RE::Scaleform::GFx::Value typeVal;
+			if (!SafeCreateString(a_root, &typeVal, a_eventName)) {
+				return false;
+			}
+			RE::Scaleform::GFx::Value params;
+			if (!(VtableSlotInModule(a_root, kSlotAsRootCreateObject) && SafeCreateObject(a_root, &params))) {
+				return false;
+			}
+			(void)SafeValueSetMember(&params, "questID", RE::Scaleform::GFx::Value(a_questId));
+			(void)SafeValueSetMember(&params, "objectiveID", RE::Scaleform::GFx::Value(a_objectiveId));
+			RE::Scaleform::GFx::Value evtArgs[4]{ typeVal, params, RE::Scaleform::GFx::Value(false),
+				RE::Scaleform::GFx::Value(false) };
+			RE::Scaleform::GFx::Value evt;
+			if (!SafeCreateObjectOfClass(a_root, &evt, kCustomEventNames, kClassNameCount, evtArgs, 4)) {
+				return false;
+			}
+			RE::Scaleform::GFx::Value args[1]{ evt };
+			RE::Scaleform::GFx::Value ret;
+			return SafeValueInvoke(&cls, "dispatchEvent", &ret, args, 1);
+		}
+
+		// ====================================================================
 		// 三、注入上下文与拦截 handler
 		//
 		// 生命周期：静态存储（进程内一份）—— 每次 PoC 开始时重置。
@@ -355,6 +507,17 @@ namespace SAQ::UiInject
 			bool                      activateFailed{ false };
 			std::uint32_t             replayCount{};         // watchdog 重放次数（引擎覆盖后）
 			std::uint64_t             lastWatchdogMs{};      // watchdog 节拍（500ms）
+			// ★★★ 第 140 轮（P4 交互接管）：
+			RE::Scaleform::GFx::Value menu;                  // Menu_mc（关菜单原语 / 类通道锚点）
+			bool                      takeover{ false };     // 接管层已装（幂等）
+			RE::Scaleform::GFx::Value btnX;                  // PlotToLocationButton_mc
+			RE::Scaleform::GFx::Value btnY;                  // ShowOnMapButton_mc
+			RE::Scaleform::GFx::Value dataX;                 // 我们造的 ButtonBaseData（持引用存活）
+			RE::Scaleform::GFx::Value dataY;
+			// 我们的条目（C++ 侧引用 + uID 清单）—— 分类 / 竖条同步 / 就地刷新都用它。
+			std::vector<RE::Scaleform::GFx::Value> ourRefs;  // 条目对象（含子项）
+			std::vector<std::uint32_t>             ourUids;  // 条目 uID（含子项 —— uID = 主条目的）
+			std::uint32_t                          guideUid{};// 竖条：当前引导的任务
 		};
 
 		InjectCtx  g_ctxStore;
@@ -460,6 +623,464 @@ namespace SAQ::UiInject
 			args[4] = false;
 			RE::Scaleform::GFx::Value ret;
 			return SafeValueInvoke(&a_tabSel, "addEventListener", &ret, args, 5);
+		}
+
+		// ====================================================================
+		// 三·补、交互接管（★★★ 第 140 轮 · P4 · docs/15 十四节）
+		//
+		// 接管面（全部是「我们的条目走我们的路 / 原版条目逐行委托回原版」）：
+		//   ① X（SET COURSE，`PlotToLocationButton_mc`）—— 原版 Data 是 **protected trait**
+		//      （U5 实测读不到 ⇒ 无法「保存-还原」）⇒ 换法 = 造我们的 `ButtonBaseData`
+		//      （label 用原版 label 键，文本不变）+ `SetButtonData`；原版条目由我们的回调
+		//      **复刻原版 dispatch**（`MissionMenu_PlotToLocation`）委托；
+		//   ② Y（SHOW ON MAP，`ShowOnMapButton_mc`）—— 同上（委托事件 =
+		//      `MissionMenu_ShowItemLocation`）；
+		//   ③ 条目激活（`MissionsList::itemActivated`，Enter / 鼠标点击）—— priority=100
+		//      监听：我们的条目 ⇒ `stopPropagation`（原版处理器会给引擎发不存在的
+		//      questID）+ 子项切换引导；原版条目 ⇒ 放行（完全走原版）。
+		//   ④ 引导态竖条：我们的条目 `bActive` = 「正在引导的那条」（`SAQ::CurrentGuideQuestID`）
+		//      ⇒ 就地刷新（U7 手法：逐个可见 clip → `SetEntryText`，不重建列表）；
+		//   ⑤ 星图交接 / 真关菜单原语：结果码 0 且要星图 ⇒ 调原版
+		//      `Menu_mc.ProcessUserEvent("Missions", false)`（= 原版 `CloseMenu(true)` →
+		//      `CloseAllMenus()`：整个暂停菜单关闭、游戏恢复运行）⇒ 脚本节拍恢复后在
+		//      下一个轮询打开星图（与 SWF 版同一条链路）。
+		//
+		// 委托的「逐行复刻」出处 = `_tmp_ffdec_base/scripts/MissionMenu.as`：
+		//   OnPlotCourseEvent / OnShowOnMapEvent 各 6 行 —— IsMission(entry) ? {uID, -1} :
+		//   {uOwnerQuestFormID, uIndex}；事件名与音效 ID 见第二节的常量。
+		// ====================================================================
+
+		enum class ActionKind
+		{
+			kSetCourse,   // X：引导 + 请求星图（永不取消 —— 第 39 轮定案）
+			kShowOnMap,   // Y：只为它设引导（不开星图；原版 Y 也不会取消追踪）
+			kActivate,    // Enter / 点击：子项 = 切换引导；主条目 = 只展开（原版树逻辑）
+		};
+
+		const char* ActionName(ActionKind a_kind)
+		{
+			switch (a_kind) {
+			case ActionKind::kSetCourse: return "X 键（设定航线）";
+			case ActionKind::kShowOnMap: return "Y 键（显示在地图上）";
+			default:                     return "条目激活（Enter/点击）";
+			}
+		}
+
+		// 接管计数 + dry-run（harness 探针用；产品路径恒 false / 只累加计数）。
+		TakeoverCounts g_takeoverCounts;
+		bool           g_dryRun{ false };
+		std::uint32_t  g_takeoverActs{};        // 真动作数（dry-run ⇒ 0）
+		bool           g_lastCloseCalled{};     // 最近一次「星图交接」有没有真的调出关菜单原语
+
+		RE::Scaleform::GFx::ASMovieRootBase* RootNow()
+		{
+			auto* root = reinterpret_cast<RE::Scaleform::GFx::ASMovieRootBase*>(UI::ResolvedAsMovieRoot());
+			if (!root) {
+				std::string why;
+				if (UI::EnsureResolved(why)) {
+					root = reinterpret_cast<RE::Scaleform::GFx::ASMovieRootBase*>(UI::ResolvedAsMovieRoot());
+				}
+			}
+			return root;
+		}
+
+		bool SafeReadMemberNumber(RE::Scaleform::GFx::Value& a_obj, const char* a_name, double& a_out)
+		{
+			RE::Scaleform::GFx::Value v;
+			return SafeValueGetMember(&a_obj, a_name, &v) && SafeReadValueNumber(v, a_out);
+		}
+
+		bool SafeReadMemberBool(RE::Scaleform::GFx::Value& a_obj, const char* a_name, bool& a_out)
+		{
+			RE::Scaleform::GFx::Value v;
+			return SafeValueGetMember(&a_obj, a_name, &v) && SafeReadValueBool(v, a_out);
+		}
+
+		// 选中项分类（**只读**）：0 = 无选中（含分隔行）/ 1 = 我们的条目 / 2 = 原版条目。
+		//   a_uid = uID；a_isChild = 无 `aObjectives`（= 我们的子项）；a_canNavigate = bSaqHasTarget。
+		//   判据 = 「uID 在我们的清单里」（不靠 iType —— 清单是构建期记下的，最直接）。
+		int ClassifySelection(InjectCtx& a_ctx, double& a_uid, bool& a_isChild, bool& a_canNavigate,
+			RE::Scaleform::GFx::Value* a_selOut)
+		{
+			a_uid = -1.0;
+			a_isChild = false;
+			a_canNavigate = false;
+			RE::Scaleform::GFx::Value sel;
+			if (!(SafeValueGetMember(&a_ctx.list, "selectedEntry", &sel) && sel.IsObject())) {
+				return 0;
+			}
+			if (a_selOut) {
+				*a_selOut = sel;
+			}
+			double uid = -1.0;
+			if (!SafeReadMemberNumber(sel, "uID", uid)) {
+				return 0;   // 分隔行 / 无 uID 的条目
+			}
+			a_uid = uid;
+			a_isChild = !sel.HasMember("aObjectives");
+			RE::Scaleform::GFx::Value nv;
+			bool                     nav = false;
+			a_canNavigate = SafeValueGetMember(&sel, "bSaqHasTarget", &nv) && SafeReadValueBool(nv, nav) && nav;
+			for (const auto u : a_ctx.ourUids) {
+				if (u == static_cast<std::uint32_t>(uid)) {
+					return 1;
+				}
+			}
+			return 2;
+		}
+
+		// 就地刷新（U7 手法）：可见 clip → `itemIndex` → `GetDataForEntry` → `SetEntryText`。
+		//   不重建列表 ⇒ 不丢滚动位置 / 展开态（第 14 轮的教训：显示下标 ≠ 数据下标）。
+		void RefreshVisibleRows(InjectCtx& a_ctx)
+		{
+			double clips = 0.0;
+			if (!(SafeReadMemberNumber(a_ctx.list, "totalEntryClips", clips) && clips > 0.0)) {
+				return;
+			}
+			const auto n = static_cast<std::uint32_t>(clips < 64.0 ? clips : 64.0);
+			for (std::uint32_t i = 0; i < n; ++i) {
+				RE::Scaleform::GFx::Value arg(static_cast<std::int32_t>(i));
+				RE::Scaleform::GFx::Value clip;
+				if (!(SafeValueInvoke(&a_ctx.list, "GetClipByIndex", &clip, &arg, 1) && clip.IsObject())) {
+					continue;
+				}
+				double idx = -1.0;
+				if (!(SafeReadMemberNumber(clip, "itemIndex", idx) && idx >= 0.0)) {
+					continue;
+				}
+				RE::Scaleform::GFx::Value arg2(static_cast<std::int32_t>(idx));
+				RE::Scaleform::GFx::Value entry;
+				if (!(SafeValueInvoke(&a_ctx.list, "GetDataForEntry", &entry, &arg2, 1) && entry.IsObject())) {
+					continue;
+				}
+				RE::Scaleform::GFx::Value ret;
+				(void)SafeValueInvoke(&clip, "SetEntryText", &ret, &entry, 1);
+			}
+		}
+
+		// 引导态竖条同步：我们的主条目 `bActive` = 「正在引导的那条」；变化才就地刷新。
+		void SyncGuideMarker(InjectCtx& a_ctx)
+		{
+			const auto current = SAQ::CurrentGuideQuestID();
+			if (current == a_ctx.guideUid) {
+				return;
+			}
+			a_ctx.guideUid = current;
+			bool changed = false;
+			for (std::size_t i = 0; i < a_ctx.ourRefs.size() && i < a_ctx.ourUids.size(); ++i) {
+				auto& ref = a_ctx.ourRefs[i];
+				if (!ref.IsObject() || !ref.HasMember("aObjectives")) {
+					continue;   // 子项不点竖条（与原版一致：竖条只在主条目上）
+				}
+				const bool want = a_ctx.ourUids[i] == current;
+				double     had = -1.0;
+				if (SafeReadMemberNumber(ref, "bActive", had) &&
+					(had != 0.0) == want) {
+					continue;
+				}
+				(void)SafeValueSetMember(&ref, "bActive", RE::Scaleform::GFx::Value(want));
+				changed = true;
+			}
+			if (changed) {
+				RefreshVisibleRows(a_ctx);
+			}
+		}
+
+		// ★ 真关菜单原语：`Menu_mc.ProcessUserEvent("Missions", false)` —— 原版
+		//   `onCloseSubMenuToGame` → `CloseMenu(true)` → `CloseAllMenus()`：整个暂停菜单
+		//   一起关、游戏恢复运行（`ProcessUserEvent("ReturnToStarMap")` 只关任务菜单一层，
+		//   会停在暂停菜单里 ⇒ 脚本定时器继续冻结 ⇒ 星图打不开 —— 别用那个）。
+		bool CloseMenusToGame(InjectCtx& a_ctx)
+		{
+			auto* root = RootNow();
+			if (!root) {
+				return false;
+			}
+			RE::Scaleform::GFx::Value evName;
+			if (!SafeCreateString(root, &evName, "Missions")) {
+				return false;
+			}
+			RE::Scaleform::GFx::Value args[2]{ evName, RE::Scaleform::GFx::Value(false) };
+			RE::Scaleform::GFx::Value ret;
+			return SafeValueInvoke(&a_ctx.menu, "ProcessUserEvent", &ret, args, 2);
+		}
+
+		// 接管动作的公共实现（X / Y / 激活三条路都走这里）。
+		void PerformTakeoverAction(ActionKind a_kind)
+		{
+			const char* where = ActionName(a_kind);
+			if (!(g_ctx && g_ctx->menuActive)) {
+				REX::INFO("界面接管：{} 收到时注入上下文不在（菜单已关？）—— 忽略", where);
+				return;
+			}
+			InjectCtx& ctx = *g_ctx;
+			auto&      n = g_takeoverCounts;
+			switch (a_kind) {
+			case ActionKind::kSetCourse: ++n.keyX; break;
+			case ActionKind::kShowOnMap: ++n.keyY; break;
+			default:                     ++n.activate; break;
+			}
+
+			double                     uid = -1.0;
+			bool                       isChild = false, canNav = false;
+			RE::Scaleform::GFx::Value  sel;
+			const int                  cls = ClassifySelection(ctx, uid, isChild, canNav, &sel);
+			const std::uint32_t        id = static_cast<std::uint32_t>(uid);
+
+			if (cls == 0) {
+				REX::INFO("界面接管：{} —— 当前没有选中项（不做任何事）", where);
+				return;
+			}
+
+			// ---- 原版条目：委托（逐行复刻原版 AS3 的 dispatch）----
+			if (cls == 2) {
+				++n.delegated;
+				if (a_kind == ActionKind::kActivate) {
+					// ★ 原版条目的（Enter / 点击）：我们**不拦**（上面没有 stopPropagation）
+					//   —— 原版 `onMissionListItemActivated` 照常执行（追踪 / 展开 / 详情）。
+					//   只有我们自己的条目才需要拦下（原版处理器会给引擎发不存在的 questID）。
+					REX::INFO("界面接管：{} —— 原版条目 0x{:08X} 放行给原版处理器", where, id);
+					return;
+				}
+				const bool isMission = sel.HasMember("aObjectives");
+				double     q = uid, o = -1.0;
+				if (!isMission) {
+					double owner = -1.0, index = -1.0;
+					(void)SafeReadMemberNumber(sel, "uOwnerQuestFormID", owner);
+					(void)SafeReadMemberNumber(sel, "uIndex", index);
+					q = owner;
+					o = index;
+				}
+				if (g_dryRun) {
+					REX::INFO("界面接管：{}（dry-run）—— 原版条目 0x{:08X} 判定为「委托原版路径」", where, id);
+					return;
+				}
+				auto*      root = RootNow();
+				const bool ok = root && DispatchEngineEvent(root, ctx.list,
+					a_kind == ActionKind::kShowOnMap ? kEventShowItemLocation : kEventPlotToLocation, q, o);
+				if (root) {
+					PlaySound(root, ctx.list, kSoundShowOnMap);
+				}
+				if (ok) {
+					++g_takeoverActs;
+				}
+				REX::INFO("界面接管：{} —— 原版条目 0x{:08X}（mission={}）已委托回原版（{}）",
+					where, id, isMission ? "是" : "否", ok ? "ok" : "fail");
+				return;
+			}
+
+			// ---- 我们的条目 ----
+			++n.ours;
+			if (a_kind == ActionKind::kActivate && !isChild) {
+				// 主条目：展开 / 收起已由原版树逻辑（BSScrollingTree.onEntryPress）完成 ——
+				//   我们拦下事件（防止原版处理器给引擎发不存在的 questID）后什么都不做。
+				REX::INFO("界面接管：{} —— 我们的主条目 0x{:08X}（展开/收起由原版树逻辑完成）", where, id);
+				return;
+			}
+			if (!canNav) {
+				// 没有导航目标（按钮本来就是灰的 / 子项仍可选中）—— 不发请求，给一声 OFF 音。
+				if (auto* root = RootNow()) {
+					PlaySound(root, ctx.list, kSoundTrackingOff);
+				}
+				REX::INFO("界面接管：{} —— 我们的条目 0x{:08X} 没有导航目标（不发请求；描述里已写明原因）",
+					where, id);
+				return;
+			}
+			if (g_dryRun) {
+				REX::INFO("界面接管：{}（dry-run）—— 我们的条目 0x{:08X}（{}）判定为「走我们的引导路径」",
+					where, id, isChild ? "子项" : "主条目");
+				return;
+			}
+
+			// X = 引导 + 请求星图（永不取消）；Y = 只为它设引导；激活子项 = 切换引导。
+			const bool wantMap = (a_kind == ActionKind::kSetCourse);
+			const bool toggleCancel = (a_kind == ActionKind::kActivate);
+			const int  code = SAQ::RequestGuideFromInject(id, wantMap, toggleCancel);
+			++n.guideReq;
+			++g_takeoverActs;
+			const bool nowGuiding = SAQ::CurrentGuideQuestID() != 0;
+			if (auto* root = RootNow()) {
+				PlaySound(root, ctx.list, nowGuiding ? kSoundTrackingOn : kSoundTrackingOff);
+			}
+			SyncGuideMarker(ctx);   // 竖条（引导中 = 亮）
+			if (code == 0) {
+				REX::INFO("界面接管：{} —— 引导已下发（0x{:08X}{}）",
+					where, id, nowGuiding ? "" : " 已取消");
+				if (wantMap) {
+					const bool closed = CloseMenusToGame(ctx);
+					g_lastCloseCalled = closed;
+					REX::INFO("界面接管：星图交接 —— {}（原版「回游戏」原语 "
+							  "ProcessUserEvent(\"Missions\")；脚本会在菜单关闭后的下一个轮询节拍打开星图）",
+						closed ? "已调用" : "调用失败（菜单可能已关）");
+				}
+			} else if (code == 5) {
+				REX::INFO("界面接管：{} —— 0x{:08X} 的目标尚未加载：保持待生效（不开星图；"
+						  "脚本会发 HUD 提示，靠近目标区域后自动生效）",
+					where, id);
+			} else {
+				REX::WARN("界面接管：{} —— 0x{:08X} 引导失败（结果码 {}：1=没有引导目标 / "
+						  "2=写通道失败 / 3=静态表里没有）",
+					where, id, code);
+			}
+		}
+
+		class TakeoverHandler : public RE::Scaleform::GFx::FunctionHandler
+		{
+		public:
+			explicit TakeoverHandler(ActionKind a_kind) : kind(a_kind) {}
+
+			void Call(const Params& a_params) override
+			{
+				if (kind == ActionKind::kActivate) {
+					// 激活事件：我们的条目 ⇒ **拦下**（stopPropagation 阻断冒泡到
+					//   MissionMenu 的原版处理器 —— 它会往引擎发不存在的 questID）。
+					double uid = -1.0;
+					bool   isChild = false, canNav = false;
+					const int cls = g_ctx ? ClassifySelection(*g_ctx, uid, isChild, canNav, nullptr) : 0;
+					if (cls == 1 && a_params.argCount >= 1 && a_params.args) {
+						RE::Scaleform::GFx::Value ret;
+						(void)SafeValueInvoke(&a_params.args[0], "stopPropagation", &ret, nullptr, 0);
+						++g_takeoverCounts.blocked;
+					}
+				}
+				PerformTakeoverAction(kind);
+			}
+
+			ActionKind kind;
+		};
+
+		TakeoverHandler g_takeoverX{ ActionKind::kSetCourse };
+		TakeoverHandler g_takeoverY{ ActionKind::kShowOnMap };
+		TakeoverHandler g_takeoverActivate{ ActionKind::kActivate };
+
+		// 把我们的回调装到按钮上。「保存-还原」不可行（原 Data 是 protected）⇒ 换 +
+		//   原版条目「逐行复刻委托」（见第三·补节说明）。返回接线证据（读了 UserEvents 数）。
+		bool HijackButton(RE::Scaleform::GFx::ASMovieRootBase* a_root, RE::Scaleform::GFx::Value& a_button,
+			const char* a_key, const char* a_label, RE::Scaleform::GFx::FunctionHandler* a_handler,
+			RE::Scaleform::GFx::Value& a_keepData, std::string& a_why)
+		{
+			RE::Scaleform::GFx::Value fn;
+			if (!(VtableSlotInModule(a_root, kSlotAsRootCreateFunction) &&
+					SafeCreateFunction(a_root, &fn, a_handler, nullptr))) {
+				a_why = "CreateFunction";
+				return false;
+			}
+			RE::Scaleform::GFx::Value key, code;
+			if (!(SafeCreateString(a_root, &key, a_key) && SafeCreateString(a_root, &code, kInertEventCode))) {
+				a_why = "字符串编码";
+				return false;
+			}
+			// UserEventData(sUserEvent, funcCallback, sCodeCallback, bEnabled)
+			RE::Scaleform::GFx::Value ud;
+			{
+				RE::Scaleform::GFx::Value args[4]{ key, fn, code, RE::Scaleform::GFx::Value(true) };
+				if (!SafeCreateObjectOfClass(a_root, &ud, kUserEventDataNames, kClassNameCount, args, 4)) {
+					a_why = "UserEventData";
+					return false;
+				}
+			}
+			RE::Scaleform::GFx::Value arr;
+			if (!(VtableSlotInModule(a_root, kSlotAsRootCreateArray) && SafeCreateArray(a_root, &arr) &&
+					SafeValuePushBack(&arr, ud))) {
+				a_why = "事件数组";
+				return false;
+			}
+			// ButtonBaseData(label, [ud], bEnabled=true, bVisible=true) —— label 用原版 label 键
+			//   （按钮文本不变；`$SET COURSE` / `$SHOWONMAP` 与语言无关，由原版自己本地化）。
+			RE::Scaleform::GFx::Value label;
+			if (!SafeCreateString(a_root, &label, a_label)) {
+				a_why = "label";
+				return false;
+			}
+			RE::Scaleform::GFx::Value data;
+			{
+				RE::Scaleform::GFx::Value args[4]{ label, arr, RE::Scaleform::GFx::Value(true),
+					RE::Scaleform::GFx::Value(true) };
+				if (!SafeCreateObjectOfClass(a_root, &data, kButtonBaseDataNames, kClassNameCount, args, 4)) {
+					a_why = "ButtonBaseData";
+					return false;
+				}
+			}
+			// 接线证据（第 131 轮的教训：光「造出来是个 object」不算 —— 读回 NumUserEvents）。
+			{
+				RE::Scaleform::GFx::Value uev;
+				double                   wire = -1.0;
+				if (!(SafeValueGetMember(&data, "UserEvents", &uev) && uev.IsObject() &&
+						SafeReadMemberNumber(uev, "NumUserEvents", wire) && wire == 1.0)) {
+					a_why = "接线（UserEvents 读回失败）";
+					return false;
+				}
+			}
+			// 换 Data 前先记下按钮当前的置灰态（原版 `onMissionSelectionChange` 按当前
+			//   选中的条目算好的）—— 换完立刻写回，避免「刚劫持那一拍」按钮亮错。
+			bool       enBefore = true;
+			const bool enRead = SafeReadMemberBool(a_button, "Enabled", enBefore);
+			RE::Scaleform::GFx::Value ret;
+			if (!SafeValueInvoke(&a_button, "SetButtonData", &ret, &data, 1)) {
+				a_why = "SetButtonData";
+				return false;
+			}
+			RE::Scaleform::GFx::Value ret2;
+			(void)SafeValueInvoke(&a_button, "RefreshButtonData", &ret2, nullptr, 0);
+			if (enRead) {
+				(void)SafeValueSetMember(&a_button, "Enabled", RE::Scaleform::GFx::Value(enBefore));
+			}
+			a_keepData = data;
+			return true;
+		}
+
+		// 装接管层（幂等）：劫持 X / Y + 挂 itemActivated 监听。返回 ok；a_why 写明断在哪。
+		bool InstallTakeover(RE::Scaleform::GFx::ASMovieRootBase* a_root, InjectCtx& a_ctx, std::string& a_why)
+		{
+			if (a_ctx.takeover) {
+				return true;
+			}
+			RE::Scaleform::GFx::Value bar;
+			if (!(SafeValueGetMember(&a_ctx.menu, "ButtonBar_mc", &bar) && bar.IsObject())) {
+				a_why = "ButtonBar_mc 取不到";
+				return false;
+			}
+			if (!(SafeValueGetMember(&bar, kBtnPlotToLocation, &a_ctx.btnX) && a_ctx.btnX.IsObject())) {
+				a_why = "PlotToLocationButton_mc 取不到";
+				return false;
+			}
+			if (!(SafeValueGetMember(&bar, kBtnShowOnMap, &a_ctx.btnY) && a_ctx.btnY.IsObject())) {
+				a_why = "ShowOnMapButton_mc 取不到";
+				return false;
+			}
+			std::string why;
+			if (!HijackButton(a_root, a_ctx.btnX, kKeyPlotToLocation, kLabelPlotToLocation, &g_takeoverX,
+					a_ctx.dataX, why)) {
+				a_why = "X（设定航线）劫持失败：" + why;
+				return false;
+			}
+			if (!HijackButton(a_root, a_ctx.btnY, kKeyShowOnMap, kLabelShowOnMap, &g_takeoverY,
+					a_ctx.dataY, why)) {
+				a_why = "Y（显示在地图上）劫持失败：" + why;
+				return false;
+			}
+			// 条目激活监听（priority=100；原版 MissionMenu 的监听在 Menu_mc 上、靠冒泡收到
+			//   —— 我们 stopPropagation 即可挡住它）。
+			RE::Scaleform::GFx::Value fn;
+			if (!(VtableSlotInModule(a_root, kSlotAsRootCreateFunction) &&
+					SafeCreateFunction(a_root, &fn, &g_takeoverActivate, nullptr))) {
+				a_why = "激活监听 CreateFunction";
+				return false;
+			}
+			RE::Scaleform::GFx::Value evName;
+			if (!SafeCreateString(a_root, &evName, kItemActivatedEvent)) {
+				a_why = "激活事件名编码";
+				return false;
+			}
+			RE::Scaleform::GFx::Value args[5]{ evName, fn, false,
+				static_cast<std::uint32_t>(kInterceptPriority), false };
+			RE::Scaleform::GFx::Value ret;
+			if (!SafeValueInvoke(&a_ctx.list, "addEventListener", &ret, args, 5)) {
+				a_why = "addEventListener（itemActivated）";
+				return false;
+			}
+			a_ctx.takeover = true;
+			return true;
 		}
 
 		// ====================================================================
@@ -662,8 +1283,26 @@ namespace SAQ::UiInject
 			return s + approach;
 		}
 
+		// 子项（「目标」条目）的名字 —— 与 SWF 版 `SaqBuildObjective` 同源：
+		//   可重复 NPC 入口 / 任务板入口 / 普通任务三档。
+		std::string BuildChildName(const QuestEntry& a_e, bool a_zh)
+		{
+			if (a_e.type == kNpcEntryType) {
+				return a_zh ? "与他交谈（可重复任务）" : "Talk to them (repeatable job)";
+			}
+			if (a_e.type == kEntryBoardType) {
+				return a_zh ? "前往任务板" : "Go to the mission board";
+			}
+			return a_zh ? "前往接取地点" : "Reach the pickup location";
+		}
+
 		// 构造我们的条目数组。字段集 = 探针 v4 已验证的最小集 + 真实值（第 130/131 轮）。
 		//   ★ 第 137 轮：a_courseKey = 按键名（完整描述文案的分支用；空串 = 取不到）。
+		//   ★★★ 第 140 轮（P4）：每个主条目带**一条子项**（`aObjectives`，与 SWF 版
+		//   `SaqBuildObjective` 同源）—— 原版树逻辑于是可以展开、SelectedEntry 可以落到
+		//   子项上（Enter 子项 = 切换引导）。**关键**：`MissionsListEntry.CanShowOnMap`
+		//   对「有子项的主条目」取的是 `aObjectives[0].bCanShowOnMap` ⇒ 子项的该字段
+		//   必须 = 这条任务能不能导航（否则 SET COURSE 永远置灰）。
 		bool BuildOurEntries(RE::Scaleform::GFx::ASMovieRootBase* a_root,
 			const std::vector<QuestEntry>& a_quests, bool a_zh, const std::string& a_courseKey,
 			RE::Scaleform::GFx::Value& a_out, InjectCtx& a_ctx, const char*& a_why)
@@ -673,6 +1312,9 @@ namespace SAQ::UiInject
 				a_why = "CreateArray";
 				return false;
 			}
+			a_ctx.ourRefs.clear();
+			a_ctx.ourUids.clear();
+			const auto guideUid = SAQ::CurrentGuideQuestID();
 			std::uint32_t i = 0;
 			for (const auto& e : a_quests) {
 				RE::Scaleform::GFx::Value item;
@@ -705,21 +1347,71 @@ namespace SAQ::UiInject
 				setI32("iFaction", e.faction);
 				setBool("bComplete", false);
 				setBool("bFailed", false);
-				setBool("bActive", false);
+				// ★ 第 140 轮：竖条 = 「当前引导的就是这条」（与 SWF 版 `SaqBuildEntry` 同源）。
+				setBool("bActive", guideUid != 0 && e.formID == guideUid);
 				setI32("iRemainingTime", -1);           // <0 ⇒ 隐藏时间标签（渲染路径防御）
+				// ★ 我们自己的标记（SWF 版同源；注入形态的过滤仍靠 iType + tab 掩码）：
+				//   bSaqAvailable 只用于诊断；bSaqHasTarget = 「这条能不能导航」（点击决策用，
+				//   与按钮置灰同源）。
+				setBool("bSaqAvailable", true);
+				setBool("bSaqHasTarget", e.hasGuideTarget);
+				// aObjectives = 一条子项（原版 `IsMission` = hasOwnProperty("aObjectives")
+				//   —— 缺它整批被过滤（第 121 轮真因）；有子项才能展开 / 选中子项）；
+				//   ★ 子项**不能**带 aObjectives（否则它会被当成"任务"）。
 				{
-					// aObjectives = 空数组：原版 `MissionsListEntry.IsMission` =
-					//   `hasOwnProperty("aObjectives")` —— 缺它整批被过滤（第 121 轮真因）。
-					RE::Scaleform::GFx::Value objs;
-					if (VtableSlotInModule(a_root, kSlotAsRootCreateArray) &&
-						SafeCreateArray(a_root, &objs)) {
-						(void)SafeValueSetMember(&item, "aObjectives", objs);
+					RE::Scaleform::GFx::Value child;
+					if (!SafeCreateObject(a_root, &child)) {
+						a_why = "CreateObject（子项）";
+						return false;
 					}
+					auto cU32 = [&child](const char* a_name, std::uint32_t a_v) {
+						(void)SafeValueSetMember(&child, a_name, RE::Scaleform::GFx::Value(a_v));
+					};
+					auto cI32 = [&child](const char* a_name, std::int32_t a_v) {
+						(void)SafeValueSetMember(&child, a_name, RE::Scaleform::GFx::Value(a_v));
+					};
+					auto cBool = [&child](const char* a_name, bool a_v) {
+						(void)SafeValueSetMember(&child, a_name, RE::Scaleform::GFx::Value(a_v));
+					};
+					auto cStr = [a_root, &child](const char* a_name, const std::string& a_v) {
+						RE::Scaleform::GFx::Value x;
+						if (SafeCreateString(a_root, &x, a_v.c_str())) {
+							(void)SafeValueSetMember(&child, a_name, x);
+						}
+					};
+					cU32("uID", e.formID);
+					cU32("uOwnerQuestFormID", e.formID);
+					cI32("uIndex", 0);
+					cU32("uInstanceID", 0);
+					cI32("iType", static_cast<std::int32_t>(kAvailableQuestType));
+					cI32("iFaction", -1);   // 子项不带势力徽记（与 SWF 版 SaqBuildObjective 同源）
+					cBool("bComplete", false);
+					cBool("bFailed", false);
+					cBool("bActive", false);
+					cBool("bIsMiscObjective", false);
+					cI32("iRemainingTime", -1);
+					// ★★ 主条目的「能不能导航」在**这里**（`CanShowOnMap` 对带子项的主条目
+					//   取 aObjectives[0].bCanShowOnMap）—— 忘了它就永远置灰。
+					cBool("bCanShowOnMap", e.hasGuideTarget);
+					cBool("bSaqHasTarget", e.hasGuideTarget);
+					cStr("sName", BuildChildName(e, a_zh));
+					cStr("sDescription", "");
+					RE::Scaleform::GFx::Value objs;
+					if (!(VtableSlotInModule(a_root, kSlotAsRootCreateArray) &&
+							SafeCreateArray(a_root, &objs) && SafeValuePushBack(&objs, child))) {
+						a_why = "子项数组";
+						return false;
+					}
+					(void)SafeValueSetMember(&item, "aObjectives", objs);
+					a_ctx.ourRefs.push_back(child);   // 分类 / 竖条 / 就地刷新用（C++ 侧引用）
+					a_ctx.ourUids.push_back(e.formID);
 				}
 				setStr("sName", BuildDisplayName(e, a_zh));
 				setStr("sDescription", BuildDescription(e, a_zh, a_courseKey));
 				// 「不可导航 ⇒ SET COURSE 置灰」是**数据驱动**的（docs/15 11.4-⑦ 已实测）。
 				setBool("bCanShowOnMap", e.hasGuideTarget);
+				a_ctx.ourRefs.push_back(item);
+				a_ctx.ourUids.push_back(e.formID);
 				if (i < 2) {
 					a_ctx.expectUid[i] = e.formID;
 					a_ctx.expectName[i] = BuildDisplayName(e, a_zh);
@@ -851,6 +1543,17 @@ namespace SAQ::UiInject
 		return g_ctx != nullptr ? g_ctx->replayCount : 0;
 	}
 
+	// ★★★ 第 140 轮（P4 交互接管）：见头文件说明。
+	TakeoverCounts GetTakeoverCounts()
+	{
+		return g_takeoverCounts;
+	}
+
+	bool TakeoverActive()
+	{
+		return g_ctx != nullptr && g_ctx->menuActive && g_ctx->takeover;
+	}
+
 	// 形态是否需要注入（auto = 已判定「界面不是我们的」）。
 	bool WantInject(bool a_uiChannelDead)
 	{
@@ -920,6 +1623,7 @@ namespace SAQ::UiInject
 		g_ctx = &g_ctxStore;
 		InjectCtx& ctx = g_ctxStore;
 		ctx.list = list;
+		ctx.menu = menu;   // ★ 第 140 轮：关菜单原语 / 类通道锚点
 
 		// 切 0（$ALL）→ 引擎快照（全量）→ 切回原 tab（在挂监听**之前**，走原版路径）。
 		(void)switchTab(0);
@@ -932,6 +1636,9 @@ namespace SAQ::UiInject
 		const char*       buildWhy = "ok";
 		const bool        buildOk = BuildOurEntries(root, quests, zh, courseKey, ctx.ourEntries,
 			ctx, buildWhy);
+		// ★ 第 140 轮：竖条基准 = 构建时的引导态（bActive 已按它写好 —— 这里只是让
+		//   `SyncGuideMarker` 的「有变化才刷」前提成立，避免激活后第一拍就全量刷新）。
+		ctx.guideUid = SAQ::CurrentGuideQuestID();
 
 		// 扩 tab（原版 7 项 + 我们的 → SetTabsData）。
 		RE::Scaleform::GFx::Value tabsArr;
@@ -947,6 +1654,15 @@ namespace SAQ::UiInject
 
 		// 挂拦截监听（priority=100）。
 		ctx.listening = tabsOk && AttachInterceptListener(root, tabSel);
+
+		// ★★★ 第 140 轮（P4 交互接管）：装接管层（劫持 X / Y + 挂 itemActivated 监听）。
+		//   失败不致命（注入本身照常工作；只是交互退化为「原版行为」）—— 记一行 WARN，
+		//   菜单关闭行里也带接管计数（回归判据）。
+		std::string takeoverWhy;
+		const bool  takeoverOk = ctx.listening && InstallTakeover(root, ctx, takeoverWhy);
+		if (!takeoverOk && ctx.listening) {
+			REX::WARN("界面接管：安装失败（{}）—— 注入照常，交互退回原版行为", takeoverWhy);
+		}
 
 		// 切回原 tab（此刻监听已挂、inOurTab=false ⇒ handler 无动作、放行原版）。
 		if (tabsOk && originalTab > 0.5) {
@@ -969,9 +1685,10 @@ namespace SAQ::UiInject
 				NumStr(tabs0), NumStr(tabs1));
 			return false;
 		}
-		REX::INFO("界面注入：已激活（UiMode={}，tab {}→{}，条目 {}，按键名={}，语言={}）",
+		REX::INFO("界面注入：已激活（UiMode={}，tab {}→{}，条目 {}，按键名={}，语言={}，接管={}）",
 			ModeName(g_mode), NumStr(tabs0), NumStr(tabs1), NumStr(ctx.injectCount),
-			courseKey.empty() ? "(空)" : courseKey, zh ? "zh" : "en");
+			courseKey.empty() ? "(空)" : courseKey, zh ? "zh" : "en",
+			ctx.takeover ? "ok" : "fail");
 		g_lastActivateTryMs = 0;   // 成功后清节流（下次菜单重新开始）
 		return true;
 	}
@@ -1014,6 +1731,10 @@ namespace SAQ::UiInject
 		if (!ctx.inOurTab) {
 			return;
 		}
+
+		// ★ 第 140 轮：竖条同步（引导被外部改变时 —— 如接取后自动取消 / 认领已有引导）。
+		//   没变化时 = 两次整数比较，零开销。
+		SyncGuideMarker(ctx);
 		const auto now = NowMs();
 		if (ctx.lastWatchdogMs != 0 && now - ctx.lastWatchdogMs < kWatchdogIntervalMs) {
 			return;
@@ -1289,10 +2010,311 @@ namespace SAQ::UiInject
 			InjectHandler::s_calls.load(), InjectHandler::s_injects.load(),
 			InjectHandler::s_restores.load());
 
+		// ★ 第 140 轮（P4 交互接管）：PoC 结束时把上下文登记为「本菜单注入已生效」——
+		//   `ui.interact` 的接管判据链以此为前提（也顺带让 menu.close 的汇总行走
+		//   「本轮为注入形态」那条分支）。竖条基准 = 当前引导。
+		ctx.menuActive = true;
+		ctx.guideUid = SAQ::CurrentGuideQuestID();
+
 		// ★ 监听**故意保留**：眼睛窗口里玩家切 tab 要靠它（没有它切到第 8 个 tab
 		//   会触发原版越界 TypeError）—— 副作用随 menu.close 自然清理（第 27/50 轮定案）。
 		out += "｜眼睛=请切到第 8 个 tab 看真实列表";
 		return out;
+	}
+
+	// ====================================================================
+	// 七、交互接管探针（★★★ 第 140 轮 · P4；harness `ui.interact`）
+	// ====================================================================
+
+	// dry-run 的 RAII 开关（探针只在「接线 + 分类」阶段用 —— 不产生任何副作用）。
+	struct DryRunGuard
+	{
+		bool prev;
+		explicit DryRunGuard(bool a_dry) : prev(g_dryRun)
+		{
+			g_dryRun = a_dry;
+		}
+		~DryRunGuard()
+		{
+			g_dryRun = prev;
+		}
+	};
+
+	// 派发 `MissionsList::itemActivated`（复刻原版 `MissionsList.onEntryPress` 的最后一步），
+	//   用来在探针里程序化地走一遍「Enter / 点击」这条链。
+	bool DispatchActivateEvent(RE::Scaleform::GFx::ASMovieRootBase* a_root, InjectCtx& a_ctx)
+	{
+		RE::Scaleform::GFx::Value cls;
+		if (!GetClassFromMovie(a_root, a_ctx.list, "flash.events.Event", cls)) {
+			// 短名兜底（getDefinition 的类名写法与 CreateObject 不完全一样）。
+			if (!GetClassFromMovie(a_root, a_ctx.list, "Event", cls)) {
+				return false;
+			}
+		}
+		RE::Scaleform::GFx::Value type;
+		if (!SafeCreateString(a_root, &type, kItemActivatedEvent)) {
+			return false;
+		}
+		RE::Scaleform::GFx::Value evtArgs[3]{ type, RE::Scaleform::GFx::Value(true),
+			RE::Scaleform::GFx::Value(true) };
+		RE::Scaleform::GFx::Value evt;
+		if (!SafeCreateObjectOfClass(a_root, &evt, kEventClassNames, kClassNameCount, evtArgs, 3)) {
+			return false;
+		}
+		RE::Scaleform::GFx::Value args[1]{ evt };
+		RE::Scaleform::GFx::Value ret;
+		return SafeValueInvoke(&a_ctx.list, "dispatchEvent", &ret, args, 1);
+	}
+
+	// 选中某条（数据下标）并读回校验（不校验成功 = 列表被重建过 / 下标错位）。
+	bool SelectIndex(InjectCtx& a_ctx, int a_idx, double& a_uidOut)
+	{
+		if (!SafeValueSetMember(&a_ctx.list, "selectedIndex",
+				RE::Scaleform::GFx::Value(static_cast<std::int32_t>(a_idx)))) {
+			return false;
+		}
+		RE::Scaleform::GFx::Value sel, uv;
+		if (!(SafeValueGetMember(&a_ctx.list, "selectedEntry", &sel) && sel.IsObject() &&
+				SafeValueGetMember(&sel, "uID", &uv))) {
+			return false;
+		}
+		return SafeReadValueNumber(uv, a_uidOut);
+	}
+
+	// `ui.interact` —— 接管接线 + 分类 + dry 触发 + 激活拦截（一行汇总）。
+	std::string RunInteractProbe()
+	{
+		std::string detail;
+		if (!UI::EnsureResolved(detail)) {
+			return "桥没通（" + EscapeForLog(detail, 200) + "）";
+		}
+		auto* root = reinterpret_cast<RE::Scaleform::GFx::ASMovieRootBase*>(UI::ResolvedAsMovieRoot());
+		if (!root) {
+			return "ASMovieRoot 指针为空";
+		}
+		if (!(g_ctx && g_ctx->menuActive)) {
+			return "注入上下文不在（先跑 ui.inject，或让产品路径激活：ui.mode auto + menu.open + wait）";
+		}
+		InjectCtx&  ctx = *g_ctx;
+		DryRunGuard dry(true);
+		std::string out;
+
+		// ---- R1 接管安装（幂等）----
+		std::string why;
+		const bool  installed = InstallTakeover(root, ctx, why);
+		out += std::format("｜接管={}", installed ?
+			std::string{ "ok（X=ok Y=ok｜接线 1/1｜激活监听=ok）" } : ("fail（" + why + "）"));
+		if (!installed) {
+			return "Menu_mc=ok" + out;
+		}
+
+		// ---- R2 分类判据（只读；三种形态各测一次）----
+		//   ① 无选中（selectedIndex = -1）；② 我们的条目（当前 tab）；③ 原版条目（切 0）。
+		std::size_t s_ours = 0, s_engine = 0, s_none = 0;
+		double      uid = -1.0;
+		{
+			bool isChild = false, canNav = false;
+			(void)SafeValueSetMember(&ctx.list, "selectedIndex", RE::Scaleform::GFx::Value(static_cast<std::int32_t>(-1)));
+			if (ClassifySelection(ctx, uid, isChild, canNav, nullptr) == 0) {
+				++s_none;
+			}
+			// 我们的条目（第一条）
+			double got = -1.0;
+			if (SelectIndex(ctx, 0, got)) {
+				if (ClassifySelection(ctx, uid, isChild, canNav, nullptr) == 1) {
+					++s_ours;
+				}
+			}
+		}
+		// 切到原版 tab（0）⇒ 拦截 handler 恢复引擎列表 ⇒ 选第一条 = 原版条目
+		{
+			RE::Scaleform::GFx::Value tabSel;
+			if (SafeValueGetMember(&ctx.menu, "TabbedFilterSelection_mc", &tabSel) && tabSel.IsObject()) {
+				RE::Scaleform::GFx::Value arg(static_cast<std::uint32_t>(0));
+				RE::Scaleform::GFx::Value ret;
+				if (SafeValueInvoke(&tabSel, "SetSelectedCategoryIndex", &ret, &arg, 1)) {
+					double     got = -1.0;
+					bool       isChild = false, canNav = false;
+					if (SelectIndex(ctx, 0, got) &&
+						ClassifySelection(ctx, uid, isChild, canNav, nullptr) == 2) {
+						++s_engine;
+					}
+				}
+				// 切回我们的 tab（拦截 handler 重新注入）
+				RE::Scaleform::GFx::Value arg2(static_cast<std::uint32_t>(ctx.ourTabIndex));
+				RE::Scaleform::GFx::Value ret2;
+				(void)SafeValueInvoke(&tabSel, "SetSelectedCategoryIndex", &ret2, &arg2, 1);
+			}
+		}
+		out += std::format("｜分类={}（我们 {}｜原版 {}｜无选中 {}）",
+			(s_ours == 1 && s_engine == 1 && s_none == 1) ? "ok" : "fail",
+			s_ours, s_engine, s_none);
+
+		// ---- R3 我们的条目上 dry 触发 X / Y（走真实按键路径：HandleUserEvent）----
+		//
+		//   ★ 用**子项行**（展开后的第 1 行）而不是主条目行：原版
+		//   `BSScrollingTree.onEntryPress` 对「有子项的条目」只做展开/收起、**不派发**
+		//   `itemActivated`；真正会走激活事件的是叶子行（= 我们的子项）——
+		//   子项行才是 R4 要验的那条真实链路（Enter/点击 → 切换引导）。
+		double       childUid = -1.0;
+		bool         childSelected = false;
+		{
+			// 展开第 0 条（原版树逻辑；`ShowEntryChildren` 是 public —— SWF 版也用它）。
+			RE::Scaleform::GFx::Value args[2]{ RE::Scaleform::GFx::Value(static_cast<std::int32_t>(0)),
+				RE::Scaleform::GFx::Value(true) };
+			RE::Scaleform::GFx::Value ret;
+			if (SafeValueInvoke(&ctx.list, "ShowEntryChildren", &ret, args, 2)) {
+				double uid0 = -1.0;
+				if (SelectIndex(ctx, 1, uid0)) {
+					RE::Scaleform::GFx::Value sel;
+					childSelected = SafeValueGetMember(&ctx.list, "selectedEntry", &sel) && sel.IsObject() &&
+						!sel.HasMember("aObjectives");   // 叶子行 = 我们的子项
+					childUid = uid0;
+				}
+			}
+		}
+		int passTrig = 0;
+		if (childSelected) {
+			const auto before = TakeoverCounts{ g_takeoverCounts };
+			auto       trigger = [root](RE::Scaleform::GFx::Value& a_button, const char* a_key) -> bool {
+				RE::Scaleform::GFx::Value keyVal;
+				if (!SafeCreateString(root, &keyVal, a_key)) {
+					return false;
+				}
+				RE::Scaleform::GFx::Value args[3]{ keyVal, RE::Scaleform::GFx::Value(false),
+					RE::Scaleform::GFx::Value(false) };
+				RE::Scaleform::GFx::Value ret;
+				return SafeValueInvoke(&a_button, "HandleUserEvent", &ret, args, 3);
+			};
+			(void)trigger(ctx.btnX, kKeyPlotToLocation);
+			if (g_takeoverCounts.keyX == before.keyX + 1) {
+				++passTrig;
+			}
+			(void)trigger(ctx.btnY, kKeyShowOnMap);
+			if (g_takeoverCounts.keyY == before.keyY + 1) {
+				++passTrig;
+			}
+			out += std::format("｜触发={}（子项 0x{:08X}｜X {} 次／Y {} 次，dry-run：只验证接线不动作）",
+				passTrig == 2 ? "ok" : "fail", static_cast<std::uint32_t>(childUid),
+				g_takeoverCounts.keyX - before.keyX, g_takeoverCounts.keyY - before.keyY);
+		} else {
+			out += "｜触发=fail（展开 + 选中我们的子项行失败 —— 列表可能被重建，先看注入状态）";
+		}
+
+		// ---- R4 激活拦截（派发 MissionsList::itemActivated；dry ⇒ 不动作 / 照常拦下）----
+		if (childSelected) {
+			const auto before = TakeoverCounts{ g_takeoverCounts };
+			const bool dispatched = DispatchActivateEvent(root, ctx);
+			const auto act = g_takeoverCounts.activate - before.activate;
+			const auto blk = g_takeoverCounts.blocked - before.blocked;
+			const bool pass = dispatched && act == 1 && blk == 1;
+			out += std::format("｜激活={}（派发={}；回调 {} 次／拦下 {} 次 —— {}）",
+				pass ? "ok" : "fail", dispatched ? "ok" : "fail", act, blk,
+				pass ? "原版处理器被 stopPropagation 挡住" : "期望 1/1");
+		} else {
+			out += "｜激活=fail（子项行不可用 —— 见上面的触发段）";
+		}
+
+		// ---- R5 收起并复位（不留展开态给后续步骤 / 眼睛窗口）----
+		{
+			RE::Scaleform::GFx::Value args[2]{ RE::Scaleform::GFx::Value(static_cast<std::int32_t>(0)),
+				RE::Scaleform::GFx::Value(false) };
+			RE::Scaleform::GFx::Value ret;
+			(void)SafeValueInvoke(&ctx.list, "ShowEntryChildren", &ret, args, 2);
+			double uid0 = -1.0;
+			(void)SelectIndex(ctx, 0, uid0);
+		}
+
+		// ---- R6 接管计数汇总（dry-run ⇒ 真动作 0）----
+		out += std::format("｜真动作={}（dry-run 期望 0）｜引导请求={}",
+			g_takeoverActs, g_takeoverCounts.guideReq);
+		return "Menu_mc=ok" + out;
+	}
+
+	// `ui.interact key X|Y` —— 真按键（走我们装在按钮上的真实回调）。
+	std::string RunInteractKey(const char* a_key)
+	{
+		std::string detail;
+		if (!UI::EnsureResolved(detail)) {
+			return "桥没通（" + EscapeForLog(detail, 200) + "）";
+		}
+		auto* root = reinterpret_cast<RE::Scaleform::GFx::ASMovieRootBase*>(UI::ResolvedAsMovieRoot());
+		if (!root) {
+			return "ASMovieRoot 指针为空";
+		}
+		if (!(g_ctx && g_ctx->menuActive)) {
+			return "注入上下文不在（先跑 ui.interact / 产品激活）";
+		}
+		InjectCtx& ctx = *g_ctx;
+		const bool isX = (a_key && (a_key[0] == 'X' || a_key[0] == 'x'));
+
+		// 选中「我们的条目里第一条**有导航目标**的」（逐条读回校验 uID；找不到 ⇒ 明说）。
+		double      count = 0.0;
+		int         targetIdx = -1;
+		std::uint32_t targetUid = 0;
+		if (SafeReadMemberNumber(ctx.list, "entryCount", count) && count > 0.0) {
+			const auto n = static_cast<std::uint32_t>(count);
+			for (std::uint32_t i = 0; i < n; ++i) {
+				RE::Scaleform::GFx::Value arg(static_cast<std::int32_t>(i));
+				RE::Scaleform::GFx::Value entry;
+				if (!(SafeValueInvoke(&ctx.list, "GetDataForEntry", &entry, &arg, 1) && entry.IsObject())) {
+					continue;
+				}
+				double                   uid = -1.0;
+				RE::Scaleform::GFx::Value nv;
+				bool                     nav = false;
+				if (!(SafeReadMemberNumber(entry, "uID", uid) &&
+						SafeValueGetMember(&entry, "bSaqHasTarget", &nv) && SafeReadValueBool(nv, nav) &&
+						nav)) {
+					continue;
+				}
+				targetIdx = static_cast<int>(i);
+				targetUid = static_cast<std::uint32_t>(uid);
+				break;
+			}
+		}
+		if (targetIdx < 0) {
+			return std::format("没找到「我们的条目里第一条有导航目标的」（entryCount={}）—— "
+							   "列表可能不在我们的 tab 上（先 ui.inject / 切到第 8 个 tab）",
+				NumStr(count));
+		}
+		double   selUid = -1.0;
+		const bool selOk = SelectIndex(ctx, targetIdx, selUid) &&
+			static_cast<std::uint32_t>(selUid) == targetUid;
+
+		const auto before = TakeoverCounts{ g_takeoverCounts };
+		RE::Scaleform::GFx::Value keyVal;
+		if (!SafeCreateString(root, &keyVal, isX ? kKeyPlotToLocation : kKeyShowOnMap)) {
+			return "按键名编码失败";
+		}
+		RE::Scaleform::GFx::Value args[3]{ keyVal, RE::Scaleform::GFx::Value(false),
+			RE::Scaleform::GFx::Value(false) };
+		RE::Scaleform::GFx::Value ret;
+		const bool               trig = SafeValueInvoke(isX ? &ctx.btnX : &ctx.btnY, "HandleUserEvent",
+			&ret, args, 3);
+		const auto               cb = isX ? (g_takeoverCounts.keyX - before.keyX)
+										 : (g_takeoverCounts.keyY - before.keyY);
+		const std::uint32_t      guiding = SAQ::CurrentGuideQuestID();
+		const char*              verdict = (cb == 1 && guiding == targetUid) ? "ok" :
+			(cb != 1 ? "fail（回调没收到）" : "fail（引导没设上）");
+		return std::format("选中=0x{:08X}（{}）｜按键={}（{}）｜回调={} 次｜引导={}（0x{:08X}）｜星图交接={}",
+			targetUid, selOk ? "ok" : "下标读回不一致", isX ? "X" : "Y",
+			trig ? "调用 ok" : "调用失败", cb, verdict, guiding,
+			isX ? (g_lastCloseCalled ? "已调用（原版「回游戏」原语）" : "未调用") : "不适用（Y 不开星图）");
+	}
+
+	// `ui.interact state` —— 只读状态行（真按键之后的端到端判据：星图是否被脚本打开）。
+	std::string RunInteractState()
+	{
+		const bool menuOpen = Test::MenuIsOpen("BSMissionMenu");
+		const bool starMap = Test::MenuIsOpen("GalaxyStarMapMenu");
+		const auto n = GetTakeoverCounts();
+		return std::format("任务菜单={}｜星图={}｜注入={}｜接管={}｜当前引导=0x{:08X}"
+						   "｜按压(X {}／Y {}／激活 {})｜拦下 {}｜委托 {}｜引导请求 {}｜真动作 {}",
+			menuOpen ? "开" : "关", starMap ? "开" : "关",
+			MenuActive() ? "激活" : "未激活", TakeoverActive() ? "已装" : "未装",
+			SAQ::CurrentGuideQuestID(), n.keyX, n.keyY, n.activate, n.blocked, n.delegated,
+			n.guideReq, g_takeoverActs);
 	}
 }
 

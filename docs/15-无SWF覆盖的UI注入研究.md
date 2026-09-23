@@ -44,382 +44,10 @@
 > **逐字迁移**到 `docs/90-历史记录（UI注入研究 第117轮初期取证）.md`，保留原文备查。
 > ★ 本文后续段落里对「第七节 / 第八节」的引用 = `docs/90` 的同名节。
 
-## 九、本轮产物（第 117 轮已落地）与待实机判读
+## 九 ~ 十·补（研究产物 / 探针实测判读 / 路线 D）—— 已迁 `docs/90`
 
-**已落地**（构建 + 部署 + `verify --dev` **0 MISS** + 离线层 3/3 全过）：
-
-| 产物 | 说明 |
-| --- | --- |
-| `plugin/src/SAQ_UI.{h,cpp}` | `ResearchGfxCapabilities(bool)` —— GFx 能力探针（U0 路径读 / U1 私有读写 / U2 `SetTabsData` / U3 事件注册）。**全部在 `#if SAQ_WITH_HARNESS` 段内**（发布构建零残留，verify 反向检查覆盖） |
-| `plugin/src/SAQ_Test.cpp` | 新 op `ui.research [events]`（一次性完成；结果打一行**产品日志** `界面研究探针 …` = 红线六） |
-| `tools/test/scenarios/SAQ_TestPlan.txt` | **+2 条用例**（用例集 39 → **41**）：`r117_gfx_research`（U1/U2）/ `r117_gfx_research_events`（U3） |
-| `tools/ui/verify_saq_build.py` | +10 条检查（4 条 DLL 特征串 dev/release 双向 + 6 条用例计划形状） |
-| MO2 部署 | 开发构建 DLL（含新探针）+ 41 条用例已同步；`Harness=0`（正常玩） |
-
-**待实机（下一轮，41 条用例）** —— 判读入口 = 日志里的 `界面研究探针 …` 一行：
-
-| 段落 | 值 | 含义 / 下一步 |
-| --- | --- | --- |
-| `GetVar槽=在\|无` | 无 | `GetVariable` 槽（0x32）在本版本不对 ⇒ 后续各项全 fail，要先换「Invoke/GetMember」路线（见下） |
-| `Menu_mc=ok` | ok | `_root.Menu_mc` 定位成功（实例名来自 SWF 结构取证） |
-| `私有读=(ok …)` | ok | **U1 读成立**：GFx 能读到 AS3 private 成员 ⇒ 注入"手脚"存在 |
-| `私有写=ok（N→N+1）` | ok | **U1 写成立** ← **成败关键**：第 8 个 tab 可存在（`FilterInfoA` 可改） |
-| `SetTabsData=ok（numTabs N→N+1）` | ok | **U2 成立**：tab 可控 |
-| `事件注册=ok` + `事件回调收到` | ok | **U3 成立**：交互可接管 |
-
-**眼睛（P1 副作用，可选看）**：写成功时 tab 条上会多一个第 9 个「SAQ研究」tab；
-菜单关掉再开应恢复 8 个（Movie 重建 ⇒ 副作用自然清理）。
-
-### 九·补、实测判读（2026-09-23 · 第 118 轮；41 条用例 41/41 全 PASS）
-
-**实测两行**（`r117_gfx_research` / `r117_gfx_research_events`，14:23:07~09）：
-
-```
-界面研究探针 GetVar槽=在｜Menu_mc=ok｜私有读=(fail HasMember=0 项数=0)｜私有写=未做（读失败）｜TabSel=ok numTabs=8｜事件=未试
-界面研究探针 GetVar槽=在｜Menu_mc=ok｜私有读=(fail HasMember=0 项数=0)｜私有写=未做（读失败）｜TabSel=ok numTabs=8｜MissionsList_mc=ok｜事件注册=ok
-界面研究探针：事件回调收到（第 1 次，argCount=1）   ← 随后走原版路径（ui.key Accept → onEntryPress → ITEM_ACTIVATED）真实触发
-```
-
-| 未知点 | 实测 | 判读 |
-| --- | --- | --- |
-| **U0** 路径基础设施 | `GetVar槽=在` + `Menu_mc=ok` | ✅ `GetVariable`（0x32）槽在本版本有效；`_root.Menu_mc` 定位成功 |
-| **U1** private 读写 | `私有读=(fail HasMember=0 项数=0)`；写被短路 | ❌ **能力边界**（非意外）：AVM2 private trait 带类私有 namespace，GFx 的 public multiname 查不到 ⇒ `SetMember` 写也只会创建 dynamic 公共属性、原版编译期绑定读不到 ⇒ **放弃"改 FilterInfoA"** |
-| **U2** public 调用 | `TabSel=ok numTabs=8`（对象 + getter 可达）；`SetTabsData` **未执行** | ❓ **未验证**：探针把 `SetTabsData` 调用耦合在 `writeOk && readOk` 之后（**探针设计缺陷** —— 它本身不依赖 `FilterInfoA`，参数即数组）⇒ 下一轮补测 |
-| **U3** 事件注入 | `事件注册=ok` + `事件回调收到（argCount=1）` | ✅ **成立**（`CreateFunction` + `addEventListener(..., priority=100)`，回调真实收到） |
-
-**结论：路线 A 不终止** —— U1 的失败可完整绕开，离线依据（反编译源码）：
-
-1. `FilterInfoA` 的唯一用途链 = `currentFilterFlag` getter（`FilterInfoA[idx].flag`，
-   原版 `MissionMenu.as:169-172`，public getter）→ 唯一消费者 `onFilterChanged`
-   （原版 `MissionMenu.as:343-354`，private）→ `MissionsList_mc.filterMask = currentFilterFlag`；
-2. **拦截事件即可绕过**：`onFilterChanged` 也是通过
-   `TabbedFilterSelection_mc.addEventListener(BSTabbedSelectionEvent.NAME, …)`
-   （原版 `:274`）挂的 —— U3 已证明我们能挂 priority=100 监听（先于原版 priority=0 收到）；
-   在切到第 8 tab（`iSelectedIndex==7`）时 `stopImmediatePropagation()` 拦住原版
-   （防 `FilterInfoA[7].flag` 越界 TypeError），随后自己设过滤；
-3. **自己设过滤可行**：`filterMask` 是 **public setter**（`BSScrollingTree.as:18-27`，
-   set 内自动 `FilterRootEntries()` 刷新显示）⇒ C++ `SetMember(MissionsList_mc, "filterMask", 64)`
-   （待 GFx 写验证）；
-4. `SetTabsData(Array, uint=0)` 是 public（`BSTabbedSelection.as:141`）且**参数就是数组本身**
-   ⇒ 加 tab 不依赖 U1（待补测）；
-5. 事件类型字符串 = **`"BSTabbedSelection::selectionChange"`**（`BSTabbedSelectionEvent.NAME`）；
-   事件对象带 `iSelectedIndex` / `iPreviousSelectionIndex`（public int，可供 C++ 回调读取）。
-
-### 九·补二、探针 v2 已落地（2026-09-23 · 第 119 轮；`ui.research2`）
-
-**实现**（`plugin/src/SAQ_UI.{h,cpp}` 的 `ResearchGfxInjection2`；harness 段内、发布零残留）：
-
-| 段 | 动作 | 判定（汇总行字段） |
-| --- | --- | --- |
-| R1 | `ObjVisitor` 扫 `Menu_mc`（尽力模式，含 AS3 public 链） | `枚举=(N 个,FilterInfoA=有/无)` |
-| R2 | 在 `TabbedFilterSelection_mc` 挂 `priority=100` 的 `"BSTabbedSelection::selectionChange"` 监听（原版 `onFilterChanged` 是 0） | `切7=ok`（拦截计数 ≥1） |
-| R3 | handler 对 `iSelectedIndex==7` `stopImmediatePropagation()` + `SetMember(filterMask, 哨兵 1<<29)` + 读回 | **哨兵存活 = 拦截 + 写双成立**（若没拦住，原版随后执行会把值覆盖回自己的 flag） |
-| R4 | C++ 构造数组 → `SetTabsData` → `numTabs` 读回 | `U2=ok（numTabs N→N+1→N）` |
-
-**判据链（一次执行四段；切 tab 走原版 public 入口 `SetSelectedCategoryIndex`
-—— 内部 `SetSelectedIndex` → `dispatchEvent`）**：
-
-1. 挂监听 → 读 `filterMask` 初值（`$ALL`）；
-2. 切 3 → 回调 idx=3（不拦）→ 原版执行 ⇒ mask 变化（**对照**：切换动作确实触发原版处理）；
-3. 切 7 → 回调 idx=7 → stop + 自设哨兵 ⇒ mask == `0x20000000`（**拦截 + 写**）；
-4. 切 0 → 回调 idx=0（不拦）→ 原版执行 ⇒ mask 回 `$ALL`（**不越权**：非 7 的 tab 不拦）；
-5. `removeEventListener` 清理（统计先抄走 —— remove 后 handler 可能被 delete）；
-6. U2 补测（破坏性，放最后）：构造 9 项 → `numTabs 8→9`；恢复 8 项 → `8`。
-
-用例 = `r119_gfx_inject2`（用例集 **41 → 42**，728 步）；verify +10 条（5 条 DLL 特征
-dev/release 双向 + 4 条用例计划形状 + 1 条只读反向）；断言 = **一条行内正则**
-（`切3=ok.*切7=ok.*切0=ok.*清理=ok.*U2=ok` —— 顺序固定，防拆散后漏段）。
-
-**副作用**：哨兵 `filterMask` / tab 数据被替换（`$SAQ测试0..8` / `$SAQ恢复0..7`）——
-菜单关闭随 Movie 销毁清理（第 27/50 轮定案）；用例内不做后续 UI 断言（`menu.close` 收尾）。
-
-**判读**：四段全 ok ⇒ 做 **P2**（原版 SWF 完整 PoC：MO2 临时禁用我们的 SWF 覆盖，
-验证 7 → 8 个 tab + 数据注入 + 交互接管）；任一段 fail ⇒ 按该段的实测值定位
-（哨兵不存活 = 拦截失败；`U2=fail` 自带原因）。若 2/3 又失败且无替代 ⇒ 路线 A 终止，
-回到路线 D（现状 + 冲突检测）。**实测 = 九·补三（五段全 ok ⇒ 做 P2）**。
-
-### 九·补三、探针 v2 实测判读（2026-09-23 · 第 120 轮；42 条用例 42/42 全 PASS）
-
-**实测一行**（`r119_gfx_inject2` 用例，14:53:43.324）：
-
-```
-界面研究探针2 Menu_mc=ok｜枚举=(82 个,FilterInfoA=无)｜切3=ok（mask 0xFFFFFFBF→0x00000008）｜切7=ok（拦截 1 次,mask→0x20000000）｜切0=ok（mask→0xFFFFFFBF）｜回调=3 次（末次 idx=0）｜清理=ok｜U2=ok（TabsData 调用 ok，numTabs 8→9→8）
-```
-
-| 段 | 实测 | 判读 |
-| --- | --- | --- |
-| R1 成员枚举 | `枚举=(82 个, FilterInfoA=无)` | U1 能力边界**再次确认**（private trait 不在 public 枚举里 —— 82 个成员 = FLA 公开成员 + dynamic 属性） |
-| R2 事件回调 | `回调=3 次（末次 idx=0）` | ✅ 三次切 tab（3/7/0）priority=100 监听**每次都先收到** |
-| R3 拦截 + 写 | `切7=ok（拦截 1 次，mask→0x20000000）` | ✅ **哨兵存活 = 拦截 + 写双成立**：`stopImmediatePropagation` 确实拦住了原版 `onFilterChanged`（否则它随后会用 `FilterInfoA[idx]` 的值把 mask 覆盖回去），且 `SetMember(filterMask)` 生效 |
-| R3 对照 | `切3=ok（mask 0xFFFFFFBF→0x00000008）` | ✅ 原版执行路径正常（切普通 tab 时 mask 按原版逻辑变化） |
-| R3 不越权 | `切0=ok（mask→0xFFFFFFBF）` | ✅ 非 7 的 tab 一律放行（拦截只对第 8 tab 生效） |
-| R4 U2 补测 | `U2=ok（TabsData 调用 ok，numTabs 8→9→8）` | ✅ **U2 成立**：`SetTabsData` 全链路（C++ 构造数组 → 调用 → getter 读回 → 恢复）可用 |
-| 清理 | `清理=ok` | ✅ `removeEventListener` 正常 |
-
-**结论：P1.5 全绿 —— 路线 A 的绕过路径实机确认**：
-
-1. **加 tab 可行**（U2：`SetTabsData` + `numTabs` getter 读写）；
-2. **不越界可行**（R3：拦截原版 `onFilterChanged` + 自设 `filterMask`，哨兵存活）；
-3. **交互接管可行**（R2 + 第 118 轮 U3：priority=100 监听真实先收到，可 `stopImmediatePropagation`）；
-4. 唯一限制 = 不能直接读写 `FilterInfoA`（U1）—— 但上述路径已完整绕开它。
-
-⇒ **下一步 = P2**（原版 SWF 完整 PoC）：MO2 临时禁用我们的 SWF 覆盖 ⇒ 在**原版
-7 个 tab** 的环境里验证「7 → 8 个 tab + 列表数据注入 + 交互接管」全链路；成功即
-"无 SWF 覆盖"目标形态成立，之后才评估功能迁移（第七节）与产品形态（第七节风险：
-建议"兼容模式"，默认仍走 SWF）。
-
-**P2 的探针设计注意点**（从本轮实测推出的两条）：
-- 原版 SWF 只有 7 个 tab（idx 0~6）⇒ 「切 7」在**扩 tab 之前**会被
-  `SetSelectedCategoryIndex` 拒绝（拒绝码 `tab-refused`，第 51 轮已见过该机制）——
-  P2 的探针顺序须改为「**先 `SetTabsData` 扩到 8 → 再切 7 验证拦截**」；
-- `filterMask` 初值（`$ALL`）与 tab 数无关，对照段（切 3）在原版上照样可用。
-
-### 九·补四、P2 已落地（2026-09-23 · 第 121 轮；`ui.research3`）
-
-**实现**（`plugin/src/SAQ_UI.{h,cpp}` 的 `ResearchGfxInjection3`；harness 段内、发布零残留）：
-
-| 段 | 动作 | 判定（汇总行字段） |
-| --- | --- | --- |
-| R1 | 读环境 `numTabs` / `entryCount` / `filterMask` | `环境=(numTabs 7,…)`（原版预期 7） |
-| R2 | `TabbedFilterSelection_mc` 挂 priority=100 的 `"BSTabbedSelection::selectionChange"` 监听 | （拦截计数在 R5 用） |
-| R3 | **扩 tab**：构造 N0+1 项（前 N0 项假数据 + 新 tab `"SAQ-PoC"` flag=1<<6）→ `SetTabsData` → `numTabs` 读回 | `扩tab=ok（7→8）` |
-| R4 | 切 3（对照） | `切3=ok`（原版执行 ⇒ 读**自己的** `FilterInfoA[3]` ⇒ mask 变） |
-| R5 | 切 N0（新 tab）：`stopImmediatePropagation` + 哨兵写 | **哨兵存活 = 拦截 + 写双成立**（`切7=ok（拦截 1 次,mask→0x20000000）`） |
-| R6 | 切 0（放行） | `切0=ok`（mask 回到 `$ALL`） |
-| R7 | `removeEventListener` | `清理=ok` |
-| R8 | 自设 `filterMask` = 1<<6（模拟产品「我们的 tab」状态） | （为 R9 铺路） |
-| R9 | **列表数据注入**：构造 3 条 iType=6 条目 → `MissionsList_mc.InitializeEntries` → `entryCount` 读回 | `注入=ok（entryCount 206→3）` |
-
-**判据链**（一条行内正则；顺序 = 输出顺序，防拆散后漏段）：
-`扩tab=ok.*切3=ok.*切7=ok.*切0=ok.*清理=ok.*注入=ok`。
-
-**为什么 R5 是「必须拦截」的硬证据**：原版 SWF 的 `FilterInfoA` 只有 7 项 ——
-原版 `onFilterChanged`（priority=0）会读 `FilterInfoA[7].flag` = `undefined.flag` ⇒
-TypeError。我们 priority=100 + `stopImmediatePropagation` 拦住它、自己设 mask
-（产品形态下 = 「切到我们的 tab」）；没拦住则哨兵被覆盖/异常打断 ⇒ 哨兵不存活。
-
-**P2 部署（`build-saq.ps1 -P2`）**：
-
-| 动作 | 细节 |
-| --- | --- |
-| SWF 覆盖禁用 | `Interface\missionmenu.swf` / `missionmenu_lrg.swf` → `*.p2off`（游戏加载原版） |
-| 用例计划切换 | 拷入 `SAQ_TestPlan_p2.txt`（只含 `r120_gfx_poc` 一条 —— 原版下我们 SWF 的 `ui.*` 测试入口全不可用）并写 ini `[Test] Plan=SAQ_TestPlan_p2.txt` |
-| 恢复 | 不带 `-P2` 再跑一次（例如 `-SkipTable -SkipSwf -Harness`）：SWF 拷回、`*.p2off` 清理、ini Plan 改回 `SAQ_TestPlan.txt` |
-
-**verify（`--p2` 模式）**：P2 期间部署 SWF 是**有意缺失**的 ⇒ `--p2` 改查
-`*.p2off` 存在证据、部署 ini `Plan` 必须指向 p2 计划；非 P2 模式反向检查
-`*.p2off` 残留与 Plan 残留（防「P2 没恢复干净」）。新增检查：探针3 特征串
-dev/release 双向 ×4 + r120 计划形状/断言 ×4 + 只读反向 ×1 + p2off 证据 ×2 +
-Plan 一致性 ×1。
-
-**待实机判读（下一轮）**：跑 P2 会话（`Harness=1` + `Plan=SAQ_TestPlan_p2.txt` +
-SWF 禁用）⇒ 判读 `界面研究探针3 …` 一行（六段同现 = ok）+ **眼睛**：菜单 tab 条上
-出现第 8 个 tab「SAQ-PoC」、列表被替换成 3 条「SAQ-PoC-Item i」（破坏性副作用，
-`menu.close` 收尾）。六段全 ok ⇒ 「无 SWF 覆盖」目标形态成立（**P2 通过**），
-再评估功能迁移（第七节）与产品形态（建议「兼容模式」，默认仍走 SWF）。
-
-### 九·补五、P2 首跑实测判读与修复（2026-09-23 · 第 122 轮）
-**五段 ok / 注入段 fail（真因已离线取证并修复，待复跑）**
-
-会话 15:15（`Plan=SAQ_TestPlan_p2.txt`、SWF 已禁用、开发 DLL 1078784 B / `stamp=65`）——
-用例 `r120_gfx_poc` FAIL（一条断言 = 六段同现正则）；实测行：
-
-```
-界面研究探针3 Menu_mc=ok｜环境=(numTabs 7,entryCount 1,mask 0xFFFFFFFF)｜扩tab=ok（7→8）
-｜切3=ok（mask 0xFFFFFFFF→0x00000008）｜切7=ok（拦截 1 次,mask→0x20000000）
-｜切0=ok（mask→0xFFFFFFFF）｜回调=3 次（末次 idx=0）｜清理=ok｜注入=fail（entryCount 1→0，期望 3）
-```
-
-| 段 | 实测 | 判读 |
-| --- | --- | --- |
-| 环境 | `numTabs 7` | ✅ **原版 SWF 生效**（P2 部署正确；我们的 SWF 是 8） |
-| 扩tab（7→8） | ok | ✅ `SetTabsData` 在原版 `BSTabbedSelection` 上生效 |
-| 切3（对照） | ok | ✅ 原版 `onFilterChanged` 正常执行（读自己的 `FilterInfoA[3]`） |
-| 切7（拦截 + 哨兵） | ok（拦截 1 次，`mask→0x20000000`） | ✅ **拦截 + 写双成立**（原版直接切 idx 7 会越界 TypeError —— 第 8 个 tab 必须拦截的硬证据，与 P1.5 一致） |
-| 切0（放行） | ok | ✅ 不越权 |
-| 清理 | ok | ✅ `removeEventListener` |
-| **注入** | **fail（entryCount 1→0）** | ❌ 真因见下（已修） |
-
-**注入失败真因（离线取证）**：原版 `MissionsList.FilterRootEntries`
-（`_tmp_ffdec_base/scripts/MissionsList.as:157`）的第一道门是
-`IsRootEntry(param1) = MissionsListEntry.IsMission(param1) || param1.bIsDivider === true`，
-而 `IsMission`（`MissionsListEntry.as:42`）= **`param1.hasOwnProperty("aObjectives")`** ——
-初版注入条目只设了 `uID/sName/iType/iFaction/bComplete/bFailed`，**没带 `aObjectives`**
-⇒ 3 条全部被过滤（`rawEntries` 收下、`entryList` 一条不留 ⇒ entryCount 0；起点 1 =
-原版菜单里那条真任务被这次注入整体替换掉）。我们 SWF 版的产品条目**本来就带**该字段
-（靠自加的 `bSaqAvailable` 分支放行）；原版没有该分支 ⇒ **运行时注入必须在字段上
-模拟 mission 条目**。第二道门 `EntryFilterCompare_Impl`（`MissionsList.as:202`，
-`(filterMask & 1 << iType) != 0`）本来就满足（iType=6 + mask=1<<6）。
-
-**修复（第 122 轮）**：每条注入条目补 `aObjectives`（空数组 ⇒ `GetChildrenOfEntry`
-返回空数组、行照常渲染、展开无子项）+ 渲染路径防御字段 `bActive=false` /
-`iRemainingTime=-1`（不设会走 `GlobalFunc.GetQuestTimeRemainingString(undefined)`；
-iType=6 的图标标签 = `default "None"`，帧存在、安全）；verify 新增特征串
-`aObjectives`（dev 正向 / 发布反向）防「改回只设 iType」再犯。**已重建部署（P2 态），待复跑**。
-
-### 九·补六、P2 复跑实测判读（2026-09-23 · 第 123 轮）
-**六段全 ok + 注入段修复一击生效 ⇒ P2 通过（「无 SWF 覆盖」目标形态技术成立）**
-
-会话 15:25~15:27（82172 ms / `Plan=SAQ_TestPlan_p2.txt`、SWF 覆盖已禁用、开发 DLL
-1079296 B）—— 用例 `r120_gfx_poc` **PASS**（10375 ms）；实测行：
-
-```
-界面研究探针3 Menu_mc=ok｜环境=(numTabs 7,entryCount 1,mask 0xFFFFFFFF)｜扩tab=ok（7→8）｜切3=ok（mask 0xFFFFFFFF→0x00000008）｜切7=ok（拦截 1 次,mask→0x20000000）｜切0=ok（mask→0xFFFFFFFF）｜回调=3 次（末次 idx=0）｜清理=ok｜注入=ok（entryCount 1→3）
-```
-
-| 段 | 实测 | 判读 |
-| --- | --- | --- |
-| 环境 | `numTabs 7`、`entryCount 1`、`mask 0xFFFFFFFF` | ✅ 原版 SWF 生效（P2 部署正确；我们的 SWF 是 8） |
-| 扩tab（7→8） | ok | ✅ `SetTabsData` 在原版 `BSTabbedSelection` 上生效 |
-| 切3（对照） | ok（mask → `0x00000008`） | ✅ 原版 `onFilterChanged` 正常执行（读自己的 `FilterInfoA[3]`） |
-| 切7（拦截 + 哨兵） | ok（拦截 1 次，`mask→0x20000000`） | ✅ **拦截 + 写双成立**（原版直接切 idx 7 会越界 TypeError —— 被 we priority=100 拦住） |
-| 切0（放行） | ok（mask → `0xFFFFFFFF`） | ✅ 不越权 |
-| 清理 | ok | ✅ `removeEventListener` 正常 |
-| **注入** | **ok（entryCount 1→3）** | ✅ 第 122 轮修复（补 `aObjectives` 空数组）**一击生效** |
-
-**本轮判据五连全绿**（退出码均为 0）：
-- `check_results.py`（1 条用例 PASS / 0 FAIL / 0 SKIP）；
-- `log_hygiene.py`（日志 39910 B / 89 行、结果 JSON —— 零坏字节零控制字符）；
-- `plan_regex_audit.py`（2/2 全命中）；
-- `verify_saq_build.py --dev --p2`（含 `*.p2off` 禁用证据 + 部署 == 工作区）；
-- 离线层 3/3（19 用例 / 936 断言 + 快照 16 件 + tripwire）。
-
-**眼睛窗口（重要说明）**：探针副作用（8 个 tab / 列表 3 条）只在「探针执行后 →
-`menu.close`」之间可见（本次 ~8 秒；tab 条前 7 项 = 探针假数据 `$SAQ-keep0..6`、
-第 8 项 = `SAQ-PoC`；列表被整体替换为 3 条 `SAQ-PoC-Item i`）。菜单关闭后 Movie
-销毁、重开时由原版重建 ⇒ 回到 7 tab + 原版 entries（玩家截图 = 重开后状态，**无残留**）。
-为便于亲验：计划窗口 **8 → 30 秒**（第 123 轮，`wait 30000`）+ 保持 P2 部署。
-
-**P2 形态的两条产品化观察（功能迁移的输入）**：
-1. **产品推送在原版 SWF 下必然失败** —— 我们的 `SAQ_PushData` / `SAQ_Report` 等 AS3
-   入口不存在于原版 SWF ⇒ DLL 每 500 ms 重试、日志持续「推送失败（重试）」+
-   「界面状态一条都没读回来」。未来「兼容模式」要么检测到原版 SWF 即停推（降频降噪），
-   要么把产品 UI 通道整体切换为注入形态（迁移面 = MissionMenu +2113 行 /
-   MissionsList +186 / QuestUtils +2，见第七节）；
-2. 重开菜单时偶见「菜单尚未就绪（UI 表里还没有 BSMissionMenu 条目），稍后重试」= 老
-   时序现象（稍后重试即恢复，与 P2 无关）。
-
-**下一步**：①（可选）眼睛会话（30 秒窗口亲验）—— ✅ **已完成（第 124 轮，见九·补七）**；
-② 恢复部署（`build-saq.ps1 -SkipTable -SkipSwf -Harness` —— SWF 拷回 + `*.p2off` 清理 +
-ini `Plan` 改回）—— ✅ **已完成（第 124 轮）**；③ 评估功能迁移（第七节）与产品形态
-（建议「兼容模式」，默认仍走 SWF）—— **进行中**（先做第八节的路线 D 冲突检测）。
-
-### 九·补七、P2 眼睛判据达成 + 恢复部署（2026-09-23 · 第 124 轮）
-**30 秒窗口内玩家截图取得眼睛证据 ⇒ P2 判据 + 眼睛双绿，P2 完全收口**
-
-会话 15:43~15:45（`Plan=SAQ_TestPlan_p2.txt` / SWF 覆盖已禁用 / 开发 DLL 1079296 B）——
-`r120_gfx_poc` **PASS**（32344 ms）；探针行与九·补六一致（六段全 ok + 注入
-`entryCount 1→3`）。玩家在「探针执行（15:44:48）→ `menu.close`（15:45:18）」的
-**30 秒窗口**内截图：
-
-| 截图上看到的 | 判读 |
-| --- | --- |
-| tab 条 8 项：前 7 项 = 探针假数据（显示为 `SAQ-keep…` 连串）、第 8 项 = `SAQ-PoC` | ✅ 原版 SWF 上成功扩出新 tab（`SetTabsData` 生效的肉眼证据） |
-| 列表 3 条 `SAQ-PoC-Item 0/1/2` | ✅ `InitializeEntries` 注入可见（第 122 轮 `aObjectives` 修复的肉眼证据） |
-| 悬停行 = 原版「按下[R]…」tooltip | 描述/交互尚未接管（预期内，产品化迁移时再做） |
-
-**侧面证据（同一会话日志）**：菜单开着期间「推送失败（重试）」循环 + 关闭时
-`菜单关闭：界面状态一条都没读回来` = 原版 SWF 里没有我们的产品 AS3 入口
-（与九·补六「产品化观察①」一致 —— 兼容模式必须处理的点）。
-
-**恢复部署（本轮）**：`build-saq.ps1 -SkipTable -SkipSwf -Harness` —— SWF 覆盖拷回
-（`*.p2off` 清理）、ini `Plan` 改回主计划、回到常规测试态（开发构建 harness + 42 条用例）；
-`verify --dev`（非 P2 模式）**全部通过**（含「P2 残留已清理（反向检查）」+ 部署 == 工作区）。
-P2 实验态结束。
-
-## 十、路线 D 落地：UI 通道冲突检测 + 停推降噪 + 玩家提示（2026-09-23 · 第 125 轮）
-
-**背景**（八节路线 D + 九·补六「产品化观察①」）：P2 通过确认了「无 SWF 覆盖」形态的
-技术可行性，也暴露两条产品化缺口 —— 我们的 `missionmenu.swf` 覆盖被其它 mod 覆盖 /
-未安装 / 版本过旧时：① DLL 每菜单退避重试 14 次（日志持续「推送失败（重试）」）；
-② 玩家完全看不出「mod 没生效」的原因（像静默失效）。
-
-**本轮产物**（全部为产品路径 —— 发布构建同样包含）：
-
-| 层 | 产物 | 说明 |
-| --- | --- | --- |
-| DLL 探测 | `UI::ProbeChannelIdentity`（`SAQ_UI.{h,cpp}`） | 桥解析成功 + `_root.SAQ_Report` 可调用且带 `stamp=` ⇒ `ours`；调用失败 / 无指纹 ⇒ `notOurs`；桥没通 ⇒ `unknown`（不判定、保持重试） |
-| DLL 判定 | `SAQ.cpp`（`TryPushPending` 真失败分支） | 第 2 次尝试起探测；`notOurs` ⇒ 本菜单停推（`done`）+ 一行 WARN `UI 通道不可用（第 N 次推送失败后判定）：…` + 请脚本提示 |
-| DLL 降噪 | `PollUiReport` / `PollGuideRequest` / 菜单关闭现场读 | `g_uiChannelDead` 时全部短路（不再每 500ms / 100ms 空调一次） |
-| 提示通道 | ESM GLOB `SAQ_UiNotice`（0x80E）+ `Guide::SetUiNotice` | DLL 写 1（**进程内只请求一次**），脚本读到 1 ⇒ HUD 提示 + 清 0（边沿语义） |
-| 脚本提示 | `SAQ_Main.psc` `ProcessUiChannelNotice` | 轮询节拍里读 GLOB；文案「可接任务界面未生效：可能被其它任务菜单 mod 覆盖 / Available Quests UI not active - likely overridden by another mission menu mod」（中英，重复 3 次 ≈ 6 秒） |
-
-**判据纪律（宁可漏判不可误判 —— 误判会让正常界面被停推）**：
-- 只在**真失败**（非「菜单还没就绪」）且第 2 次尝试起探测；
-- `notOurs` 需要「桥解析成功 + `SAQ_Report` 失败 / 无指纹」双条件（两个入口同时瞬态失败的概率极低）；
-- 每菜单打开重置判定（重开菜单 = 新的一次机会）；提示（GLOB）进程内一次。
-
-**验证**（2026-09-23 · 第 125 轮）：
-- 构建部署：DLL 开发构建 **1083392 B** / Papyrus 重编（PEX **19026 B**）/
-  ESM 4752 → **4805 B**（+0x80E）——部署 == 工作区；
-- `verify --dev` **全部通过**（+第 125 轮检查：DLL 特征串 ×3 / PEX 特征 ×4 /
-  ESM UI 提示 GLOB（工作区 + 部署）/ 主计划 r125 段头 / P2 计划 r125 三条 +
-  断言正则编译校验全过）；
-- 离线层 3/3（19 用例 / 936 断言 + 快照 16 件（ESM 有意变化已 `--update`）+ tripwire）。
-
-**实测（2026-09-23 · 第 126 轮）**：
-- ✅ ① 正常态（我们的 SWF）：主计划 **43 条 43/43 全 PASS**（会话 16:01~16:10 / 577703 ms /
-  `驱动器 v70` / `stamp=65`）—— `r125_ui_channel_ok` PASS（4562 ms）：菜单打开后
-  `推送成功`（16:10:36 命中）+ `assert.nolog UI 通道不可用`（整段窗口零判定行）⇒
-  **防误报成立**；全日志除用例段头 ×2 + 断言行 ×1 外无任何「UI 通道」产品行
-  （也无「推送放弃」）；判据五连全绿（`check_results` / `log_hygiene` 退出码 0 +
-  `plan_regex_audit` **160/160** + `verify --dev` + 离线层 3/3）。
-- ★ ② P2 态（原版 SWF）：**已按 P2 实验部署**（`build-saq.ps1 -SkipTable -SkipSwf -Harness -P2`
-  + `verify --dev --p2` 全过 = 756 OK），P2 计划 **2 条**（`r120_gfx_poc` + `r125_ui_conflict`）
-  —— **待实机**：`UI 通道不可用（第 N 次推送失败后判定）` 出现 + **不再出现**
-  「推送放弃：重试 14 次」（停推降噪生效）+ 日志一行 `UI 通道提示已请求`（进程内首判时）；
-  眼睛 = 关菜单后 HUD 提示（中英，重复 3 次 ≈ 6 秒）。跑完恢复：
-  `build-saq.ps1 -SkipTable -SkipSwf -Harness`（SWF 拷回 + `*.p2off` 清理 + Plan 改回主计划）。
-
-### 十·补、提示时机修复 + P2 双收口（2026-09-23 · 第 127 轮）
-
-**起因（第 126 轮 P2 会话的意外发现）**：P2 会话 16:25 实测 —— 轮询节拍在菜单开着时
-**也会走**几拍（菜单打开后 ~8 秒窗口内），于是「UI 通道不可用」提示 3 次全落在菜单里
-发完（16:25:02/05/08），玩家关菜单后什么也看不到（与设计意图「脚本将在菜单关闭后提示
-玩家」不符 —— 该文案出自 `SAQ.cpp` 的 `UI 通道提示已请求` 行）。
-
-**修复（提示时机）**：
-- `SAQ_Main.psc`：新增 `MissionMenuOpen`（`OnMenuOpenCloseEvent` 维护）；
-  `ProcessUiChannelNotice` / `ProcessNotice` 在菜单开着时一律不发（GLOB 的 1 保留 /
-  补发计数冻结）；**关菜单事件里立刻补调一次** `ProcessUiChannelNotice`（玩家一回到
-  HUD 就能看到解释，不必等下一拍）。
-- P2 计划：`r120_gfx_poc` 末尾加 `wait 10000`（关菜单后的静默窗口 —— 让 3 次提示
-  完整播完、不被下一条用例的 `menu.open` 打断）。
-- `verify` +2 条：`PEX · UI 提示等菜单关闭（MissionMenuOpen）`（防回退）+
-  `用例计划 · P2 眼睛窗口（关菜单后提示静默期）`。
-
-**实测（2026-09-23 · 第 127 轮；P2 态 2 条 + 眼睛）**：
-- 会话 16:48~16:50（118828 ms / `Plan=SAQ_TestPlan_p2.txt` / SWF 覆盖禁用 / 开发 DLL
-  1083392 B / PEX **19133 B**）—— **2/2 PASS**：
-  - `r120_gfx_poc` PASS（42532 ms）：六段全 ok + `注入=ok（entryCount 1→3）`；
-    ★ 提示首发 `16:50:03` = **关菜单瞬间**（DLL `16:50:03.922 菜单关闭` 同一秒）+
-    补发 `16:50:06/09`（共 3 次）—— **修复精确生效**（对照第 126 轮：首发 16:25:02
-    落在菜单里）；
-  - `r125_ui_conflict` PASS（4812 ms）：第二个菜单周期**独立判定行**
-    `16:50:15.809 UI 通道不可用（第 2 次推送失败后判定）` + `assert.nolog 推送放弃`
-    通过 —— 「每菜单重新判定 + 停推降噪」成立；
-- 判据三连（本会话产物）：`check_results` 退出码 0（2/2）+ `log_hygiene` 退出码 0
-  （日志 39959 B / 95 行零坏字节；结果 JSON 4081 B / 39 行）+
-  `plan_regex_audit`（P2 计划）**4/4 全命中**；`verify --dev --p2` 全过 + 离线层 3/3；
-- ★ **眼睛双达成**（玩家确认）：① 第 8 个 tab「SAQ-PoC」可见（前 7 = 探针假数据
-  `$SAQ-keep0..6`）+ 3 条 `SAQ-PoC-Item 0/1/2` **界面可见** —— 显示在「当前选中的
-  第 1 个 tab」下（探针末次回调 idx=0 后才执行 R9 注入，属设计行为；切到第 8 个
-  tab 时列表走的是拦截后的掩码过滤结果）；② 关菜单后 HUD 中英提示可见；
-- ★ 已恢复常规部署（`build-saq.ps1 -SkipTable -SkipSwf -Harness`：SWF 拷回 +
-  `*.p2off` 清理 + ini `Plan` 改回主计划）；`verify --dev`（非 P2）全部通过。
-
-**顺带观察（产品化输入）**：`wait` 步骤按「游戏运行时间」计 —— 16:37 会话
-`wait 10000` 实测 51438 ms（期间游戏被暂停约 41 秒），属驱动器正常行为（暂停期间
-不计时），不是缺陷。
-
-**发布（已完成）**：0.1.15 上传包 = `dist\SAQ-ShowAvailableQuests-0.1.15.zip`
-（**1,852,719 B**，SHA256 `6359DEAF1FA8CA3E3F0A5D2F2B42DA5A4830CB6B1ED66819FFEDEAEADD95006F`；
-= 0.1.14 + 第 125 轮冲突检测 + 本轮提示时机修复）；`verify --release` 全过
-（发布构建 63 项 harness 特征全无）+ 包内 6 产物哈希与工作区逐一致（发布 DLL
-**852480 B**）；打完后已切回开发构建 + MO2 ini 还原正常玩（`Harness=0` / AutoLoad 清空）。
-
-**下一步（大项决策）**：评估功能迁移（七节 8 项清单）与产品形态
-（建议默认仍走 SWF；冲突检测已兜住体验）。
+（第 140 轮瘦身：这一段的结论已全部收进下面的 11.x 设计与十三节 —— 原始记录
+ 迁到 `docs/90-历史记录（UI注入研究 第117轮初期取证）.md` 末尾，便于追溯。）
 
 ## 十一、功能迁移评估（第七节清单的落地设计 · 第 129 轮 · 纯离线）
 
@@ -1087,6 +715,116 @@ watchdog 重放 0 次）` ⇒ **watchdog 0 次（符合预测：无引擎刷新�
 
 **下一步 = P4 交互接管**（按钮劫持 X/Y + activate 拦截 + 引导态竖条 + 就地刷新 +
 星图交接 / 真关菜单原语）；P2 实验态继续保留（P4 验证仍以原版 SWF 为主）。
+
+## 十四、P4 交互接管（2026-09-23 · 第 140 轮；按钮劫持 X/Y + activate 拦截 + 星图交接）
+
+### 14.0 前置：眼睛判据达成 ⇒ P3-b 完全收口
+
+第 139 轮留的「待玩家点头」已闭合：三个 30 秒窗口（r133 再注入 / r137 激活 / 玩家手动窗口）
++ 玩家手动一次，**第 8 个 tab「可接任务」+ 真实任务列表（真任务名 / 真描述）都看到了**
+⇒ P3-b（注入形态产品化：auto 自动激活 + watchdog + `UiMode` 开关）完全收口，
+「随时可回 SWF」纪律不变（`swf` 档行为逐字节不变）。
+
+### 14.1 接管面（三处交互 + 两个视觉）
+
+| 交互点 | 原版实现 | 我们的接管（注入形态） |
+| --- | --- | --- |
+| X（SET COURSE）`PlotToLocationButton_mc` | `OnPlotCourseEvent` → `MissionMenu_PlotToLocation` | 我们的条目 ⇒ 引导 + 星图交接；原版条目 ⇒ **逐行复刻**其 dispatch 委托 |
+| Y（SHOW ON MAP）`ShowOnMapButton_mc` | `OnShowOnMapEvent` → `MissionMenu_ShowItemLocation` | 我们的条目 ⇒ 只为它设引导（不开星图）；原版条目 ⇒ 同上委托 |
+| 条目激活（Enter / 点击）`MissionsList::itemActivated` | `onMissionListItemActivated`（追踪/展开） | 我们的条目 ⇒ `stopPropagation` 拦下 + 子项切换引导；原版条目 ⇒ 完全放行 |
+| 「引导中」竖条（TrackIndicator） | 条目 `bActive` 帧名 `Active/Inactive` | `bActive` = 当前引导（`SAQ::CurrentGuideQuestID`）+ **就地刷新**（U7 手法） |
+| 按钮置灰 | `onMissionSelectionChange` 按 `CanShowOnMap` 写 `Enabled` | 不动原版逻辑 —— 我们的条目靠**数据字段**驱动（见 14.5，第 130 轮已实测） |
+
+### 14.2 按钮劫持：为什么是「换 + 委托」而不是「保存-还原」
+
+- 原版 `PlotToLocationButton_mc.Data` 是 **protected trait**（U5 实测：读不到 ⇒ 保存不了）。
+- 换法：`CreateObject` 带类名造我们的 `UserEventData` + `ButtonBaseData`（label 用**原版
+  label 键** `$SET COURSE` / `$SHOWONMAP` —— 按钮文本与本地化仍跟原版走，不写死）→
+  `SetButtonData` → `RefreshButtonData`。
+- **接线证据**：读回 `data.UserEvents.NumUserEvents == 1`。为什么坚持读回：第 131 轮的教训
+  （`ButtonBaseData` 的 param2 只认 `UserEventData` 或 `Array`，传 Manager 实例会被
+  `TraceWarning` 静默忽略 ⇒ `UserEvents=null` ⇒ `HandleUserEvent` 空引用 "造出来是个 object" ≠ 能触发）。
+- **置灰态**：换 Data 前读下按钮当前 `Enabled`、换完写回（不抹掉原版按当前选中条目算好的状态；
+  之后每次选中变化由原版照常重写）。
+- 原版条目：**逐行复刻原版 AS3 的 dispatch**（`_tmp_ffdec_base/scripts/MissionMenu.as` 的
+  `OnPlotCourseEvent` / `OnShowOnMapEvent`：`IsMission(entry) ? {uID,-1} : {uOwnerQuestFormID,uIndex}`
+  + 事件名 + `MISSION_SHOW_ON_MAP_SOUND`）—— 与原版行为等价，且不依赖读不到的原 Data。
+
+### 14.3 activate 拦截（Enter / 点击）
+
+- 事件名 `MissionsList::itemActivated`（原版 `MissionsList.onEntryPress` 的最后一步：
+  `super.onEntryPress(); dispatchEvent(new Event(ITEM_ACTIVATED,true,true))`），
+  监听挂 **MissionsList_mc**、priority=100。
+- ★★ **决定判据设计的关键事实**：原版 `BSScrollingTree.onEntryPress` 对「有子项的条目」
+  **只做展开/收起、不派发 `itemActivated`** —— 真正会走激活事件的是**叶子行**。
+  ⇒ ① 数据构造必须带子项（14.5）；② 探针必须用**子项行**验证这条链（R3/R4 如此）。
+  （同理：我们的主条目行按 Enter = 原版树的展开/收起，天然正确。）
+- 我们的条目 ⇒ `stopPropagation`（阻断冒泡到 `Menu_mc` 上的原版 `onMissionListItemActivated`
+  —— 它会给引擎发**不存在的 questID**）；子项 = 切换引导，主条目 = 不做别的（展开已完成）。
+- 原版条目 ⇒ 完全放行（不拦、不动作）—— 「原版条目走原版路」是这一层的第一原则。
+
+### 14.4 星图交接 = 真关菜单原语
+
+- **用**：`Menu_mc.ProcessUserEvent("Missions", false)` = 原版 `onCloseSubMenuToGame` →
+  `CloseMenu(true)` → 时间轴 Close → `GlobalFunc.CloseAllMenus()`：**整个暂停菜单**一起关
+  + `StartGameRender()` ⇒ 游戏恢复运行。
+- **不用** `"ReturnToStarMap"`：它走 `OnCancelEvent` → `CloseMenu(false)` → 只关任务菜单**一层**，
+  会停在暂停菜单里 ⇒ 脚本定时器继续冻结 ⇒ 星图永远打不开（第 131 轮 U9 的判据也记录了这条）。
+- 链路：结果码 0 且要星图 ⇒ 关菜单 ⇒ 脚本节拍恢复（`SAQ_Main` 的 ApplyGuide 待办）
+  ⇒ 下一个轮询打开星图（DLL 侧 `RequestStarMapOpen(formID, swfCloses=true)` 不发 kHide —— 与 SWF 同协议）。
+
+### 14.5 数据构造补齐：P3 的最小集 → P4 的完整形态
+
+- 每个主条目带 **1 条子项**（`aObjectives`，与 SWF 版 `SaqBuildObjective` 同源：任务板 /
+  可重复 NPC / 普通任务三档子项名）。
+- ★★ `MissionsListEntry.CanShowOnMap(parent)` 对「有子项的主条目」取的是
+  **`aObjectives[0].bCanShowOnMap`** ⇒ 子项这个字段必须 = 这条能不能导航。
+  **忘了它 = SET COURSE / SHOW ON MAP 永远置灰**（功能上等同坏掉，且不报错）。
+- 子项字段：`uID` / `uOwnerQuestFormID` = 主条目 uID、`uIndex=0`、`iType=6`、`iFaction=-1`、
+  `bIsMiscObjective=false`、`bCanShowOnMap=bSaqHasTarget`；**不带 `aObjectives`**（否则会被
+  `IsMission` 当成任务、再次进根列表）。
+- 我们的标记：`bSaqAvailable`（诊断）/ `bSaqHasTarget`（点击决策，与按钮置灰同源）/
+  `bActive`（竖条）。
+
+### 14.6 引导与竖条（复用同一条产品路径）
+
+- `ApplyGuideRequest` 改**返回结果码**（0=成功 / 1=没有引导目标 / 2=写通道失败 /
+  3=静态表里没有 / 5=目标尚未加载）；SWF 路径照旧靠回写（返回值忽略），注入路径直接拿返回值。
+- `NotifyGuideReply(a_seq < 0)` **短路**：注入形态没有 AS3 协议侧，否则每次按键刷一条 WARN。
+- 新公开 API：`SAQ::RequestGuideFromInject(formID, wantMap, toggleCancel)` +
+  `SAQ::CurrentGuideQuestID()` —— 注入形态**复用整条产品引导路径**（候选池挑选 / ESM 通道 /
+  结果确认 / 星图待办 / 接取后自动取消），不重建任何一半。
+- 按键语义（与 SWF 版逐条对齐）：X = 引导 + 请求星图（**永不取消** —— 第 39 轮定案）；
+  Y = 只为它设引导（不开星图）；Enter 子项 = 切换（同一条再按 = 取消）；
+  不可导航 ⇒ OFF 音 + 日志、**不发请求**（按钮本来就灰；名字带「（不可导航）」前缀 + 描述写明原因）。
+- 竖条：`bActive` = 当前引导 + **就地刷新**（逐个可见 clip → `itemIndex` ↔ 数据下标 →
+  `SetEntryText`；不重建列表 ⇒ 不丢滚动 / 展开态）；watchdog 每拍先同步（外部变化也会反映：
+  接取后自动取消引导 / 认领存档里的引导）。
+
+### 14.7 判据（离线全绿）与待实机
+
+- 新 harness op **`ui.interact [key X|key Y|state]`**（harness 专用；产品路径不依赖它）：
+  · 无参 = 接管判据链（**dry-run**：装接管 → 分类 → dry 触发 X/Y → 激活拦截，一行汇总
+    `接管= / 分类= / 触发= / 激活= / 真动作=0`）；
+  · `key X|Y` = 真按键（选中我们的第一条可导航条目 → 走**真实回调** → 引导 + 星图交接）；
+  · `state` = 只读状态（任务菜单 / 星图 / 注入 / 接管 / 当前引导 / 按压计数）。
+- 新 P2 用例 **`r140_interact_takeover`**（三段判据 = 探针 dry-run / 真按键 + 星图入口 /
+  端到端 `星图=开`）；P2 计划 5 → **6 条**。
+- 离线证据：DLL 开发构建（harness）**1206272 B**（+44544）+ `verify --dev --p2` **859 行 / 0 MISS**
+  （+29 条：13 条产品串 dev/release 双向、8 条 harness 串、P2 计划形状 11 条）+ 离线层 5 步全过
+  （P2 正则自检 **18 条 / 15 样例**）。
+- 回归判据（产品日志）：`界面注入：已激活（…，接管=ok）` /
+  `菜单关闭：交互接管（X … ／ Y … ／ 激活 …｜拦下 …｜委托 …｜引导请求 …）`。
+- **待实机（P2 会话 6 条**：r120 / r125 / r130 / r133 / r137 / **r140**）；眼睛 = 第 8 个 tab 里
+  展开子项 + 按 X 真的打开星图。
+
+### 14.8 风险与后手
+
+- 换 Data 那一刻的按钮状态：只保证「不改变原版算好的状态」；此后由原版每次选中变化重写。
+- Y 键语义：我们的条目没有「引擎地图位置」可显示 ⇒ 定为「只为它设引导」（不开星图）。
+- 真按键会真的关掉整个暂停菜单（这正是「星图交接」要验的行为）⇒ 用例把它放在最后，
+  清场（清引导 / 关任务菜单 / 关星图）由驱动器自动做（第 55 轮）。
+- 接管安装失败不致命：注入照常工作、交互退回原版行为，只记一行 WARN（不阻塞出货形态）。
 
 ## 附：复现命令（离线证据）
 

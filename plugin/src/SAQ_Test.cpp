@@ -141,6 +141,7 @@ namespace SAQ::Test
 			kUiResearch,   // ★★★ 第 117 轮：ui.research —— GFx 注入能力探针（见 ResearchGfxCapabilities）
 			kUiInject,     // ★★★ 第 133 轮：ui.inject —— 数据注入 PoC（见 SAQ_UiInject.h）
 			kUiMode,       // ★★★ 第 138 轮：ui.mode —— 运行期强制 UI 形态（隔离探针/产品路径）
+			kUiInteract,   // ★★★ 第 140 轮：ui.interact —— 交互接管探针/真按键/状态（P4）
 			kSaveList,     // ★★ 第 62 轮：存档列表诊断（BGSSaveLoadManager，只读）
 			kSaveLoad,     // ★★ 第 62 轮：自动读档（排队 → 等加载走完 → 通道重新就绪）
 		};
@@ -754,6 +755,24 @@ namespace SAQ::Test
 				if (a_step.text.empty()) {
 					a_error = "需要 swf|auto|inject|reset";
 					return false;
+				}
+			} else if (op == "ui.interact") {
+				// ★★★ 第 140 轮（P4 交互接管 · docs/15 十四节）：`ui.interact [key X|key Y|state]`
+				//   —— 无参 = 接管判据链（装接管 + 分类 + dry 触发 + 激活拦截；一行汇总）；
+				//   `key X|Y` = 真按键（走真实回调：引导 + 星图交接）；`state` = 只读状态
+				//   （任务菜单 / 星图 / 引导 —— 星图交接的端到端判据）。
+				//   一次性完成（不进 Papyrus 通道；**菜单必须开着**）。
+				a_step.kind = Kind::kUiInteract;
+				a_step.text = Trim(rest);
+				a_step.timeoutMs = 15000;
+				if (!a_step.text.empty()) {
+					const auto toks = SplitWs(a_step.text);
+					const bool okVerb = toks.size() == 2 && toks[0] == "key" &&
+						(toks[1] == "X" || toks[1] == "Y");
+					if (!okVerb && a_step.text != "state") {
+						a_error = "只接受空 / key X / key Y / state（给的是 " + a_step.text + "）";
+						return false;
+					}
 				}
 			} else if (op == "wait") {
 				a_step.kind = Kind::kWait;
@@ -1435,6 +1454,30 @@ namespace SAQ::Test
 				}
 				REX::INFO("界面形态覆盖：UiMode={}（harness 强制；reset 清除）", result);
 				CompleteStep(true, "UiMode 覆盖 → " + result, {});
+				return true;
+			}
+
+			case Kind::kUiInteract: {
+				// ★★★ 第 140 轮（P4 交互接管）：三条子命令（各自一行产品日志 —— 红线六；
+				//   一次性完成，不进 Papyrus 通道；**菜单必须开着** —— 它操作界面里的 AS3 对象）。
+				if (step.text == "state") {
+					const auto state = UiInject::RunInteractState();
+					REX::INFO("界面接管状态 {}", state);
+					CompleteStep(true, state, {});
+					return true;
+				}
+				if (!step.text.empty()) {
+					// `key X` / `key Y`：真按键（选中我们的第一条可导航条目 → 触发）。
+					const auto toks = SplitWs(step.text);
+					const char* key = (toks.size() == 2 && toks[1] == "Y") ? "Y" : "X";
+					const auto  result = UiInject::RunInteractKey(key);
+					REX::INFO("界面接管按键 {}", result);
+					CompleteStep(true, result, {});
+					return true;
+				}
+				const auto probe = UiInject::RunInteractProbe();
+				REX::INFO("界面接管 {}", probe);
+				CompleteStep(true, probe, {});
 				return true;
 			}
 

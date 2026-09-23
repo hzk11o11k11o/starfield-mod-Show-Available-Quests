@@ -2205,6 +2205,13 @@ namespace SAQ
 		// 旧引导如果还在，游戏里指的仍是旧任务。
 		void NotifyGuideReply(int a_seq, std::uint32_t a_actual, int a_code)
 		{
+			// ★★★ 第 140 轮（P4 交互接管）：注入形态没有 AS3 协议侧 —— 界面里没有
+			//   `SAQ_GuideReply` 入口，回写必然失败（每次按键刷一条 WARN）。
+			//   约定：a_seq < 0 = 「不存在的界面会话」⇒ 直接跳过（结果码由调用方用
+			//   `ApplyGuideRequest` 的返回值处理）。
+			if (a_seq < 0) {
+				return;
+			}
 			std::string reply;
 			if (!UI::NotifyGuideReply(a_seq, a_actual, a_code, reply)) {
 				REX::WARN("引导结果回写界面失败：{}（界面状态可能滞后；下次开菜单会自动同步）", reply);
@@ -2931,7 +2938,14 @@ namespace SAQ
 		//   —— 成功时除了设引导，还要关掉任务菜单让脚本打开星图（见 RequestStarMapOpen）。
 		// ★ 第 38 轮：a_swfCloses = 新 SWF 会在收到回写后自己关掉**整个**暂停菜单
 		//   （peek 第四段；旧 SWF 没有这一段 ⇒ false ⇒ 沿用 kHide 的旧路径）。
-		void ApplyGuideRequest(std::uint32_t a_formID, int a_seq, bool a_wantMap, bool a_swfCloses)
+		//
+		// ★★★ 第 140 轮（P4 交互接管）：改为**返回结果码** —— 注入形态（SAQ::UiInject）
+		//   没有 AS3 协议侧（`SAQ_GuideReply` 只在我们的 SWF 里），它要拿结果码自己决定
+		//   「关菜单（星图交接）/ 提示 / 回滚」。SWF 路径照旧靠回写（返回值忽略）；
+		//   注入形态传 a_seq = -1 ⇒ `NotifyGuideReply` 短路（见那里的说明）。
+		//   结果码与协议同源：0=成功 / 1=没有引导目标 / 2=写通道失败 / 3=静态表里没有 /
+		//   5=目标尚未加载（保持待生效）。
+		int ApplyGuideRequest(std::uint32_t a_formID, int a_seq, bool a_wantMap, bool a_swfCloses)
 		{
 			// ★ 第 46 轮：每次玩家请求都先清「待生效」状态（下面的 !anyAlive 分支会重新置位）。
 			g_guide.approachPending = false;
@@ -2947,13 +2961,13 @@ namespace SAQ
 					g_guide.questFormID = 0;
 					g_guide.guideRef = 0;
 					NotifyGuideReply(a_seq, 0, 0);
-				} else {
-					REX::WARN("引导请求：取消失败｜{}", detail);
-					g_guide.questFormID = 0;
-					g_guide.guideRef = 0;
-					NotifyGuideReply(a_seq, 0, 2);
+					return 0;
 				}
-				return;
+				REX::WARN("引导请求：取消失败｜{}", detail);
+				g_guide.questFormID = 0;
+				g_guide.guideRef = 0;
+				NotifyGuideReply(a_seq, 0, 2);
+				return 2;
 			}
 			const auto* entry = FindStaticQuest(a_formID);
 			// ★ 第 27 轮：也可能是「无限任务入口」（任务板）条目 —— 它的 uID 在世界引用
@@ -2962,7 +2976,7 @@ namespace SAQ
 			if (!entry && !gap) {
 				REX::WARN("引导请求：静态表里没有 0x{:08X}（是内嵌回退表里的条目？）", a_formID);
 				NotifyGuideReply(a_seq, g_guide.questFormID, 3);
-				return;
+				return 3;
 			}
 			std::uint32_t guideRefID = 0;
 			std::string_view displayName;
@@ -2974,7 +2988,7 @@ namespace SAQ
 					REX::WARN("引导请求：{}（0x{:08X}）没有引导目标（离线没算出「去哪里接」的引用，见 docs/05）",
 						entry->nameZh, a_formID);
 					NotifyGuideReply(a_seq, g_guide.questFormID, 1);
-					return;
+					return 1;
 				}
 				// ★★ 第 45 轮：从候选池里挑「此刻可得的、质量最优的」候选。列表按质量
 				//   排序（有名字的 NPC > 常驻备胎……），第一个 LookupByID 命中的即最优。
@@ -2991,7 +3005,7 @@ namespace SAQ
 						entry->nameZh, a_formID,
 						candSlot ? Masters::Get(candSlot->refrMaster).name : "?");
 					NotifyGuideReply(a_seq, g_guide.questFormID, 1);
-					return;
+					return 1;
 				}
 				g_guide.candIndex = candIdx;
 				g_guide.candSwitches = 0;
@@ -3028,7 +3042,7 @@ namespace SAQ
 							  "（任务板 / 常驻 marker / 常驻兜底 全取不到）—— 按「暂时无法导航」处理，不写通道",
 						displayName, a_formID);
 					NotifyGuideReply(a_seq, g_guide.questFormID, 1);
-					return;
+					return 1;
 				}
 			}
 			std::string detail;
@@ -3040,7 +3054,7 @@ namespace SAQ
 			if (!Guide::SetGuideTarget(guideRefID, detail, /*a_starMap=*/wantMap)) {
 				REX::WARN("引导请求：{}（0x{:08X}）写 ESM 通道失败｜{}", displayName, a_formID, detail);
 				NotifyGuideReply(a_seq, g_guide.questFormID, 2);
-				return;
+				return 2;
 			}
 			g_guide.questFormID = a_formID;
 			g_guide.guideRef = guideRefID;
@@ -3071,7 +3085,7 @@ namespace SAQ
 					REX::INFO("星图：本次不打开（目标尚未加载）—— 引导生效后玩家再按一次"
 							  "「设定航线」即可；界面侧不关菜单");
 				}
-				return;
+				return 5;
 			}
 			NotifyGuideReply(a_seq, a_formID, 0);
 			ScheduleGuideVerify(a_seq);
@@ -3079,6 +3093,7 @@ namespace SAQ
 				// ★ 第 37/38 轮：关掉任务菜单（或由界面侧关掉整个暂停菜单），让脚本打开星图
 				RequestStarMapOpen(a_formID, a_swfCloses);
 			}
+			return 0;
 		}
 
 		// ★ 第 19 轮：一次引导请求「确定没能生效」时的收尾（确认超时 / 脚本状态 4）。
@@ -3372,7 +3387,8 @@ namespace SAQ
 				return;
 			}
 			g_guide.lastSeq = seq;
-			ApplyGuideRequest(static_cast<std::uint32_t>(fid), seq, wantMap, swfCloses);
+			// ★ 第 140 轮：返回值 = 结果码 —— SWF 路径靠回写（上面已发），这里忽略返回值。
+			(void)ApplyGuideRequest(static_cast<std::uint32_t>(fid), seq, wantMap, swfCloses);
 		}
 
 		// 菜单打开时的收尾：被引导的任务如果已经「被引擎开始」（玩家接到了），
@@ -3813,6 +3829,13 @@ namespace SAQ
 				// ★★ 第 137 轮（P3-b）：本轮是注入形态（界面不是我们的 SWF ⇒ 无 SAQ_Report 可读）。
 				REX::INFO("菜单关闭：本轮为注入形态（已激活；watchdog 重放 {} 次）",
 					UiInject::ReplayCount());
+				// ★★★ 第 140 轮（P4 交互接管）：接管计数单独一行（每次按键/点击都进日志 ——
+				//   「玩家按了但没生效」这类问题的第一现场）。
+				if (UiInject::TakeoverActive()) {
+					const auto tc = UiInject::GetTakeoverCounts();
+					REX::INFO("菜单关闭：交互接管（X {} ／ Y {} ／ 激活 {}｜拦下 {}｜委托 {}｜引导请求 {}）",
+						tc.keyX, tc.keyY, tc.activate, tc.blocked, tc.delegated, tc.guideReq);
+				}
 			} else if (g_uiChannelDead) {
 				// ★★★ 第 125 轮（路线 D）：已判定界面不是我们的 —— 说清楚（不是「读不到」）
 				REX::INFO("菜单关闭：界面状态未读取（本轮已判定 UI 通道不可用 —— 界面不是我们的 SWF）");
@@ -4041,6 +4064,32 @@ namespace SAQ
 	const std::vector<QuestEntry>& PendingQuests()
 	{
 		return g_pending.quests;
+	}
+
+	// ★★★ 第 140 轮（P4 交互接管）：见 SAQ.h 里的说明。
+	//
+	// 为什么需要这一层：注入形态没有 AS3 协议（`SAQ_PeekGuide` / `SAQ_GuideReply` / 推送），
+	// 玩家在界面上按 X / 伸手点条目时，接管层（SAQ_UiInject）直接调这里 —— 引导逻辑
+	// （候选池挑选 / ESM 通道 / 确认 / 星图待办 / 自动取消）**全部复用同一条产品路径**，
+	// 注入形态不需要重建任何一半。
+	int RequestGuideFromInject(std::uint32_t a_formID, bool a_wantMap, bool a_toggleCancel)
+	{
+		// 「同一条再按一次 = 取消」的切换语义**只给 Enter（子项）**：SET COURSE（X 键）
+		// 永不取消（第 39 轮 SWF 版的定案 —— 原版按 R 不会取消已追踪的任务）。
+		if (a_toggleCancel && a_formID != 0 && g_guide.questFormID == a_formID) {
+			a_formID = 0;
+		}
+		// a_seq = -1 ⇒ 不回写界面（注入形态没有协议侧，结果码由返回值直接给调用方）；
+		// a_swfCloses = true ⇒ 关菜单这一步由**界面侧**（注入接管层）用原版「回游戏」
+		// 原语完成（`ProcessUserEvent("Missions", false)`），DLL 不发 kHide ——
+		// 与第 38/44 轮 SWF 版的协议语义一致（星图由脚本在菜单关闭后打开）。
+		return ApplyGuideRequest(a_formID, /*a_seq=*/-1,
+			/*a_wantMap=*/a_wantMap && a_formID != 0, /*a_swfCloses=*/true);
+	}
+
+	std::uint32_t CurrentGuideQuestID()
+	{
+		return g_guide.questFormID;
 	}
 
 	std::filesystem::path PluginDir()

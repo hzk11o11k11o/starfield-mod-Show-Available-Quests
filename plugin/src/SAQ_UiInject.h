@@ -64,6 +64,31 @@ namespace SAQ::UiInject
 	// watchdog 重放次数（引擎刷新覆盖我们的列表后重放注入 —— 诊断用）。
 	std::uint32_t ReplayCount();
 
+	// ★★★ 第 140 轮（P4 交互接管）：接管层计数（诊断 / 断言用）。
+	//
+	// 接管层 = 把原版界面的三处交互换成我们的实现（都是「我们的条目走我们的路 /
+	// 原版条目原样委托回原版」）：
+	//   · X（SET COURSE，`PlotToLocationButton_mc`）——我们的条目 ⇒ 引导 + 星图交接；
+	//   · Y（SHOW ON MAP，`ShowOnMapButton_mc`）——我们的条目 ⇒ 只为它设引导（不开星图）；
+	//   · 条目激活（`MissionsList::itemActivated`，Enter / 鼠标点击）——我们的子项 ⇒
+	//     切换引导（再按一次 = 取消）；我们的主条目 ⇒ 拦下（展开由原版树逻辑完成）。
+	// 原版条目一律**委托**：按原版 AS3 源码逐行复刻它的 dispatch（见 .cpp）。
+	struct TakeoverCounts
+	{
+		std::uint32_t keyX{};      // X 回调收到次数
+		std::uint32_t keyY{};      // Y 回调收到次数
+		std::uint32_t activate{};  // 条目激活回调收到次数
+		std::uint32_t ours{};      // 命中「我们的条目」次数（决策侧）
+		std::uint32_t delegated{}; // 委托回原版路径次数
+		std::uint32_t blocked{};   // 拦下（stopPropagation）次数
+		std::uint32_t guideReq{};  // 真下发到引导通道的请求数
+		std::uint32_t acted{};     // 真动作数（dry-run 时为 0 —— 见 harness 探针）
+	};
+	TakeoverCounts GetTakeoverCounts();
+
+	// 接管层是否已装（本菜单；诊断 / 断言用）。
+	bool TakeoverActive();
+
 	// Tick 的「任务菜单开着」分支每拍调用（★ 第 137 轮）：
 	//   · 未激活 + 形态需要注入 ⇒ 节流尝试激活（150 ms；菜单可能还没建好）；
 	//   · 已激活 ⇒ watchdog（500 ms 节拍：列表被引擎刷新覆盖 ⇒ 重放）。
@@ -95,5 +120,27 @@ namespace SAQ::UiInject
 	//   selectionChange 上留一个 priority=100 监听（**故意保留**：眼睛窗口里玩家
 	//   切 tab 要靠它 —— 没有它切到第 8 个 tab 会触发原版越界 TypeError）。
 	std::string RunInjectPoC(const std::vector<QuestEntry>& a_quests);
+
+	// ★★★ 第 140 轮（P4 交互接管）：`ui.interact` —— 接管层的判据链（**原版 SWF** 上跑）。
+	//
+	// 前置：注入上下文已建立（先跑 `ui.inject`，或等产品路径 UiMode=auto 自动激活）。
+	// 链路（一行汇总，红线六）：
+	//   R1 上下文（注入已激活）→ R2 装接管（劫持 X/Y + 挂 itemActivated 监听；幂等）
+	//   → R3 分类判据（只读：我们的条目 / 引擎条目 / 无选中 —— 用真实对象走真分类函数）
+	//   → R4 我们的条目上 dry 触发 X / Y（`HandleUserEvent` 走真实按键路径；dry ⇒ 不动作）
+	//   → R5 激活拦截（派发 `MissionsList::itemActivated`；dry ⇒ 不动作，但照常
+	//      stopPropagation —— 证明原版处理器被挡住）。
+	//   ★ dry-run = 「只验证接管接线与分类，不产生任何副作用」；真按键用
+	//     `ui.interact key X`（会真的下发引导 + 关菜单）。
+	std::string RunInteractProbe();
+
+	// `ui.interact key X|Y` —— 真按键路径（不复刻逻辑：走我们装在按钮上的真实回调）。
+	// 选中我们的第一条**有导航目标**的条目 → 触发 → 引导下发（结果码进日志）+
+	// 结果码 0 且要星图 ⇒ 原版「回游戏」原语关掉整个暂停菜单（星图交接）。
+	std::string RunInteractKey(const char* a_key);
+
+	// `ui.interact state` —— 只读状态行（任务菜单 / 星图 / 当前引导 / 注入是否激活）。
+	// 用途：真按键之后断言「星图已由脚本打开」（星图交接的端到端判据）。
+	std::string RunInteractState();
 #endif
 }

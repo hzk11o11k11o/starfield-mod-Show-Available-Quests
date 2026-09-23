@@ -34,6 +34,12 @@
 ;    `界面注入PoC …`（★★★ 第 133 轮 · P3 产品化 PoC · docs/15 11.7）：**真实数据注入**
 ;      —— 环境 / 语言 / 回ALL / 快照 / 扩tab / 监听 / 注入数据 / 对账 / 恢复 / 再注入。
 ;      数据 = 产品侧「待推送」列表（与 SWF 推送同一份），不是探针假数据。
+;    `界面接管 …`（★★★ 第 140 轮 · P4 交互接管 · docs/15 十四节）：接管（按钮劫持 +
+;      激活监听接线）/ 分类（我们｜原版｜无选中）/ 触发（X 1 次／Y 1 次，dry-run）/
+;      激活（回调 1 次／拦下 1 次）/ 真动作=0。
+;    `界面接管按键 …`（同轮）：选中 / 按键 / 回调 / 引导 / 星图交接（真按键路径）。
+;    `界面接管状态 …`（同轮）：任务菜单 / 星图 / 注入 / 接管 / 当前引导 / 按压计数
+;      —— 「星图=开」= 星图交接的端到端判据（脚本在菜单关闭后打开）。
 ;  眼睛：`r120` 用例 = tab 条上出现第 8 个 tab「SAQ-PoC」（前 7 个显示为探针的
 ;    假数据 `$SAQ-keep0..6` —— 实验设计如此）+ 列表 3 条「SAQ-PoC-Item i」；
 ;    `r130` 用例 = 列表 2 条 `SAQ-Mig-0/1` + 右侧描述面板（sDescription 字段）；
@@ -159,6 +165,52 @@ step = assert.log 界面注入PoC .*快照=ok.*扩tab=ok.*注入数据=ok.*对�
 ;  眼睛窗口（30 秒）：切到第 8 个 tab 应看到真实的可接任务列表。
 step = wait 30000
 step = menu.close
+
+[case:r140_interact_takeover]
+desc = 第 140 轮（P4 交互接管）：按钮劫持 X/Y + activate 拦截 + 星图交接 / 真关菜单原语（无 SWF 覆盖形态）
+;  判据（`docs/15` 十四节）：
+;    ① 探针 `ui.interact`（**dry-run** —— 只验证接线与分类，不产生任何副作用）：
+;       接管=ok（X=ok Y=ok｜接线 1/1｜激活监听=ok）—— 两个按钮的 Data 换成我们的
+;         （`ButtonBaseData` 带我们的 `UserEventData`，读回 `UserEvents.NumUserEvents=1`）；
+;       分类=ok（我们 1｜原版 1｜无选中 1）—— 用真实对象走真分类函数（选中我们的条目 /
+;         切 0 后的原版条目 / selectedIndex=-1）；
+;       触发=ok（子项 0x…｜X 1 次／Y 1 次）—— 展开第 0 条后选中**子项行**，
+;         `HandleUserEvent` 程序化触发走**真实按键路径**；
+;         ★ 为什么用子项行：原版 `BSScrollingTree.onEntryPress` 对「有子项的条目」只做
+;           展开/收起、**不派发** `itemActivated` —— 真正会走激活事件的是叶子行（子项），
+;           子项行才是 Enter/点击那条真实链路；
+;       激活=ok（回调 1 次／拦下 1 次）—— 派发 `MissionsList::itemActivated`，我们的条目
+;         被 `stopPropagation` 拦下（原版处理器不会给引擎发不存在的 questID）；
+;       真动作=0（dry-run 的硬约束）。
+;    ② 真按键 `ui.interact key X`（选中我们的第一条**有导航目标**的条目 → 触发）：
+;       `按键=X（调用 ok）｜回调=1 次｜引导=ok（0x…）｜星图交接=已调用（原版「回游戏」原语）`
+;       —— X = 引导 + 请求星图；星图交接 = `ProcessUserEvent("Missions", false)`
+;       （原版 `CloseMenu(true)` → `CloseAllMenus()`：整个暂停菜单关掉、游戏恢复运行）。
+;       同时产品日志里会出现 `星图：界面侧会自己关掉整个暂停菜单…`（第 44 轮的星图入口）。
+;    ③ 端到端：菜单关闭后 Papyrus 节拍恢复 ⇒ 星图由脚本打开（wait 4000 后
+;       `ui.interact state` 报 `星图=开`）。
+;  ★ 前置：先 `ui.inject` 建立注入上下文（真实数据 + 分时注入 + 拦截监听）—— 接管层
+;    由 `ui.interact` 在**同一份上下文**上安装（产品路径 UiMode=auto 下由激活时自动装）。
+;  ★ 真按键会真的关掉整个暂停菜单（这正是「星图交接」要验证的行为）⇒ 放在用例最后；
+;    收尾清场（清引导 / 关任务菜单 / 关星图）由驱动器自动做（第 55 轮）。
+;  ★★★ 第 138 轮的形态隔离延续：探针要求「原版 7 tab 干净环境」⇒ 强制 swf。
+step = ui.mode swf
+step = ping
+step = menu.open
+step = wait 1800
+step = ui.inject
+step = assert.log 界面注入PoC .*注入数据=ok.*对账=ok scope=case timeout=15000
+step = ui.interact
+step = assert.log 界面接管 .*接管=ok scope=prev timeout=8000
+step = assert.log 界面接管 .*分类=ok.*触发=ok.*激活=ok.*真动作=0 scope=case timeout=8000
+step = ui.interact key X
+step = assert.log 界面接管按键 .*按键=X.*回调=1 次.*引导=ok.*星图交接=已调用 scope=case timeout=8000
+step = assert.log 星图：界面侧会自己关掉整个暂停菜单 scope=case timeout=8000
+;  星图交接的端到端判据：菜单关闭 → 脚本节拍恢复 → 约 1 秒后星图打开。
+step = wait 4000
+step = ui.interact state
+step = assert.log 界面接管状态 .*星图=开 scope=case timeout=8000
+step = menu.hide GalaxyStarMapMenu
 
 [case:r137_product_inject]
 desc = 第 137 轮（P3-b）：UiMode=auto 产品路径 —— 冲突环境自动激活注入（不依赖 ui.inject 原语）
