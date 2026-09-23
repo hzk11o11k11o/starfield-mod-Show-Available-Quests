@@ -676,6 +676,92 @@ MT_TEST(UTF8截断_切点绝不落在多字节字符中间)
 	}
 }
 
+// ---------------------------------------------------------------- 8. 界面结构指纹
+
+MT_TEST(界面指纹_结构齐且七项即通过)
+{
+	using V = UiFingerprintVerdict;
+	// 全齐 + numTabs == 7 ⇒ kOk（不论宽限期 —— 正常路径在宽限期内就成功时不能等）
+	MT_CHECK_EQ(DecideUiFingerprint(true, true, true, kExpectedOriginalTabCount, false), V::kOk);
+	MT_CHECK_EQ(DecideUiFingerprint(true, true, true, kExpectedOriginalTabCount, true), V::kOk);
+	// 原版 tab 数常量不能被改（tab 文本表按它硬编码 —— 见 SAQ_UiInject.cpp）
+	MT_CHECK_EQ(kExpectedOriginalTabCount, 7);
+}
+
+MT_TEST(界面指纹_宽限期内缺项一律等待)
+{
+	using V = UiFingerprintVerdict;
+	// 2 × 2 × 2 × 4 = 32 组合：宽限期内「不全齐」一律 kWait（绝不误判失败 ——
+	//   菜单刚打开、结构还没建好是常态，判失败会把正常环境挡在门外）。
+	for (int m = 0; m < 2; ++m)
+		for (int t = 0; t < 2; ++t)
+			for (int l = 0; l < 2; ++l)
+				for (const int n : { -1, 0, 6, 8 }) {
+					MT_CHECK_EQ(DecideUiFingerprint(m != 0, t != 0, l != 0, n, false), V::kWait);
+				}
+}
+
+MT_TEST(界面指纹_宽限期后按依赖链给出失败码)
+{
+	using V = UiFingerprintVerdict;
+	// 全缺 ⇒ kNoMenu（依赖链第一环）
+	MT_CHECK_EQ(DecideUiFingerprint(false, false, false, -1, true), V::kNoMenu);
+	// menu 在、往后缺 ⇒ 逐项（顺序固定 —— 日志要指向最上游那个缺的）
+	MT_CHECK_EQ(DecideUiFingerprint(true, false, false, -1, true), V::kNoTabSel);
+	MT_CHECK_EQ(DecideUiFingerprint(true, true, false, -1, true), V::kNoList);
+	// 三者都在、tab 数不对：读不到（-1）/ 异常值 / 6 / 8（原版加了 tab 的真实现场）
+	MT_CHECK_EQ(DecideUiFingerprint(true, true, true, -1, true), V::kTabCount);
+	MT_CHECK_EQ(DecideUiFingerprint(true, true, true, 0, true), V::kTabCount);
+	MT_CHECK_EQ(DecideUiFingerprint(true, true, true, 6, true), V::kTabCount);
+	MT_CHECK_EQ(DecideUiFingerprint(true, true, true, 8, true), V::kTabCount);
+	MT_CHECK_EQ(DecideUiFingerprint(true, true, true, kExpectedOriginalTabCount + 1, true), V::kTabCount);
+}
+
+MT_TEST(界面指纹_全组合不崩且在枚举内)
+{
+	// 2 × 2 × 2 × 5 × 2 = 80 组合：返回值合法 + 两条不变量。
+	for (int m = 0; m < 2; ++m)
+		for (int t = 0; t < 2; ++t)
+			for (int l = 0; l < 2; ++l)
+				for (const int n : { -1, 0, 6, 7, 8 })
+					for (int g = 0; g < 2; ++g) {
+						const auto v = DecideUiFingerprint(m != 0, t != 0, l != 0, n, g != 0);
+						const int  iv = static_cast<int>(v);
+						MT_CHECK(iv >= 0 && iv <= 5);
+						// 不变量①：kOk ⇔ 「三项齐 + numTabs == 7」
+						const bool allReady = (m != 0) && (t != 0) && (l != 0) &&
+							n == kExpectedOriginalTabCount;
+						MT_CHECK_EQ(v == UiFingerprintVerdict::kOk, allReady);
+						// 不变量②：宽限期内非 ok 必为 kWait（不能提前判失败）
+						if (g == 0 && !allReady) {
+							MT_CHECK_EQ(v, UiFingerprintVerdict::kWait);
+						}
+					}
+}
+
+MT_TEST(界面指纹_失败码文案非空且互不相同)
+{
+	// 文案 = 日志与报 issue 的抓手：每个失败码都要有非空、可区分的名字。
+	const std::array<UiFingerprintVerdict, 6> all = {
+		UiFingerprintVerdict::kOk, UiFingerprintVerdict::kWait,
+		UiFingerprintVerdict::kNoMenu, UiFingerprintVerdict::kNoTabSel,
+		UiFingerprintVerdict::kNoList, UiFingerprintVerdict::kTabCount,
+	};
+	for (std::size_t i = 0; i < all.size(); ++i) {
+		const char* a = UiFingerprintVerdictName(all[i]);
+		MT_CHECK(a != nullptr && a[0] != '\0');
+		for (std::size_t j = i + 1; j < all.size(); ++j) {
+			const char* b = UiFingerprintVerdictName(all[j]);
+			MT_CHECK(std::string{ a } != std::string{ b });
+		}
+	}
+	// ★ 关键文案被 verify 特征串钉住 —— 改动要同步（含 DLL 侧与工具侧）。
+	MT_CHECK_EQ(std::string{ UiFingerprintVerdictName(UiFingerprintVerdict::kNoTabSel) },
+		std::string{ "TabbedFilterSelection_mc 取不到" });
+	MT_CHECK_EQ(std::string{ UiFingerprintVerdictName(UiFingerprintVerdict::kTabCount) },
+		std::string{ "原版 tab 数不是 7 项" });
+}
+
 // ----------------------------------------------------------------
 
 int main()

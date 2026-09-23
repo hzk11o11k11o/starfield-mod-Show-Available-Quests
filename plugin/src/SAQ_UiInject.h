@@ -36,6 +36,17 @@
 //      解析层（找菜单）复用 `UI::EnsureResolved` / `UI::ResolvedAsMovieRoot()`；
 //    · SWF 覆盖文件与构建链不删不动（两形态并存）；
 //    · 副作用只在「菜单打开期间」（随菜单关闭自然清理；`OnMenuClosed` 清引用）。
+//
+//  ★★★ 第 143 轮（P5 双形态与发布）：**结构指纹自检 + 失败回退**（docs/15 11.8
+//    风险①）—— 激活前核对原版菜单的内部结构（`Menu_mc` / `TabbedFilterSelection_mc` /
+//    `MissionsList_mc` / tab 数 == 7，判据 = 离线层 `Decision::DecideUiFingerprint`）：
+//    · 结构就绪且匹配 ⇒ 正常激活（激活日志带 `指纹=ok`）；
+//    · 菜单刚打开、结构还没建好（宽限期 `kFingerprintGraceMs` 内）⇒ 静默重试；
+//    · 宽限期后仍不匹配（游戏更新改了原版结构 / 第三方 SWF 改了布局）⇒ **不注入**：
+//      一行 WARN（写明哪个硬项缺）+ `activateFailed`（本菜单不再重试）+ HUD 照常
+//      走既有「UI 通道不可用」延迟提示（SAQ.cpp 的 3 秒兜底）。
+//      设计取向 = **宁可不提供功能，也不半残**（tab 文本表按原版 7 项硬编码 ——
+//      结构变了还硬注入会把别的 tab 弄坏）。
 // ============================================================================
 
 #include <cstdint>
@@ -88,6 +99,11 @@ namespace SAQ::UiInject
 
 	// 接管层是否已装（本菜单；诊断 / 断言用）。
 	bool TakeoverActive();
+
+	// ★★★ 第 143 轮（P5）：菜单打开时调用一次（SAQ.cpp 的 OnMissionMenuOpened）——
+	//   记录「本菜单打开时刻」= 结构指纹自检的**宽限期起点**（`kFingerprintGraceMs`：
+	//   菜单刚打开那几拍结构还没建好，缺项只算「等待」不算「失败」）。
+	void OnMenuOpened();
 
 	// Tick 的「任务菜单开着」分支每拍调用（★ 第 137 轮）：
 	//   · 未激活 + 形态需要注入 ⇒ 节流尝试激活（150 ms；菜单可能还没建好）；

@@ -332,4 +332,47 @@ namespace SAQ::Decision
 	//  ★ 只处理 UTF-8 边界，不做转义 —— 转义（\n → \\n 等）由调用点做。
 	// ========================================================================
 	std::size_t Utf8SafeCut(std::string_view a_text, std::size_t a_maxBytes);
+
+	// ========================================================================
+	//  7. 界面结构指纹自检（★★★ 第 143 轮 · P5 双形态与发布；docs/15 11.8 风险①）
+	//
+	//  为什么需要：注入形态（`SAQ_UiInject`）依赖**原版** MissionMenu 的内部成员名与
+	//  结构（`Menu_mc` / `TabbedFilterSelection_mc` / `MissionsList_mc` / tab 数组 7 项）。
+	//  游戏版本更新若改了这些，注入会「静默失效」甚至「半残」——例如 tab 文本表是按
+	//  原版 7 项**硬编码**的，原版改成 8 个 tab 时把它当成 7 项处理会把别的 tab 名写错。
+	//  ⇒ 打开序列先做结构指纹自检：**任一硬项不匹配 ⇒ 不注入**（一行 WARN + HUD 提示，
+	//  走既有「UI 通道不可用」路径 + 本菜单不再重试），宁可不提供功能，也不半残。
+	//
+	//  判据（每个失败都有名字 —— 日志与报 issue 都要它）：
+	//    · 全部齐（menu / tabSel / list 都在 + numTabs == kExpectedOriginalTabCount）
+	//      ⇒ kOk（不论宽限期 —— 结构已就绪就直接放行，正常路径零额外时延）；
+	//    · 缺项且**还在宽限期内**（菜单刚打开、结构可能还没建好）⇒ kWait
+	//      （调用方静默重试 —— 与既有 150ms 激活节流一致）；
+	//    · 缺项且超出宽限期 ⇒ 对应的失败码（kNoMenu / kNoTabSel / kNoList / kTabCount）。
+	//
+	//  输入语义（调用方读 GFx 后填充）：
+	//    a_menu / a_tabSel / a_list —— 对应对象**是否为有效对象**；
+	//    a_numTabs —— 读到的 tab 数（**-1 = 读不到**）；
+	//    a_graceElapsed —— 菜单打开后是否已超过宽限期（kFingerprintGraceMs）。
+	// ========================================================================
+
+	// 原版 tab 数（1.16 实测 7 项：$ALL / $Main / $Faction / $Misc / $MISSION /
+	//   $Activity / $Completed）—— 我们的 tab 文本表按它硬编码（见 SAQ_UiInject.cpp）。
+	inline constexpr int kExpectedOriginalTabCount = 7;
+
+	enum class UiFingerprintVerdict : std::uint8_t
+	{
+		kOk = 0,     // 结构就绪且匹配 ⇒ 可以注入
+		kWait,       // 还在宽限期内、结构未就绪 ⇒ 静默重试（不是失败）
+		kNoMenu,     // 宽限期后仍取不到 `_root.Menu_mc`（root 结构变了？）
+		kNoTabSel,   // `TabbedFilterSelection_mc` 取不到
+		kNoList,     // `MissionsList_mc` 取不到
+		kTabCount,   // tab 数读不到 / ≠ 7（原版结构已变化）
+	};
+
+	UiFingerprintVerdict DecideUiFingerprint(bool a_menu, bool a_tabSel, bool a_list,
+		int a_numTabs, bool a_graceElapsed);
+
+	// 失败码 → 日志文案（"ok" / "等待结构就绪" / "Menu_mc 取不到" / …）。
+	const char* UiFingerprintVerdictName(UiFingerprintVerdict a_v);
 }

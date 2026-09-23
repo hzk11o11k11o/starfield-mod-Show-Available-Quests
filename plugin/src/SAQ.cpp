@@ -3900,6 +3900,9 @@ namespace SAQ
 			//   计时（注入激活成功即清零 —— 见 Tick）。
 			const auto uiMode = ResolveUiMode();
 			UiInject::SetMode(uiMode);
+			// ★★★ 第 143 轮（P5）：把「本菜单打开时刻」告诉注入层 —— 结构指纹自检的
+			//   宽限期起点（菜单刚打开那几拍结构还没建好，缺项只算「等待」不算「失败」）。
+			UiInject::OnMenuOpened();
 			g_uiNoticeAtMs = uiMode == UiInject::UiMode::kInject ? NowMs() : 0;
 			REX::INFO("界面形态：UiMode={}（swf=只用 SWF 推送 / auto=SWF 优先、冲突时自动切注入 / inject=只用注入）",
 				UiInject::ModeName(uiMode));

@@ -748,6 +748,15 @@ UI_INJECT_PRODUCT_STRINGS = [
     ("产品 · 接管 · 目标尚未加载（保持待生效）", "的目标尚未加载：保持待生效"),
     ("产品 · 菜单关闭 · 交互接管计数行", "菜单关闭：交互接管（X "),
     ("产品 · 激活日志 · 接管字段", "，接管="),
+    # ★★★ 第 143 轮（P5 双形态与发布 · docs/15 11.8 风险①）：**结构指纹自检** ——
+    #   激活前核对原版菜单结构（Menu_mc / TabbedFilterSelection_mc / MissionsList_mc /
+    #   tab 数 == 7）；不匹配 ⇒ 不注入（一行 WARN + 本菜单不再重试）。
+    #   钉住四样：失败告警前缀 / 通过证据（激活行尾 `指纹=ok`）/ 失败原因文案
+    #   （离线层 `UiFingerprintVerdictName` —— 单测同时钉住同一批文案）/ 半残防护说明。
+    ("产品 · 结构指纹失败告警（不注入 + 不再重试）", "界面注入：结构指纹不匹配（"),
+    ("产品 · 结构指纹通过（激活行尾证据）", "，指纹=ok）"),
+    ("产品 · 结构指纹失败原因（tab 数不是 7 项）", "原版 tab 数不是 7 项"),
+    ("产品 · 结构指纹失败告警（半残防护说明）", "功能保持不可用，不会半残"),
 ]
 
 
@@ -2025,6 +2034,11 @@ def main() -> int:
                          "assert.log 界面形态：UiMode=auto".encode()),
                         ("P2 产品路径 · 自动激活断言",
                          "assert.log 界面注入：已激活（UiMode=auto".encode()),
+                        # ★★★ 第 143 轮（P5 · 结构指纹自检）：r137 的自动激活断言
+                        #   加了 `.*指纹=ok` —— 产品路径**自检通过**的运行期证据
+                        #   （自检不匹配 ⇒ 走 WARN 且不激活，这条断言也就等不到）。
+                        ("P2 产品路径 · 结构指纹断言（指纹=ok）",
+                         "assert.log 界面注入：已激活（UiMode=auto.*指纹=ok".encode()),
                         ("P2 产品路径 · 关菜单注入形态断言",
                          "assert.log 菜单关闭：本轮为注入形态".encode()),
                         # ★★★ 第 138 轮（P2 会话收口 · 形态隔离）：各用例显式设运行期
@@ -2524,6 +2538,37 @@ def main() -> int:
             print(("OK  " if layered_137 else "MISS") +
                   " DLL 源码 · 注入分层（产品路径在 harness 段之外 —— 发布也编译；第 137 轮）")
             all_ok &= layered_137
+            # ★★★ 第 143 轮（P5 双形态与发布 · 结构指纹自检）：四处接线，各有分工 ——
+            #   ① 产品路径调用离线判据（少它 = 指纹自检没接上，结构变了照样硬注入）；
+            #   ② `SAQ.cpp` 每菜单打开记宽限期起点（**恰好 1 处** —— 少它 = g_menuOpenedMs
+            #      恒 0 ⇒ 宽限期失效、结构没就绪的正常环境会被误判成「结构不匹配」）；
+            #   ③ 离线层实现在场（负向分支靠它 + 单测覆盖 —— 实机造不出「原版结构变了」）；
+            #   ④ 单测用例在场（「宽限期后按依赖链给出失败码」= 全部失败码的判据钉死）。
+            all_ok &= check("DLL 源码 · 结构指纹接线（产品路径调用离线判据）",
+                            src_137.encode(), b"Decision::DecideUiFingerprint")
+            saq_cpp_143 = ROOT / "plugin/src/SAQ.cpp"
+            if saq_cpp_143.exists():
+                wired_143 = saq_cpp_143.read_text(encoding="utf-8").count("UiInject::OnMenuOpened();")
+                ok_143 = wired_143 == 1
+                print(("OK  " if ok_143 else "MISS") +
+                      f" DLL 源码 · 结构指纹宽限期接线（第 143 轮）：UiInject::OnMenuOpened(); "
+                      f"恰好 1 处（实测 {wired_143} 处）")
+                all_ok &= ok_143
+            else:
+                print(f"MISS 缺少 {saq_cpp_143}")
+                all_ok = False
+            dec_src_143 = ROOT / "plugin/src/SAQ_Decision.cpp"
+            tests_src_143 = ROOT / "plugin/tests/SAQ_DecisionTests.cpp"
+            if dec_src_143.exists() and tests_src_143.exists():
+                all_ok &= check("离线层 · 结构指纹判据实现",
+                                dec_src_143.read_bytes(),
+                                b"UiFingerprintVerdict DecideUiFingerprint(")
+                all_ok &= check("离线层单测 · 结构指纹用例（全失败码覆盖）",
+                                tests_src_143.read_bytes(),
+                                "界面指纹_宽限期后按依赖链给出失败码".encode())
+            else:
+                print("MISS 缺少离线层结构指纹文件（SAQ_Decision.cpp / SAQ_DecisionTests.cpp）")
+                all_ok = False
         else:
             print(f"MISS 缺少 {saq_inject_src_135}")
             all_ok = False

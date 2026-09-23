@@ -17,6 +17,8 @@
 //      PassesTestFilter        ← SAQ.cpp::PassesTestFilter（换成结构体输入）
 //      Utf8SafeCut             ← ★ 第 84 轮：SAQ_UI.cpp::EscapeForLog 的字节截断
 //                                 （修「切在多字节字符中间 ⇒ 非法 UTF-8」）
+//      DecideUiFingerprint     ← ★★★ 第 143 轮（P5）：SAQ_UiInject.cpp::ActivateForMenu
+//                                 的结构指纹自检判据（原版菜单结构变了就不注入）
 // ============================================================================
 
 #include "SAQ_Decision.h"
@@ -381,5 +383,44 @@ namespace SAQ::Decision
 			--cut;
 		}
 		return cut;
+	}
+
+	// ---------------------------------------------------------------- 7. 界面结构指纹
+
+	UiFingerprintVerdict DecideUiFingerprint(bool a_menu, bool a_tabSel, bool a_list,
+		int a_numTabs, bool a_graceElapsed)
+	{
+		// ① 结构已就绪且匹配 ⇒ 直接放行（不论宽限期 —— 正常路径在宽限期内就成功）。
+		if (a_menu && a_tabSel && a_list && a_numTabs == kExpectedOriginalTabCount) {
+			return UiFingerprintVerdict::kOk;
+		}
+		// ② 还有缺项：宽限期内 = 可能只是没建好 ⇒ 静默重试（不当失败）。
+		if (!a_graceElapsed) {
+			return UiFingerprintVerdict::kWait;
+		}
+		// ③ 宽限期后仍缺 ⇒ 按「哪个硬项缺」给出失败码（顺序 = 依赖链：
+		//    menu → tabSel / list → tab 数）。
+		if (!a_menu) {
+			return UiFingerprintVerdict::kNoMenu;
+		}
+		if (!a_tabSel) {
+			return UiFingerprintVerdict::kNoTabSel;
+		}
+		if (!a_list) {
+			return UiFingerprintVerdict::kNoList;
+		}
+		return UiFingerprintVerdict::kTabCount;   // 只剩 numTabs 读不到 / ≠ 7
+	}
+
+	const char* UiFingerprintVerdictName(UiFingerprintVerdict a_v)
+	{
+		switch (a_v) {
+		case UiFingerprintVerdict::kOk:       return "ok";
+		case UiFingerprintVerdict::kWait:     return "等待结构就绪";
+		case UiFingerprintVerdict::kNoMenu:   return "Menu_mc 取不到";
+		case UiFingerprintVerdict::kNoTabSel: return "TabbedFilterSelection_mc 取不到";
+		case UiFingerprintVerdict::kNoList:   return "MissionsList_mc 取不到";
+		default:                              return "原版 tab 数不是 7 项";
+		}
 	}
 }

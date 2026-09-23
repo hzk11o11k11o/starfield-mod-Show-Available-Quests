@@ -312,6 +312,11 @@ namespace SAQ::UiInject
 		//   watchdog 500ms（与 SAQ.cpp 的界面状态轮询同拍）。
 		constexpr std::uint64_t kActivateRetryMs = 150;
 		constexpr std::uint64_t kWatchdogIntervalMs = 500;
+		// ★★★ 第 143 轮（P5）：结构指纹自检的**宽限期** —— 菜单打开后这段时间内
+		//   「结构缺项」= 「还没建好」（静默重试）；超时才判「结构不匹配」。
+		//   取值依据：实测菜单打开后桥在 ~0.3~1 秒就绪、产品路径 ~1.2 秒内激活成功
+		//   ⇒ 1.5 秒留足余量；正常路径在宽限期内就通过（零额外时延）。
+		constexpr std::uint64_t kFingerprintGraceMs = 1500;
 
 		// 原版 7 个 tab（text = 本地化键、flag = 掩码位）—— 从 SWF 版 PopulateTabs 逐项抄来
 		//   （QuestUtils 枚举：ACTIVITY=0 / MAIN=1 / FACTION=2 / MISC=3 / MISSION=4 /
@@ -1510,6 +1515,9 @@ namespace SAQ::UiInject
 	//   干净环境（原版 7 tab），产品路径用例跑 `auto`。发布构建里恒 false。
 	bool          g_modeForced{ false };
 	std::uint64_t g_lastActivateTryMs{};
+	// ★★★ 第 143 轮（P5）：本菜单打开时刻（结构指纹自检的宽限期起点；`OnMenuOpened`
+	//   记录、`OnMenuClosed` 清零。0 = 未记时 —— 见 ActivateForMenu 的说明）。
+	std::uint64_t g_menuOpenedMs{};
 
 	void SetMode(UiMode a_mode)
 	{
@@ -1585,21 +1593,50 @@ namespace SAQ::UiInject
 		if (!root) {
 			return false;
 		}
+		// ★★★ 第 143 轮（P5 双形态与发布）：**结构指纹自检**（docs/15 11.8 风险①；
+		//   判据 = 离线层 `Decision::DecideUiFingerprint`，见 SAQ_Decision.h 第 7 节）。
+		//   先只读地核对原版菜单的内部结构，再决定「能不能安全注入」：
+		//     · 结构就绪且匹配 ⇒ 继续（正常路径零额外时延）；
+		//     · 宽限期内缺项 ⇒ 静默重试（菜单刚打开、结构还没建好 —— 150ms 节流）；
+		//     · 宽限期后仍缺 ⇒ 一行 WARN + 本菜单不再重试（宁可不提供功能，也不半残）。
 		RE::Scaleform::GFx::Value menu;
-		if (!(SafeGetVariable(root, "_root.Menu_mc", &menu) && menu.IsObject())) {
-			return false;   // 原版 SWF 之外（我们的 SWF / 第三方）—— 不该走到这
-		}
+		const bool menuOk = SafeGetVariable(root, "_root.Menu_mc", &menu) && menu.IsObject();
 		RE::Scaleform::GFx::Value tabSel;
 		RE::Scaleform::GFx::Value list;
-		if (!(SafeValueGetMember(&menu, "TabbedFilterSelection_mc", &tabSel) && tabSel.IsObject() &&
-				SafeValueGetMember(&menu, "MissionsList_mc", &list) && list.IsObject())) {
-			return false;
-		}
+		const bool tabSelOk = menuOk &&
+			SafeValueGetMember(&menu, "TabbedFilterSelection_mc", &tabSel) && tabSel.IsObject();
+		const bool listOk = menuOk &&
+			SafeValueGetMember(&menu, "MissionsList_mc", &list) && list.IsObject();
 
 		auto readNum = [](RE::Scaleform::GFx::Value& a_obj, const char* a_name, double& a_out) -> bool {
 			RE::Scaleform::GFx::Value v;
 			return SafeValueGetMember(&a_obj, a_name, &v) && SafeReadValueNumber(v, a_out);
 		};
+
+		double tabs0 = -1.0;   // 原版 tab 数（指纹已读；扩 tab 段复用 —— 见下）
+		int    numTabs = -1;
+		if (tabSelOk && readNum(tabSel, "numTabs", tabs0)) {
+			numTabs = static_cast<int>(tabs0);
+		}
+		// 宽限期起点 = 菜单打开时刻（`OnMenuOpened`，由 SAQ.cpp 调用）；未记时
+		//   （接线漏了）按「已超时」判 —— 宁可早一点给出明确 WARN，也不静默无限重试。
+		const bool graceElapsed = g_menuOpenedMs == 0 ||
+			(NowMs() - g_menuOpenedMs) >= kFingerprintGraceMs;
+		const auto fp = Decision::DecideUiFingerprint(menuOk, tabSelOk, listOk, numTabs, graceElapsed);
+		if (fp != Decision::UiFingerprintVerdict::kOk) {
+			if (fp == Decision::UiFingerprintVerdict::kWait) {
+				return false;   // 结构还没就绪 —— 静默（激活节流在 OnMenuTick）
+			}
+			// 决定性失败：结构不匹配 ⇒ 本菜单不注入、不再重试（下次菜单重开再试）。
+			//   HUD 提示走 SAQ.cpp 的「延迟判定」兜底（3 秒 → 「UI 通道不可用」）。
+			g_ctxStore = InjectCtx{};
+			g_ctxStore.activateFailed = true;
+			g_ctx = &g_ctxStore;
+			REX::WARN("界面注入：结构指纹不匹配（{}）—— 本次菜单不注入、不再重试"
+					  "（游戏更新改了原版菜单结构？功能保持不可用，不会半残）",
+				Decision::UiFingerprintVerdictName(fp));
+			return false;
+		}
 
 		// 语言判定（引擎条目名 CJK；与探针 U8a 同源）。
 		bool        zh = true;
@@ -1641,11 +1678,12 @@ namespace SAQ::UiInject
 		ctx.guideUid = SAQ::CurrentGuideQuestID();
 
 		// 扩 tab（原版 7 项 + 我们的 → SetTabsData）。
+		//   ★ 第 143 轮：原版 tab 数（tabs0）已由上面的结构指纹自检读过并验证 == 7
+		//   —— 这里只读扩后的 tabs1（不再重复读 tabs0）。
 		RE::Scaleform::GFx::Value tabsArr;
-		double                   tabs0 = -1.0, tabs1 = -1.0;
+		double                   tabs1 = -1.0;
 		bool                     tabsOk = false;
-		if (readNum(tabSel, "numTabs", tabs0) &&
-			BuildTabsArray(root, zh ? kTabTitleZh : kTabTitleEn, tabsArr)) {
+		if (BuildTabsArray(root, zh ? kTabTitleZh : kTabTitleEn, tabsArr)) {
 			RE::Scaleform::GFx::Value ret;
 			tabsOk = SafeValueInvoke(&tabSel, "SetTabsData", &ret, &tabsArr, 1) &&
 				readNum(tabSel, "numTabs", tabs1) && tabs1 == tabs0 + 1.0;
@@ -1685,12 +1723,21 @@ namespace SAQ::UiInject
 				NumStr(tabs0), NumStr(tabs1));
 			return false;
 		}
-		REX::INFO("界面注入：已激活（UiMode={}，tab {}→{}，条目 {}，按键名={}，语言={}，接管={}）",
+		// ★ 第 143 轮（P5）：`指纹=ok` = 结构指纹自检通过的运行期证据（verify 特征串 +
+		//   P2 计划 r137 断言都钉住它 —— 「自检在场且通过」不能只看失败 WARN）。
+		REX::INFO("界面注入：已激活（UiMode={}，tab {}→{}，条目 {}，按键名={}，语言={}，接管={}，指纹=ok）",
 			ModeName(g_mode), NumStr(tabs0), NumStr(tabs1), NumStr(ctx.injectCount),
 			courseKey.empty() ? "(空)" : courseKey, zh ? "zh" : "en",
 			ctx.takeover ? "ok" : "fail");
 		g_lastActivateTryMs = 0;   // 成功后清节流（下次菜单重新开始）
 		return true;
+	}
+
+	// ★★★ 第 143 轮（P5）：菜单打开时刻（结构指纹自检的宽限期起点）。见头文件。
+	void OnMenuOpened()
+	{
+		g_menuOpenedMs = NowMs();
+		g_lastActivateTryMs = 0;   // 新菜单周期：清激活节流（与 OnMenuClosed 同款）
 	}
 
 	void OnMenuClosed()
@@ -1700,6 +1747,7 @@ namespace SAQ::UiInject
 		g_ctxStore = InjectCtx{};
 		g_ctx = nullptr;
 		g_lastActivateTryMs = 0;
+		g_menuOpenedMs = 0;   // ★ 第 143 轮：宽限期起点随菜单周期清（下次打开重记）
 	}
 
 	void OnMenuTick(bool a_uiChannelDead)
