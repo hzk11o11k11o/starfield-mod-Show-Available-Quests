@@ -1425,7 +1425,7 @@ step = guide.probe ~0x0008EBDC
 
 ; ----------------------------------------------------------------------------
 [case:r109_extra_quests]
-desc = 第 109 轮（大项 A）：7 条补收任务 —— 5 条「前置没做」被链式门槛藏；2 条直接显示且能选中（引导候选已补上）
+desc = 第 109 轮（大项 A）：7 条补收任务 —— 5 条「前置没做」被门槛藏（INFO/链式交替，第 111 轮修）；2 条直接显示且能选中（引导候选已补上）
 step = note === 准备：把五条的前置宿主 / 自身全部回滚到「没开始」（链式边一律不触发）===
 step = ping
 step = quest.reset 0x001C7187
@@ -1434,15 +1434,21 @@ step = quest.reset 0x0008E2D9
 step = quest.reset 0x0021625F
 step = quest.reset 0x00212B4F
 step = wait 2500
-step = note === 进度没到 ⇒ 五条必须在「链式没到」名单里（阴阳两隔/搜查与扣押/双城传说/误报/兽群领袖）===
+step = note === 进度没到 ⇒ 五条必须在门槛名单里（阴阳两隔/搜查与扣押/双城传说/误报/兽群领袖）===
 ; 红线（第 68 轮）：正则只写单反斜杠；统计行与名单是同一条「运行时状态」长行 ⇒ scope=case。
+; ★ 第 111 轮（实机暴露，见 docs/09 十四·补三十二）：名单归属是混合的 ——
+;   INFO 判定在链式之前（第 106 轮定案）⇒ 其中两条被 INFO 门槛先藏、不会进链式名单：
+;     · 阴阳两隔 ← INFO 条件 = 0x001C7187（巴雷特线）stageDone 期望 1（用例已 reset）；
+;     · 兽群领袖 ← INFO 条件 = 0x00212B4F（误报）stageDone 期望 1（用例已 reset）；
+;   其余三条（搜查与扣押 / 双城传说 / 误报）无 INFO 假条件 ⇒ 走链式名单。
+;   ⇒ 断言统一用交替正则（与 r110 同模式）：任一门槛藏了它 = 「进度没到不显示」成立。
 step = menu.open
 step = assert.log 推送成功 scope=prev timeout=12000
-step = assert.log 链式没到: .*阴阳两隔\[0x00002FAE scope=case timeout=3000
-step = assert.log 链式没到: .*搜查与扣押\[0x0008E2D9 scope=case timeout=3000
-step = assert.log 链式没到: .*双城传说\[0x00089F4E scope=case timeout=3000
-step = assert.log 链式没到: .*误报\[0x00212B4F scope=case timeout=3000
-step = assert.log 链式没到: .*兽群领袖\[0x00212B4E scope=case timeout=3000
+step = assert.log (INFO没到|链式没到): .*阴阳两隔\[0x00002FAE scope=case timeout=3000
+step = assert.log (INFO没到|链式没到): .*搜查与扣押\[0x0008E2D9 scope=case timeout=3000
+step = assert.log (INFO没到|链式没到): .*双城传说\[0x00089F4E scope=case timeout=3000
+step = assert.log (INFO没到|链式没到): .*误报\[0x00212B4F scope=case timeout=3000
+step = assert.log (INFO没到|链式没到): .*兽群领袖\[0x00212B4E scope=case timeout=3000
 step = note === 两条没有前置的（防御措施 / 登陆不顺）⇒ 直接显示：切 tab + 能选中 = 真的在列表里 ===
 step = ui.tab
 step = ui.select 0x0021625F

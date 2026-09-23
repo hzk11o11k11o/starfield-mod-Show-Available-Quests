@@ -199,7 +199,8 @@
           ⇒ 候选池 960 → 996、有目标任务 217 → 224、内嵌载荷同步（stamp 63 → 64）。
           本脚本检查：候选池完整（224 / 切片不越界）+ 7 条补收任务的「candCount ≥ 1
           + 首候选 = 预期接取点引用」+ stamp=64（反向检查 stamp=63 不残留）+
-          用例计划：`r109_extra_quests`（5 条隐藏证据走链式名单 / 2 条走 ui.select）。
+          用例计划：`r109_extra_quests`（5 条隐藏证据走门槛名单 / 2 条走 ui.select）。
+          ★ 第 111 轮：隐藏证据断言改「INFO/链式交替」（实机两条被 INFO 先藏）。
 
 用法：python tools/ui/verify_saq_build.py [--release|--dev]
 """
@@ -1338,8 +1339,9 @@ def main() -> int:
                             # ★★★ 第 106 轮（operator 全量产品化）：INFO 门槛 OR 组 ——
                             #   A：112/114 都没做 ⇒ 探针报「组[0]=假」；B：推 112 ⇒ 组=真
                             "r106_info_or", "r106_info_or_pass",
-                            # ★★★ 第 109 轮（大项 A）：7 条补收任务 —— 5 条被链式门槛藏
-                            #   （名单钉记录号）+ 2 条直接显示（切 tab + ui.select 命中）
+                            # ★★★ 第 109 轮（大项 A）：7 条补收任务 —— 5 条被门槛藏
+                            #   （名单钉记录号；第 111 轮改 INFO/链式交替）+ 2 条直接显示
+                            #   （切 tab + ui.select 命中）
                             "r109_extra_quests",
                             "r62_reload_observe"):
                     all_ok &= check(f"用例计划 · [case:{cid}]", plan_text.encode(),
@@ -1420,9 +1422,11 @@ def main() -> int:
                 #   ③ 反向检查：链式名单是**累积**的 ⇒ 不许对它写 `assert.nolog`（第 103 轮）。
                 i109 = plan_text.find("[case:r109_extra_quests]")
                 blk109 = plan_text[i109:] if i109 >= 0 else ""
-                all_ok &= check("用例计划 · r109 隐藏证据走「链式没到」名单（阴阳两隔 0x00002FAE）",
+                #   ★ 第 111 轮：断言改**交替**（INFO 判定在链式之前 —— 实机两条被 INFO
+                #   先藏；与 r110 同模式），检查目标同步。
+                all_ok &= check("用例计划 · r109 隐藏证据走门槛名单（INFO/链式交替，阴阳两隔 0x00002FAE）",
                                 blk109.encode(),
-                                "assert.log 链式没到: .*阴阳两隔\\[0x00002FAE scope=case".encode())
+                                "assert.log (INFO没到|链式没到): .*阴阳两隔\\[0x00002FAE scope=case".encode())
                 all_ok &= check("用例计划 · r109 显示证据走显示层（ui.select 防御措施 0x0021625F）",
                                 blk109.encode(), "ui.select 0x0021625F".encode())
                 bad_109_nolog = "assert.nolog 链式没到" in blk109
