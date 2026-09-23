@@ -2471,6 +2471,18 @@ def main() -> int:
                   f" DLL 源码 · 注入上下文接线（第 135/137 轮）：ctx.list = list; "
                   f"恰好 2 处（实测 {wired_135} 处）")
             all_ok &= ok_135
+            # ★★★ 第 141 轮（r140 实机缺陷 · 上下文未接线（第二例））：`ctx.menu` 是
+            #   `ui.interact` 三处的共同锚点 —— 接管安装（`ButtonBar_mc` 取 X/Y 按钮）/
+            #   分类切 tab（`TabbedFilterSelection_mc`）/ 星图交接（`ProcessUserEvent`）。
+            #   第 140 轮它只在产品路径接线（ActivateForMenu）⇒ 探针实测
+            #   `接管=fail（ButtonBar_mc 取不到）`。同第 135 轮纪律：两条路径各自接线
+            #   ⇒ **恰好 2 处**（少一处 = 那条路径必失败）。
+            wired_141 = saq_inject_src_135.read_text(encoding="utf-8").count("ctx.menu = menu;")
+            ok_141 = wired_141 == 2
+            print(("OK  " if ok_141 else "MISS") +
+                  f" DLL 源码 · 注入上下文接线（第 141 轮）：ctx.menu = menu; "
+                  f"恰好 2 处（实测 {wired_141} 处）")
+            all_ok &= ok_141
             # ★★ 第 137 轮（P3-b）· 注入产品路径的源码结构 ——
             #   产品路径（激活 / watchdog / 形态开关 / 监听挂载复用）必须齐全；
             #   **分层**：产品路径必须在 `#if SAQ_WITH_HARNESS` **之外**（发布构建也

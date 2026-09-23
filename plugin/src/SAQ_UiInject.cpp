@@ -1881,11 +1881,22 @@ namespace SAQ::UiInject
 		//   第 134 轮 P2 会话实测 = mask 写入失败 + `InitializeEntries` 失败 ⇒ 列表没换
 		//   （玩家看到的还是原版那条「一小步」）；且 `恢复=ok` 是「1 == 1」巧合（假 PASS）。
 		ctx.list = list;
-		//   上下文自检（把「list 已接上」变成运行时证据 —— 上面那类缺陷以后一眼可见）：
+		// ★★★ 第 141 轮修复（r140 实机缺陷 · 与第 135 轮同一类：上下文未接线）：`ctx.menu`
+		//   同样要接线 —— `ui.interact` 的三处全锚在它上面：接管安装（`ButtonBar_mc` 取
+		//   X/Y 按钮）/ 分类切 tab（`TabbedFilterSelection_mc`）/ 星图交接
+		//   （`ProcessUserEvent("Missions")`）。它在第 140 轮只在产品路径接了线 ⇒ 第 140 轮
+		//   P2 会话 r140 实测 `接管=fail（ButtonBar_mc 取不到）`（注入本身不受影响）。
+		ctx.menu = menu;
+		//   上下文自检（把「list / menu 已接上」变成运行时证据 —— 上面那类缺陷以后一眼可见）：
 		{
 			double     ctxMask = -1.0;
 			const bool ctxListOk = readNum(ctx.list, "filterMask", ctxMask);
-			out += std::format("｜上下文={}", ctxListOk ? "ok" : "fail（list 没接上 ⇒ 切 tab 注入必失败）");
+			RE::Scaleform::GFx::Value menuProbe;
+			const bool ctxMenuOk = SafeValueGetMember(&ctx.menu, "MissionsList_mc", &menuProbe) &&
+				menuProbe.IsObject();
+			out += std::format("｜上下文={}", (ctxListOk && ctxMenuOk) ? "ok" :
+				std::format("fail（list={}，menu={} ⇒ 切 tab 注入 / 接管必失败）",
+					ctxListOk ? "ok" : "fail", ctxMenuOk ? "ok" : "fail"));
 		}
 
 		std::uint32_t snapCount = 0;
