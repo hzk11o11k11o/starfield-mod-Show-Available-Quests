@@ -48,7 +48,8 @@
 
 五、可选设置（一般无需改动）
   文件：SFSE\Plugins\SAQ_ShowAvailableQuests.ini
-  内含测试过滤开关（只显示有目标 / 无目标 / DLC / 任务板入口 ……），默认关闭。
+  内含测试过滤开关（只显示有目标 / 无目标 / DLC / 任务板入口 ……），默认关闭；
+  以及在 [Log] 段调整日志文件大小上限（MaxSizeMB，单位 MB，默认 1）。
 
 六、已知限制
   · 少量任务（278 条中的 54 条）暂时没有可用的导航目标：条目名会标注
@@ -67,7 +68,8 @@
     与其它修改任务菜单 UI 的 mod 同时使用时，需要做补丁（patch）。
 
 七、日志与排错
-  日志：SFSE\Plugins\SAQ_ShowAvailableQuests.log（不超过 1 MB，自动滚动）
+  日志：SFSE\Plugins\SAQ_ShowAvailableQuests.log（默认最大 1 MB，写满自动滚动清空；
+        想留更长的记录可在 ini 的 [Log] MaxSizeMB 里改，单位 MB）
   反馈问题时请附上：日志、安装方式（MO2 / 手动）、游戏与 SFSE 版本号。
 
 八、许可
@@ -136,7 +138,8 @@
 5. Optional settings
   File: SFSE\Plugins\SAQ_ShowAvailableQuests.ini
   Contains a test filter (only with target / without target / DLC only /
-  mission boards only…), off by default.
+  mission boards only…), off by default, and a [Log] section to change the
+  log file size limit (MaxSizeMB, in MB, default 1).
 
 6. Known limitations
   · 54 of 278 quests currently have no usable navigation target; the UI
@@ -163,7 +166,8 @@
     modifies the mission menu UI.
 
 7. Log & troubleshooting
-  Log: SFSE\Plugins\SAQ_ShowAvailableQuests.log (max 1 MB, auto-rolled)
+  Log: SFSE\Plugins\SAQ_ShowAvailableQuests.log (1 MB max by default,
+       auto-rolled; raise it in the ini via [Log] MaxSizeMB, in MB)
   When reporting an issue please include the log, install method
   (MO2 / manual), and your game & SFSE versions.
 

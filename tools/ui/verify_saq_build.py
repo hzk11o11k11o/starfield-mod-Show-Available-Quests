@@ -201,6 +201,11 @@
           + 首候选 = 预期接取点引用」+ stamp=64（反向检查 stamp=63 不残留）+
           用例计划：`r109_extra_quests`（5 条隐藏证据走门槛名单 / 2 条走 ui.select）。
           ★ 第 111 轮：隐藏证据断言改「INFO/链式交替」（实机两条被 INFO 先藏）。
+  第 112 轮（用户需求 · 日志上限可配）：日志文件上限做成配置项 —— ini `[Log] MaxSizeMB`
+          （单位 MB）；不填 = 按构建类型默认（Nexus 发布版 1 MB / 开发构建 10 MB）。
+          本脚本检查：DLL 含 `[Log] MaxSizeMB` 串 + 按模式各一条默认值文案
+          （开发「开发构建默认」/ 发布「发布构建默认」）+ 反向检查（main.cpp 旧硬编码
+          `kLogMaxBytes` 已移除）+ ini 模板含 [Log] 段说明与示例注释。
 
 用法：python tools/ui/verify_saq_build.py [--release|--dev]
 """
@@ -545,6 +550,11 @@ HARNESS_STRINGS = (
     #     拼不出 `任务探针 quest.probe 0x` 这样的连续串（第一版写错成那个，MISS 过）。
     #     两条必须**成对**在：上一条管「探针输出格式」，本条管「结果会进产品日志」。
     ("harness 探针产品行（可被 assert.log 取证）", "任务探针 {}"),
+    # ★★★ 第 112 轮（verify 修正）：第 110 轮把这条放进了「产品特征字典」⇒ 发布构建
+    #   必然 MISS（文案实际在 SAQ_Test.cpp::ResolveLocalFormID 里）—— `verify --release`
+    #   会因此挡住打包（第 112 轮跑发布验证时才暴露）。归属改到本表：
+    #   开发构建必须见（缺 = 驱动器能力被回退）、发布构建必须不见（名实相符）。
+    ("harness 表外记录直拼（r110 驱动器能力）", "表外记录，直拼"),
 )
 
 
@@ -985,7 +995,8 @@ def main() -> int:
             "medium 探测(文案)": "medium) 前缀=0xFD|0x".encode(),
             # ★★★ 第 110 轮：`~<master>:0x…` 对**表外记录**的直拼文案（harness 驱动器
             #   SAQ_Test.cpp::ResolveLocalFormID —— r110 用例推前置任务依赖它）。
-            "表外记录直拼(文案)": "表外记录，直拼".encode(),
+            #   ★ 第 112 轮修正：它是 **harness 特征** ⇒ 归 HARNESS_STRINGS（dev 正向 /
+            #   release 反向）；放这里会让 `verify --release` 假 MISS（挡住打包）。
             # ★★ 第 80 轮（可重复 NPC 入口）：入口表两类的计数日志 + NPC 名字前缀
             #   （数据真的进了 DLL 的静态表 —— 不只是生成脚本写对了文件）。
             "入口两类计数(日志)": "（任务板 {} + 可重复 NPC {}）".encode(),
@@ -1946,6 +1957,39 @@ def main() -> int:
         all_ok &= check("DLL · 星图残留请求回收", blob,
                         "防残留的星图请求在星图关闭后再执行一次".encode())
         all_ok &= check("DLL · 星图重试等待窗口文案", blob, "后仍没有才考虑换候选重试".encode())
+        # ★★ 第 112 轮（用户需求 · 日志上限可配）：ini `[Log] MaxSizeMB`（单位 MB）；
+        #   不填 = 按构建类型默认（Nexus 发布版 1 MB / 开发构建 10 MB）。
+        #   两条均为**产品字符串**（两种构建里都在，只是默认值文案按 #if 区分）
+        #   ⇒ 不走 HARNESS_STRINGS（那张表在发布模式是反向检查）。
+        all_ok &= check("DLL · 日志上限可配（ini [Log] MaxSizeMB）", blob,
+                        "[Log] MaxSizeMB".encode())
+        all_ok &= check(
+            ("DLL · 日志上限默认文案 = 开发构建 10 MB" if not release_mode
+             else "DLL · 日志上限默认文案 = 发布构建 1 MB"),
+            blob,
+            ("开发构建默认" if not release_mode else "发布构建默认").encode())
+        #   反向检查（源码级）：旧的硬编码常量 `kLogMaxBytes` 必须消失 ——
+        #   回退 = 上限又写死、ini 配了也不生效。
+        main_src_112 = ROOT / "plugin/src/main.cpp"
+        if main_src_112.exists():
+            gone_112 = b"kLogMaxBytes" not in main_src_112.read_bytes()
+            print(("OK  " if gone_112 else "MISS") +
+                  " DLL 源码 · 旧硬编码日志上限 kLogMaxBytes 已移除(反向检查，第 112 轮)")
+            all_ok &= gone_112
+        else:
+            print(f"MISS 缺少 {main_src_112}")
+            all_ok = False
+        #   ini 模板（发布包 ini 的来源 —— package-saq.ps1 从这里拷）：[Log] 段说明与
+        #   示例注释必须在（玩家可发现性）。
+        ini_tmpl_112 = ROOT / "resources/SAQ_ShowAvailableQuests.ini"
+        if ini_tmpl_112.exists():
+            tmpl_112 = ini_tmpl_112.read_bytes()
+            all_ok &= check("ini 模板 · [Log] 段（第 112 轮）", tmpl_112, b"[Log]")
+            all_ok &= check("ini 模板 · 日志上限示例注释（MaxSizeMB）", tmpl_112,
+                            b"MaxSizeMB")
+        else:
+            print(f"MISS 缺少 {ini_tmpl_112}")
+            all_ok = False
         # ★★ 第 84 轮（06:11 会话复查：22 条用例 21 PASS / 1 FAIL，唯一 FAIL 在用例侧、
         #   产品全对；但新发现一个**更严重的问题** —— 结果 JSON 含非法 UTF-8 ⇒
         #   `check_results.py` 退出码 2，22 条用例的结果一条也读不出来 = 判据通道失效）：

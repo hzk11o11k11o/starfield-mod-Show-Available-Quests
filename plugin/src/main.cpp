@@ -2,11 +2,17 @@
 
 #include "SAQ.h"
 
+// ★ 第 112 轮：读 ini（GetPrivateProfileStringW）—— 与 SAQ.cpp 同一套 Profile API。
+//   （PCH.h 已定义 NOMINMAX，Windows.h 的 min/max 宏不会和 std::min/std::max 打架。）
+#include <Windows.h>
+
 #include <atomic>
 #include <cstddef>
+#include <cstdlib>
 #include <exception>
 #include <filesystem>
 #include <memory>
+#include <string>
 
 #include <spdlog/details/file_helper.h>
 #include <spdlog/sinks/base_sink.h>
@@ -24,8 +30,52 @@ namespace
 	// SFSE 日志名（对应 SFSE\Logs\<name>.log）
 	constexpr const char* kLogName = "SAQ_ShowAvailableQuests";
 
-	// 日志文件上限 1 MiB：写新一行时若会超过就把旧内容整体清空（不是滚动保留旧文件）。
-	constexpr std::size_t kLogMaxBytes = 1024 * 1024;
+	// 日志文件上限：写新一行时若会超过就把旧内容整体清空（不是滚动保留旧文件）。
+	//
+	// ★ 第 112 轮（玩家需求）：做成**可配置** —— ini `[Log] MaxSizeMB`（单位 **MB**）。
+	//   · 不填 = 按构建类型默认：**发布构建（Nexus 包）1 MB / 开发构建 10 MB**
+	//     （开发跑 harness 时 1 MB 很快把证据滚掉 —— 第 108 轮日志 948 KB 已贴近上限）；
+	//   · 填 N = 用 N MB（范围 1~1024；越界/非数字 ⇒ 日志 WARN + 按默认处理）。
+	constexpr int kDefaultLogMaxMB =
+#if SAQ_WITH_HARNESS
+		10;
+#else
+		1;
+#endif
+	constexpr int kMinLogMaxMB = 1;     // 再小装不下一轮 harness 会话，没有意义
+	constexpr int kMaxLogMaxMB = 1024;  // 兜底上限（防 ini 被填疯值把盘写满）
+
+	// 从 ini 解析日志上限（拿不到插件目录 / 没填 / 填了非法值 ⇒ 用编译期默认）。
+	// `aFromIni` = 值确实来自 ini —— 启动日志里说清来源，排查时一眼看出「改没改到」。
+	int ResolveLogMaxMB(bool& aFromIni)
+	{
+		aFromIni = false;
+		std::wstring iniPath;
+		if (const auto dir = SAQ::PluginDir(); !dir.empty()) {
+			iniPath = (dir / L"SAQ_ShowAvailableQuests.ini").wstring();
+		}
+		if (iniPath.empty()) {
+			return kDefaultLogMaxMB;
+		}
+		// 用字符串读：要区分「没填键」（静默用默认，正常情形）与「填了非法值」（WARN）。
+		wchar_t buf[32]{};
+		if (::GetPrivateProfileStringW(L"Log", L"MaxSizeMB", L"", buf, 32, iniPath.c_str()) == 0 ||
+			buf[0] == L'\0') {
+			return kDefaultLogMaxMB;
+		}
+		wchar_t*   end = nullptr;
+		const long v   = std::wcstol(buf, &end, 10);
+		const bool valid = end && end != buf && *end == L'\0' &&
+						   v >= kMinLogMaxMB && v <= kMaxLogMaxMB;
+		if (!valid) {
+			REX::WARN("日志上限：ini [Log] MaxSizeMB 的值不合法（应为 {}~{} 的整数）——"
+					  "按默认 {} MB 处理｜ini：SAQ_ShowAvailableQuests.ini",
+				kMinLogMaxMB, kMaxLogMaxMB, kDefaultLogMaxMB);
+			return kDefaultLogMaxMB;
+		}
+		aFromIni = true;
+		return static_cast<int>(v);
+	}
 
 	// 「单文件封顶」文件 sink（commonlibsf 默认的 basic_file_sink 会无限追加）。
 	class SizeLimitedFileSink final : public spdlog::sinks::base_sink<std::mutex>
@@ -81,13 +131,18 @@ namespace
 			return;
 		}
 
+		// ★ 第 112 轮：上限来自 ini（可配）—— 先解析好，下面三条建日志路径共用。
+		bool             fromIni  = false;
+		const int        mb       = ResolveLogMaxMB(fromIni);
+		const std::size_t maxBytes = static_cast<std::size_t>(mb) * 1024 * 1024;
+
 		std::filesystem::path fileName{ kLogName };
 		fileName += ".log";
 
 		std::shared_ptr<spdlog::sinks::sink> fileSink;
 		if (const auto dir = SAQ::PluginDir(); !dir.empty()) {
 			try {
-				fileSink = std::make_shared<SizeLimitedFileSink>(dir / fileName, kLogMaxBytes);
+				fileSink = std::make_shared<SizeLimitedFileSink>(dir / fileName, maxBytes);
 			} catch (const std::exception& e) {
 				REX::WARN("插件目录里建日志失败（{}）—— 回退到默认日志目录", e.what());
 			}
@@ -95,7 +150,7 @@ namespace
 		if (!fileSink) {
 			if (const auto dir = SFSE::log::log_directory()) {
 				try {
-					fileSink = std::make_shared<SizeLimitedFileSink>(*dir / fileName, kLogMaxBytes);
+					fileSink = std::make_shared<SizeLimitedFileSink>(*dir / fileName, maxBytes);
 				} catch (const std::exception&) {
 				}
 			}
@@ -112,7 +167,15 @@ namespace
 		logger->sinks().push_back(fileSink);
 
 		spdlog::set_pattern("[%T.%e] [%=5t] [%L] %v");
-		REX::INFO("日志文件：插件目录（mod 目录）内的 {}", fileName.string());
+#if SAQ_WITH_HARNESS
+		const char* limitSource =
+			fromIni ? "来自 ini [Log] MaxSizeMB" : "开发构建默认；ini [Log] MaxSizeMB 可改";
+#else
+		const char* limitSource =
+			fromIni ? "来自 ini [Log] MaxSizeMB" : "发布构建默认；ini [Log] MaxSizeMB 可改";
+#endif
+		REX::INFO("日志文件：插件目录（mod 目录）内的 {}｜上限 {} MB（{}）",
+			fileName.string(), mb, limitSource);
 	}
 
 	// 插件加载时可能过早（SFSE 的任务系统还没起来），所以在

@@ -588,7 +588,14 @@ namespace SAQ
 				"[Filter]\r\n"
 				"ProgressCond=1\r\n"
 				"InfoCond=1\r\n"
-				"ChainCond=1\r\n";
+				"ChainCond=1\r\n"
+				";\r\n"
+				"; ---- 日志文件大小上限（第 112 轮） ----\r\n"
+				"; 单位 MB：写新一行时若会超过就把旧内容整体清空（不是滚动保留旧文件）。\r\n"
+				";   不填 = 按构建类型默认（Nexus 发布版 1 MB / 开发构建 10 MB）；\r\n"
+				";   填 N = 用 N MB（范围 1~1024；非法值按默认处理并在日志里 WARN）。\r\n"
+				"[Log]\r\n"
+				"; MaxSizeMB=1\r\n";
 			std::ofstream f{ path.c_str(), std::ios::binary };
 			if (!f) {
 				REX::WARN("测试开关 ini 写不进去（忽略；不影响其它功能）");
@@ -3863,7 +3870,8 @@ namespace SAQ
 
 #if SAQ_WITH_HARNESS
 		// ★★ 第 49 轮：引擎内 harness（自动化测试）。
-		//   ① 装日志环形缓冲（断言要「本步骤之后有没有出现某行」——比读 1MB 上限的日志文件可靠；
+		//   ① 装日志环形缓冲（断言要「本步骤之后有没有出现某行」——比读日志文件可靠：
+	//      文件有上限、会滚动清空；★ 第 112 轮起上限可配，默认发布 1MB / 开发 10MB）；
 		//      必须在 ApplyLogSizeLimit 之后调，否则 sink 会被那次 clear() 清掉）；
 		//   ② 读 ini + 用例文件（[Test] Harness=0 时不读、不注册任何东西）。
 		Test::InstallLogRing();
