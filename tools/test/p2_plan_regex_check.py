@@ -31,6 +31,18 @@ SAMPLES = {
         "刷新=ok（竖条 Inactive→Active）｜文本=ok（SAQ-Mig-0）｜"
         "关菜单入口=ok（可调用=是；菜单仍在=是；返回 true，真关菜单留 P4）｜订阅回调=0 次"
     ),
+    # ★★★ 第 133 轮（P3 产品化 PoC · docs/15 11.7）：`ui.inject` 产品行 ——
+    # 字段/顺序照 SAQ_UiInject.cpp 的拼装顺序写死（快照在扩 tab 之前 —— 快照采的
+    # 是引擎列表）；数值与任务名用实测时不定的占位值，只为验证「顺序 + 段同现」。
+    "界面注入PoC": (
+        "界面注入PoC Menu_mc=ok｜环境=(numTabs 7,entryCount 1,mask 0xFFFFFFFF,语言 zh)｜"
+        "回ALL=ok（mask 0xFFFFFFFF,entryCount 1）｜快照=ok（1 条）｜扩tab=ok（7→8）｜"
+        "监听=ok｜注入数据=ok（entryCount 1→206，期望 206）｜"
+        "对账=ok（0x002C5401:超越极限｜可导航1）｜"
+        "恢复=ok（切0 后 entryCount →1，期望 1）｜"
+        "再注入=ok（entryCount →206，供眼睛）｜拦截=(3 次回调/2 注入/1 恢复)｜"
+        "眼睛=请切到第 8 个 tab 看真实列表"
+    ),
 }
 
 

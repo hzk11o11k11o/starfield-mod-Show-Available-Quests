@@ -666,6 +666,20 @@ HARNESS_STRINGS = (
     #   这条特征串钉住「接线读回」不被回退（改回传 Manager 实例 ⇒ 必 MISS）：
     #   dev 正向；发布构建一条都不见（本表反向检查覆盖）。
     ("harness GFx 探针4 · 按钮 Data 接线判据标记（接线 UserEvents=）", "接线 UserEvents="),
+    # ★★★ 第 133 轮（P3 产品化 PoC · docs/15 11.7）：`ui.inject` —— **真实数据注入**
+    #   （不是探针假数据）：产品侧「待推送」列表（SAQ::PendingQuests()，与 SWF 推送同一份）
+    #   → 扩 tab（7→8）+ 分时注入（切到我们 tab 拦截 + 注入 / 切走恢复引擎快照）+
+    #   对账读回。这些特征串钉住注入链路的各判据段不被回退/删除（dev 正向；发布构建
+    #   一条都不见 —— 本表反向检查覆盖；注入模块整体在 SAQ_WITH_HARNESS 里编译）。
+    ("harness GFx 注入 PoC op 名", "ui.inject"),
+    ("harness GFx 注入 PoC 产品行（可被 assert.log 取证）", "界面注入PoC {}"),
+    ("harness GFx 注入 PoC · 快照判据标记（快照=）", "｜快照="),
+    ("harness GFx 注入 PoC · 注入数据判据标记（注入数据=）", "｜注入数据="),
+    ("harness GFx 注入 PoC · 对账判据标记（对账=）", "｜对账="),
+    ("harness GFx 注入 PoC · 恢复判据标记（恢复=）", "｜恢复="),
+    ("harness GFx 注入 PoC · 监听保留说明（眼睛窗口切 tab 要靠它）",
+     "眼睛=请切到第 8 个 tab 看真实列表"),
+    ("harness GFx 注入 PoC · 回 ALL 段标记（｜回ALL=）", "｜回ALL="),
 )
 
 
@@ -1919,6 +1933,17 @@ def main() -> int:
                          "界面研究探针4b .*刷新=ok.*文本=ok.*关菜单入口=ok".encode()),
                         # 渲染层证据的前提：注入与读回之间隔一帧（wait 1200）。
                         ("P2 迁移探针 a/b 之间的帧推进窗口", "step = wait 1200".encode()),
+                        # ★★★ 第 133 轮（P3 产品化 PoC · docs/15 11.7）：`r133_inject_data`
+                        #   —— 真实数据注入（扩 tab + 分时注入 + 对账 + 恢复）。
+                        ("P2 注入 PoC 用例段头", "[case:r133_inject_data]".encode()),
+                        ("P2 注入 PoC 步骤", "step = ui.inject".encode()),
+                        ("P2 注入 PoC 产品行断言（Menu_mc=ok）",
+                         "assert.log 界面注入PoC .*Menu_mc=ok".encode()),
+                        ("P2 注入 PoC 五段汇总断言（快照/扩tab/注入数据/对账/恢复 同现）",
+                         "界面注入PoC .*快照=ok.*扩tab=ok.*注入数据=ok.*对账=ok.*恢复=ok".encode()),
+                        #  ★ 眼睛窗口：用例结束时界面停在**第 8 个 tab「可接任务」**，
+                        #    列表 = 真实可接任务（真任务名/描述）—— 30 秒供玩家亲自确认。
+                        ("P2 注入 PoC 眼睛窗口（30 秒）", "step = wait 30000".encode()),
                     ):
                         all_ok &= check(f"用例计划 · r120 {label}", p2_text.encode(), needle)
                     # 反向检查：原版 SWF 下我们 SWF 的测试入口（ui.tab / ui.select / ui.key /

@@ -100,6 +100,14 @@ namespace SAQ
 		// 失败时 a_detail 写明卡在哪一步（直接进日志）。
 		bool EnsureResolved(std::string& a_detail);
 
+		// ★★★ 第 133 轮（P3 产品化 PoC · docs/15 11.7）：把已解析的 ASMovieRoot 交给
+		//   注入层（SAQ_UiInject）—— 注入形态与 SWF 通道**共用同一条解析链**
+		//   （那条链只与「找菜单」有关，与通道形态无关；共用 = 不重复猜偏移）。
+		//   用法：先 EnsureResolved(detail) 成功，再取本值；Reset()（菜单关闭）后失效。
+		//   类型 = ASMovieRoot（std::uintptr_t，调用方自行 reinterpret_cast；这样
+		//   本头文件不必依赖 GFx 类型 —— 与文件既有风格一致）。
+		std::uintptr_t ResolvedAsMovieRoot();
+
 		// 把可接任务推给 AS3（MissionMenu.SetAvailableQuests，单个字符串参数，见 .cpp 里的协议）。
 		// 标题与任务名都是「中英双语」一起推，由 AS3 侧按游戏语言挑。
 		// 返回 true = GFx 侧调用成功（返回值写在 a_detail 里）。

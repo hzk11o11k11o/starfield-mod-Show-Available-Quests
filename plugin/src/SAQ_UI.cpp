@@ -925,6 +925,13 @@ namespace SAQ::UI
 		return true;
 	}
 
+	// ★★★ 第 133 轮（P3 产品化 PoC · docs/15 11.7）：见头文件里的说明。
+	//   注入层（SAQ_UiInject）与 SWF 通道共用同一条解析链。
+	std::uintptr_t ResolvedAsMovieRoot()
+	{
+		return Cached().asRoot;
+	}
+
 	namespace
 	{
 		// ★ 第 36 轮：代理任务（SAQ_MainQuest，记录号 0x800）的运行期 FormID。

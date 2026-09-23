@@ -29,7 +29,9 @@
 > + 离线层 4 步 + 正则离线自检；**P2 实验态已部署、待实机**）** + **P2 会话重跑判读
 > （十二·补二 · 第 132 轮：3/3 全 PASS —— 两处探针修正验证生效（`接管=ok（回调收到 1 次）`
 > / `关菜单入口=ok`）⇒ U5~U10 + 置灰 **全绿** ⇒ **探针 v4 全绿 / P3 立项条件达成**；
-> 判据五连全绿）**。
+> 判据五连全绿）** + **P3-a 产品化 PoC 落地（第十三节 · 第 133 轮：新模块
+> `SAQ_UiInject.{h,cpp}` + `ui.inject` —— 真实数据注入（扩 tab + 分时注入 + 引擎快照
+> 恢复 + 对账）；离线全绿、**P2 实验态已部署待实机**）**。
 
 ## 一、问题定义与成功判据
 
@@ -886,6 +888,72 @@ tripwire + P2 正则自检 7 条）。
 （ini `[UI] UiMode=swf|auto|inject`，默认 `auto`；`swf` = 行为与现状逐字节不变、注入代码
 不激活）；② SWF 覆盖文件与构建链**不删不动**（P3~P5 期间两形态并存，P5 才决策发布形态）；
 ③ 部署侧沿用两态切换（`build-saq.ps1 -P2` 实验态 ↔ 不带 `-P2` 常规态）。
+
+## 十三、P3-a 产品化 PoC（2026-09-23 · 第 133 轮；`ui.inject`）
+
+**目标**（第十一节 11.7 的 P3）：**真实数据注入** —— 扩 tab + 分时注入 + 对账 + 恢复，
+**不含交互**（交互接管 = P4；完整描述文案迁移与 watchdog = P3-b）。
+
+**产物**：
+
+| 层 | 产物 | 说明 |
+| --- | --- | --- |
+| 模块 | `plugin/src/SAQ_UiInject.{h,cpp}`（新） | 注入层独立模块（与 SAQ_UI 分文件；GFx 安全调用工具自带一份 —— 「随时可回 SWF」的隔离纪律） |
+| 接口 | `SAQ_UI::ResolvedAsMovieRoot()` / `SAQ::PendingQuests()` | 解析层复用（不重复猜偏移）+ 数据源接线（与 SWF 推送同一份数据） |
+| op | `SAQ_Test.cpp`：`ui.inject`（`Kind::kUiInject`） | harness 段内；一行产品日志 `界面注入PoC …`（红线六） |
+| 计划 | P2 计划 +`[case:r133_inject_data]` | 两条断言（首行 + 五段同现）+ 眼睛窗口 30 s |
+| verify | +8 条 DLL 特征串 + 5 条 P2 计划形状检查 | dev 正向 / 发布反向（注入模块整体在 `SAQ_WITH_HARNESS` 内编译） |
+| 正则自检 | `p2_plan_regex_check.py` +样例「界面注入PoC」 | 编译 + 样例匹配（9 条正则 / 6 条样例） |
+
+**链路（`RunInjectPoC`，一次跑完 —— 判据一行汇总）**：
+R1 环境 → R2 语言（引擎任务名 CJK，U8a 同源）→ R2.5 **回 $ALL**（防「菜单恢复上次分类」
+导致快照只是子集）→ R3 引擎快照（逐条 `GetDataForEntry` 的**引用数组**）→ R4 构造我们的
+条目（真实数据）→ R5 扩 tab（7→8）→ R6 挂 priority=100 拦截 → R7 切 7（拦截 + 设 mask +
+注入）→ R8 对账（前 2 条 uID/名字/置灰）→ R9 切 0（**恢复引擎快照**）→ R10 再切 7（供眼睛）
+→ 汇总。
+
+**关键机制（与原版行为逐项对齐 —— 本轮的新事实）**：
+- ★ 原版 `onFilterChanged`（`MissionMenu.as:2336-2346`）在切 tab 时**只设 `filterMask`、
+  不重建列表** ⇒ 分时注入必须「切到我们 tab 注入 / 切走恢复快照」**两边都自己做**
+  （与 SWF 版「一次性合并 + 掩码过滤」完全不同）；
+- 原版 `FilterInfoA` 只有 7 项（private、改不了）⇒ 第 8 个 tab 必须拦截
+  （否则原版读 `FilterInfoA[7].flag` = TypeError）；
+- 我们的 tab flag = `1<<6`（`AVAILABLE_QUEST_TYPE=6`，与条目 `iType=6` 配对才有显示）；
+  `$ALL` 用**原版值** `0xFFFFFFFF`（不像 SWF 版改 `0xFFFFFFBF` —— 切走即恢复，
+  「全部」里不会出现我们的条目 ⇒ 不需要改）；
+- 原版 7 项 tab 的 flag 映射（从 SWF 版 `PopulateTabs` 逐项抄）：`$ALL=0xFFFFFFFF` /
+  `$Main=1<<1` / `$Faction=1<<2` / `$Misc=1<<3` / `$MISSION=1<<4` / `$Activity=1<<0` /
+  `$Completed=1<<5`（`QuestUtils` 枚举 ACTIVITY=0 / MAIN=1 / FACTION=2 / MISC=3 /
+  MISSION=4 / COMPLETED=5 / AVAILABLE=6 —— P2 实测「切 3 → mask 0x08」吻合）；
+- 条目字段 = 探针 v4 已验证最小集 + 真实值（`uID`=真实任务 FormID / `iType=6` /
+  `aObjectives=[]` / `bCanShowOnMap`=有无引导目标 …）；名字前缀（可重复 / 不可导航）与
+  描述主干按 SWF 版规则拼。
+
+**边界 / 已知差异（P3-b 或以后处理）**：
+- 描述文案 = **主干简化版**（缺 SWF 版 `SaqDescriptionText` 的「按键名提示」等细节分支）；
+- 图标：`iType=6` + `iFaction=-1` 时原版 `GetQuestIconLabel` 走 default 分支（PoC 接受）；
+- watchdog（引擎推送覆盖我们的注入后重放）与 `UiMode` 运行期开关 = P3-b；
+- 点击条目：原版 activate 路径尚未接管（P4）—— 眼睛窗口建议**只切 tab 看列表**；
+- 监听**故意保留**（不 `removeEventListener`）：眼睛窗口里玩家切 tab 要靠它
+  （没有它切到第 8 个 tab 会触发原版越界 TypeError）；副作用随 `menu.close` 清理。
+
+**离线验证（全绿）**：DLL 开发构建（harness）**1141248 B**（1117184 → +24064；含注入
+模块）；P2 实验态部署（`*.p2off` + `Harness=1` + `Plan=SAQ_TestPlan_p2.txt` +
+`AutoLoad=…142854_2_0_4`；工作区 == 部署哈希一致）；`verify --dev --p2` **797 行 / 0 MISS**
+（+8 特征串 + 5 计划形状）；离线层 **5 步全过**；`p2_plan_regex_check` **9 条正则 / 6 条
+样例全过**。
+
+**待实机（下一次 P2 会话：4 条用例 = r120 / r125 / r130 / +`r133_inject_data`）**：
+
+| 段 | ok 的含义 |
+| --- | --- |
+| `快照=ok（N 条）` | 引擎条目引用可全量读回（`GetDataForEntry` 逐个）⇒ 恢复手段成立 |
+| `扩tab=ok（7→8）` | `SetTabsData` 8 项（前 7 项原版 text/flag）被接受 |
+| `注入数据=ok（entryCount N→M，期望 M）` | **真实数据注入**生效（M = 产品待推送列表长度） |
+| `对账=ok（0x…:名字｜可导航0/1）` | 注入后读回的前 2 条与构造期望逐项一致（uID/名字/置灰） |
+| `恢复=ok（切0 后 entryCount →N，期望 N）` | 切走我们 tab 后引擎列表**完整恢复**（分时注入闭环） |
+| `再注入=ok` + `眼睛=…` | 界面停在我们的 tab（真实列表），供眼睛确认 |
+| 眼睛 | 第 8 个 tab「可接任务」+ **真实可接任务列表**（真任务名/描述）；切回原版 tab = 原版内容 |
 
 ## 附：复现命令（离线证据）
 

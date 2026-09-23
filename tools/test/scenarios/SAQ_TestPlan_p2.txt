@@ -22,9 +22,14 @@
 ;    `界面研究探针4a …`（第 130 轮 · 功能迁移探针 v4）：读条目 / 语言 / 类通道 /
 ;      造对象 / 接管 / 注入 / 选中 / 置灰 —— 判据见 `docs/15` 第十一节（U5~U10）。
 ;    `界面研究探针4b …`：刷新（就地刷新竖条）/ 文本（渲染文本）/ 关菜单入口。
+;    `界面注入PoC …`（★★★ 第 133 轮 · P3 产品化 PoC · docs/15 11.7）：**真实数据注入**
+;      —— 环境 / 语言 / 回ALL / 快照 / 扩tab / 监听 / 注入数据 / 对账 / 恢复 / 再注入。
+;      数据 = 产品侧「待推送」列表（与 SWF 推送同一份），不是探针假数据。
 ;  眼睛：`r120` 用例 = tab 条上出现第 8 个 tab「SAQ-PoC」（前 7 个显示为探针的
 ;    假数据 `$SAQ-keep0..6` —— 实验设计如此）+ 列表 3 条「SAQ-PoC-Item i」；
-;    `r130` 用例 = 列表 2 条 `SAQ-Mig-0/1` + 右侧描述面板（sDescription 字段）。
+;    `r130` 用例 = 列表 2 条 `SAQ-Mig-0/1` + 右侧描述面板（sDescription 字段）；
+;    ★ `r133` 用例 = 第 8 个 tab「可接任务」+ **真实的可接任务列表**（真任务名/描述；
+;      切回原版 tab 应恢复原版内容 —— 分时注入的恢复路径）。
 ;    （破坏性副作用 —— 随 menu.close 清理，第 27/50 轮定案；菜单重开后 = 原版数据）。
 ; ============================================================================
 
@@ -109,5 +114,30 @@ step = ui.research4b
 step = assert.log 界面研究探针4b .*Menu_mc=ok scope=prev timeout=10000
 step = assert.log 界面研究探针4b .*刷新=ok.*文本=ok.*关菜单入口=ok scope=case timeout=10000
 ;  眼睛窗口（30 秒）：2 条 SAQ-Mig 条目 + 描述面板（sDescription 字段）。
+step = wait 30000
+step = menu.close
+
+[case:r133_inject_data]
+desc = 第 133 轮（P3 产品化 PoC）：真实数据注入 —— 扩 tab + 分时注入 + 对账 + 恢复（无 SWF 覆盖形态）
+;  判据（`docs/15` 11.7 的 P3 验收项 —— 原版 SWF 上）：
+;    ① `entryCount == 期望`（期望 = 产品侧待推送列表长度）；
+;    ② `GetDataForEntry` 逐项对账（前 2 条的 uID / 显示名 / 置灰）；
+;    ③ 切走 tab 后原版列表恢复（entryCount 回到引擎数，= $ALL 下快照条数）。
+;  数据来源 = 产品侧「待推送」列表（`SAQ::PendingQuests()` —— 与 SWF 推送同一份；
+;  P2 态下推送本身失败（UI 通道不可用），但**数据收集照常发生**，注入走的是这份数据）。
+;  ★ 前置：菜单开着 + 产品侧已收集完（menu.open 后 wait 1800）。
+;  ★ 分时注入的副作用（随 menu.close 清理，第 27/50 轮定案）：tab 数组被替换成 8 项
+;    + `selectionChange` 上留一个 priority=100 监听 —— **故意保留**：眼睛窗口里
+;    切 tab 要靠它（没有它切到第 8 个 tab 会触发原版越界 TypeError）。
+;  ★ 眼睛窗口（30 秒）：用例结束时界面停在**第 8 个 tab「可接任务」**，列表 =
+;    真实的可接任务（真任务名 / 描述 / 置灰）；玩家可切回原版 tab 验证恢复。
+step = ping
+step = menu.open
+step = wait 1800
+step = ui.inject
+step = assert.log 界面注入PoC .*Menu_mc=ok scope=prev timeout=15000
+;  段顺序 = SAQ_UiInject.cpp 的拼装顺序（快照在扩 tab 之前 —— 快照采的是引擎列表）。
+step = assert.log 界面注入PoC .*快照=ok.*扩tab=ok.*注入数据=ok.*对账=ok.*恢复=ok scope=case timeout=15000
+;  眼睛窗口（30 秒）：切到第 8 个 tab 应看到真实的可接任务列表。
 step = wait 30000
 step = menu.close

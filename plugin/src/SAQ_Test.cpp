@@ -8,9 +8,10 @@
 
 #include "SAQ_Test.h"
 
-#include "SAQ.h"          // PluginDir()
+#include "SAQ.h"          // PluginDir() / ★ 第 133 轮：PendingQuests()
 #include "SAQ_TestOps.h"  // 原语层
 #include "SAQ_UI.h"       // ReadUiReport
+#include "SAQ_UiInject.h" // ★★★ 第 133 轮（P3）：ui.inject —— 数据注入 PoC
 
 #include "SAQ_EntryTable.h"  // 任务板入口表（`teleport.entry` 要把「板/常驻 marker」解析成引用）
 #include "SAQ_Guide.h"       // Guide::EnsureChannel（入口 marker 的运行期前缀）
@@ -138,6 +139,7 @@ namespace SAQ::Test
 			kQuestProbe,   // ★★ 第 101 轮补丁：quest.probe —— 直读 IsStageDone（只读，见 ProbeQuestStages）
 			kInfoProbe,    // ★★★ 第 106 轮：info.probe —— INFO 门槛 OR 组探针（只读，见 ProbeInfoGates）
 			kUiResearch,   // ★★★ 第 117 轮：ui.research —— GFx 注入能力探针（见 ResearchGfxCapabilities）
+			kUiInject,     // ★★★ 第 133 轮：ui.inject —— 数据注入 PoC（见 SAQ_UiInject.h）
 			kSaveList,     // ★★ 第 62 轮：存档列表诊断（BGSSaveLoadManager，只读）
 			kSaveLoad,     // ★★ 第 62 轮：自动读档（排队 → 等加载走完 → 通道重新就绪）
 		};
@@ -728,6 +730,16 @@ namespace SAQ::Test
 				a_step.kind = Kind::kUiResearch;
 				a_step.text = "4b";
 				a_step.timeoutMs = 10000;
+			} else if (op == "ui.inject") {
+				// ★★★ 第 133 轮（P3 产品化 PoC · docs/15 11.7）：**真正的数据注入**
+				//   （不是探针假数据）—— 把产品侧「待推送」的可接任务列表
+				//   （`SAQ::PendingQuests()`，与 SWF 通道同一份数据）注进原版
+				//   MissionMenu：扩 tab（7→8）+ 分时注入（切到我们 tab 拦截 + 注入 /
+				//   切走恢复引擎快照）+ 对账读回。
+				//   一次跑完（见 SAQ_UiInject.cpp 的 RunInjectPoC）。
+				a_step.kind = Kind::kUiInject;
+				a_step.text = Trim(rest);
+				a_step.timeoutMs = 15000;
 			} else if (op == "wait") {
 				a_step.kind = Kind::kWait;
 				const auto toks = SplitWs(rest);
@@ -1367,6 +1379,19 @@ namespace SAQ::Test
 				const auto probe = ProbeInfoGates(step.formId);
 				REX::INFO("信息探针 {}", probe);
 				CompleteStep(true, probe, {});
+				return true;
+			}
+
+			case Kind::kUiInject: {
+				// ★★★ 第 133 轮（P3 产品化 PoC · docs/15 11.7）：`ui.inject` —— 把产品侧
+				//   「待推送」的可接任务列表（SAQ::PendingQuests()，同一份数据）真实
+				//   注进原版 MissionMenu（扩 tab + 分时注入 + 对账 + 恢复对账）。
+				//   一次性完成（不进 Papyrus 通道；**菜单必须开着** —— 它操作界面里的
+				//   AS3 对象）。红线六（第 104 轮）：结果必须**同时打一行产品日志**
+				//   （`assert.log` 只认产品行，LogFind 跳过一切含 `harness：` 的行）。
+				const auto inject = UiInject::RunInjectPoC(SAQ::PendingQuests());
+				REX::INFO("界面注入PoC {}", inject);
+				CompleteStep(true, inject, {});
 				return true;
 			}
 

@@ -3924,6 +3924,12 @@ namespace SAQ
 		}
 	}
 
+	// ★★★ 第 133 轮（P3 产品化 PoC · docs/15 11.7）：见 SAQ.h 里的说明。
+	const std::vector<QuestEntry>& PendingQuests()
+	{
+		return g_pending.quests;
+	}
+
 	std::filesystem::path PluginDir()
 	{
 		// ★ 第 22 轮：通过「本模块里一个函数的地址」反查模块句柄 —— 不依赖 SFSE 接口，
