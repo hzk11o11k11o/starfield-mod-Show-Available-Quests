@@ -5,7 +5,8 @@
 > 注入原版（甚至第三方）任务菜单？
 > **目的** = 消除与其它改任务菜单 UI mod 的**文件级二选一冲突**。
 >
-> 本文 = 离线取证 + 路线盘点 + 实验设计。**结论待实机探针（`ui.research`）判读**。
+> 本文 = 离线取证 + 路线盘点 + 实验设计 + **实测判读（见第九·补节：U0 ✅ / U1 ❌ 能力边界 /
+> U2 待补测 / U3 ✅ ⇒ 路线 A 不终止，下一步探针 v2 / P1.5）**。
 
 ## 一、问题定义与成功判据
 
@@ -175,11 +176,52 @@
 **眼睛（P1 副作用，可选看）**：写成功时 tab 条上会多一个第 9 个「SAQ研究」tab；
 菜单关掉再开应恢复 8 个（Movie 重建 ⇒ 副作用自然清理）。
 
-**判读之后**：
-- 三项全 ok ⇒ 做 **P2**（原版 SWF 完整 PoC：MO2 临时禁用我们的 SWF 覆盖，验证 7 → 8 个 tab
-  + 数据注入 + 交互接管）；
-- `GetVar槽=无` ⇒ 先补一条 GetVariable 槽定位实验（`tools/re/disasm.py` 量 vtable[0x32] 的 RVA）；
-- 任一项 fail 且无替代路径 ⇒ 路线 A 终止，回到路线 D（现状 + 冲突检测）。
+### 九·补、实测判读（2026-09-23 · 第 118 轮；41 条用例 41/41 全 PASS）
+
+**实测两行**（`r117_gfx_research` / `r117_gfx_research_events`，14:23:07~09）：
+
+```
+界面研究探针 GetVar槽=在｜Menu_mc=ok｜私有读=(fail HasMember=0 项数=0)｜私有写=未做（读失败）｜TabSel=ok numTabs=8｜事件=未试
+界面研究探针 GetVar槽=在｜Menu_mc=ok｜私有读=(fail HasMember=0 项数=0)｜私有写=未做（读失败）｜TabSel=ok numTabs=8｜MissionsList_mc=ok｜事件注册=ok
+界面研究探针：事件回调收到（第 1 次，argCount=1）   ← 随后走原版路径（ui.key Accept → onEntryPress → ITEM_ACTIVATED）真实触发
+```
+
+| 未知点 | 实测 | 判读 |
+| --- | --- | --- |
+| **U0** 路径基础设施 | `GetVar槽=在` + `Menu_mc=ok` | ✅ `GetVariable`（0x32）槽在本版本有效；`_root.Menu_mc` 定位成功 |
+| **U1** private 读写 | `私有读=(fail HasMember=0 项数=0)`；写被短路 | ❌ **能力边界**（非意外）：AVM2 private trait 带类私有 namespace，GFx 的 public multiname 查不到 ⇒ `SetMember` 写也只会创建 dynamic 公共属性、原版编译期绑定读不到 ⇒ **放弃"改 FilterInfoA"** |
+| **U2** public 调用 | `TabSel=ok numTabs=8`（对象 + getter 可达）；`SetTabsData` **未执行** | ❓ **未验证**：探针把 `SetTabsData` 调用耦合在 `writeOk && readOk` 之后（**探针设计缺陷** —— 它本身不依赖 `FilterInfoA`，参数即数组）⇒ 下一轮补测 |
+| **U3** 事件注入 | `事件注册=ok` + `事件回调收到（argCount=1）` | ✅ **成立**（`CreateFunction` + `addEventListener(..., priority=100)`，回调真实收到） |
+
+**结论：路线 A 不终止** —— U1 的失败可完整绕开，离线依据（反编译源码）：
+
+1. `FilterInfoA` 的唯一用途链 = `currentFilterFlag` getter（`FilterInfoA[idx].flag`，
+   原版 `MissionMenu.as:169-172`，public getter）→ 唯一消费者 `onFilterChanged`
+   （原版 `MissionMenu.as:343-354`，private）→ `MissionsList_mc.filterMask = currentFilterFlag`；
+2. **拦截事件即可绕过**：`onFilterChanged` 也是通过
+   `TabbedFilterSelection_mc.addEventListener(BSTabbedSelectionEvent.NAME, …)`
+   （原版 `:274`）挂的 —— U3 已证明我们能挂 priority=100 监听（先于原版 priority=0 收到）；
+   在切到第 8 tab（`iSelectedIndex==7`）时 `stopImmediatePropagation()` 拦住原版
+   （防 `FilterInfoA[7].flag` 越界 TypeError），随后自己设过滤；
+3. **自己设过滤可行**：`filterMask` 是 **public setter**（`BSScrollingTree.as:18-27`，
+   set 内自动 `FilterRootEntries()` 刷新显示）⇒ C++ `SetMember(MissionsList_mc, "filterMask", 64)`
+   （待 GFx 写验证）；
+4. `SetTabsData(Array, uint=0)` 是 public（`BSTabbedSelection.as:141`）且**参数就是数组本身**
+   ⇒ 加 tab 不依赖 U1（待补测）；
+5. 事件类型字符串 = **`"BSTabbedSelection::selectionChange"`**（`BSTabbedSelectionEvent.NAME`）；
+   事件对象带 `iSelectedIndex` / `iPreviousSelectionIndex`（public int，可供 C++ 回调读取）。
+
+**探针 v2（P1.5）设计**（下一轮）：
+
+| 步 | 动作 | 判据 |
+| --- | --- | --- |
+| 1 | C++ 构造 8 项数组（`CreateObject`+`text`/`flag`）→ `SetTabsData` → 读回 `numTabs` | **U2 补测**：调用成功（numTabs 跟随数组长度） |
+| 2 | 在 `TabbedFilterSelection_mc` 挂 `selectionChange` priority=100 + `stopImmediatePropagation` → 程序化切一次 tab | **拦截成立**：原版 `onFilterChanged` 被拦（列表 `filterMask` 不跟变 / 无异常） |
+| 3 | `SetMember(MissionsList_mc, "filterMask", 64)` → 读回 + 观察列表 | **写成立**：读回 64 且列表过滤变化 |
+| 4 | （可选）`VisitMembers` / `GetVariable` 路径读 `FilterInfoA` | 若可枚举到 ⇒ 仅存疑点的最后补充（即使可读，写仍不可行） |
+
+三项全过 ⇒ 做 **P2**（原版 SWF 完整 PoC：MO2 临时禁用我们的 SWF 覆盖，验证 7 → 8 个 tab
++ 数据注入 + 交互接管）；若 2/3 又失败且无替代 ⇒ 路线 A 终止，回到路线 D（现状 + 冲突检测）。
 
 ## 附：复现命令（离线证据）
 
