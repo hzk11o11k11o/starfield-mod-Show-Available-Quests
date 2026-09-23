@@ -112,13 +112,12 @@ namespace SAQ::UiInject
 	// 链路并返回一行汇总（调用方打产品日志 —— 红线六）。
 	//
 	// 链路：环境读 → 语言判定 → 引擎快照 → 扩 tab（7→8）→ 切 7（拦截+注入）→
-	//       对账读回 → 切 0（恢复）→ 对账读回 → 再切 7（注入 —— 供「眼睛窗口」
-	//       玩家亲眼看到真实数据）→ 汇总。
+	//       对账读回 → 切 0（恢复）→ 对账读回 → 再切 7（注入可重入复核）→ 汇总。
 	//
 	// 副作用（菜单关闭后随 Movie 销毁，不还原 —— 第 27/50 轮定案）：
 	//   tab 数组被替换为 8 项（末项 = 我们的 tab）、列表被替换为我们的条目、
-	//   selectionChange 上留一个 priority=100 监听（**故意保留**：眼睛窗口里玩家
-	//   切 tab 要靠它 —— 没有它切到第 8 个 tab 会触发原版越界 TypeError）。
+	//   selectionChange 上留一个 priority=100 监听（**故意保留**：切到第 8 个 tab
+	//   要靠它 —— 没有它切到第 8 个 tab 会触发原版越界 TypeError）。
 	std::string RunInjectPoC(const std::vector<QuestEntry>& a_quests);
 
 	// ★★★ 第 140 轮（P4 交互接管）：`ui.interact` —— 接管层的判据链（**原版 SWF** 上跑）。

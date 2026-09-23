@@ -3234,7 +3234,7 @@ namespace SAQ::UI
 		//   `TabbedFilterSelection_mc.ProcessUserEvent` 的结果（见 MissionMenu.as）——
 		//   未知事件下可能被某个按钮声称处理（返回 true），但**没有副作用**（菜单仍在）。
 		//   真正的关菜单原语 = 传 `"ReturnToStarMap"`（OnCancelEvent）或 `"Missions"`
-		//   （onCloseSubMenuToGame）—— 那会真关掉菜单（30 秒「眼睛」窗口提前结束），
+		//   （onCloseSubMenuToGame）—— 那会真关掉菜单（会打断人工观察窗口），
 		//   按设计留到 P4 用驱动器验证。这里判 = 可调用 + 菜单仍在（无副作用）。
 		{
 			RE::Scaleform::GFx::Value evName;

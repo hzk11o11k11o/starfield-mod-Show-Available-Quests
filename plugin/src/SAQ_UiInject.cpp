@@ -481,8 +481,8 @@ namespace SAQ::UiInject
 		// 三、注入上下文与拦截 handler
 		//
 		// 生命周期：静态存储（进程内一份）—— 每次 PoC 开始时重置。
-		//   ★ 为什么不能用栈上的局部：handler 是**异步**的（玩家在眼睛窗口里切 tab
-		//   也会触发），必须活到菜单关闭；GFx::Value 成员在菜单关闭（Movie 销毁）后
+		//   ★ 为什么不能用栈上的局部：handler 是**异步**的（玩家切 tab 也会触发），
+		//   必须活到菜单关闭；GFx::Value 成员在菜单关闭（Movie 销毁）后
 		//   失效，但那时也不会有新事件（读失效值被 SEH 挡下，返回失败）。
 		// ====================================================================
 
@@ -2008,12 +2008,12 @@ namespace SAQ::UiInject
 		out += std::format("｜恢复={}（切0 后 entryCount →{}，期望 {}）",
 			passRestore ? "ok" : "fail", NumStr(entries2), NumStr(ctx.engineCount));
 
-		// ---- R10 再切 7（供眼睛窗口：玩家能亲眼看到真实数据）→ 读回 ----
+		// ---- R10 再切 7（注入可重入复核：切走后再切回仍能注入）→ 读回 ----
 		double     entries3 = -1.0;
 		const bool sw7b = switchTab(static_cast<std::uint32_t>(ctx.ourTabIndex));
 		const bool r3 = sw7b && readNum(list, "entryCount", entries3);
 		const bool passAgain = r3 && entries3 == static_cast<double>(ctx.injectCount);
-		out += std::format("｜再注入={}（entryCount →{}，供眼睛）", passAgain ? "ok" : "fail",
+		out += std::format("｜再注入={}（entryCount →{}，可重入）", passAgain ? "ok" : "fail",
 			NumStr(entries3));
 
 		// 统计（拦截器侧证据：切 7 一次注入 + 切走一次恢复 + 再切 7 一次注入 = 2/1）
@@ -2027,9 +2027,10 @@ namespace SAQ::UiInject
 		ctx.menuActive = true;
 		ctx.guideUid = SAQ::CurrentGuideQuestID();
 
-		// ★ 监听**故意保留**：眼睛窗口里玩家切 tab 要靠它（没有它切到第 8 个 tab
-		//   会触发原版越界 TypeError）—— 副作用随 menu.close 自然清理（第 27/50 轮定案）。
-		out += "｜眼睛=请切到第 8 个 tab 看真实列表";
+		// ★ 监听**故意保留**：玩家切 tab 要靠它（没有它切到第 8 个 tab 会触发
+		//   原版越界 TypeError）—— 副作用随 menu.close 自然清理（第 27/50 轮定案）。
+		//   ★ 第 142 轮：原「｜眼睛=请切到第 8 个 tab 看真实列表」提示（人工观察窗口
+		//   用）已随全部眼睛判据去除。
 		return out;
 	}
 
@@ -2226,7 +2227,7 @@ namespace SAQ::UiInject
 			out += "｜激活=fail（子项行不可用 —— 见上面的触发段）";
 		}
 
-		// ---- R5 收起并复位（不留展开态给后续步骤 / 眼睛窗口）----
+		// ---- R5 收起并复位（不留展开态给后续步骤）----
 		{
 			RE::Scaleform::GFx::Value args[2]{ RE::Scaleform::GFx::Value(static_cast<std::int32_t>(0)),
 				RE::Scaleform::GFx::Value(false) };

@@ -677,8 +677,10 @@ HARNESS_STRINGS = (
     ("harness GFx 注入 PoC · 注入数据判据标记（注入数据=）", "｜注入数据="),
     ("harness GFx 注入 PoC · 对账判据标记（对账=）", "｜对账="),
     ("harness GFx 注入 PoC · 恢复判据标记（恢复=）", "｜恢复="),
-    ("harness GFx 注入 PoC · 监听保留说明（眼睛窗口切 tab 要靠它）",
-     "眼睛=请切到第 8 个 tab 看真实列表"),
+    # ★★★ 第 142 轮（眼睛判据去除）：原「｜眼睛=请切到第 8 个 tab 看真实列表」
+    #   提示随全部人工观察窗口一并删除（判据历经第 136/139/140/141 轮实机确认完毕）
+    #   ⇒ 特征串改钉「再注入」段（注入可重入复核 —— 切走后再切回仍能注入）。
+    ("harness GFx 注入 PoC · 再注入判据标记（再注入=）", "｜再注入="),
     ("harness GFx 注入 PoC · 回 ALL 段标记（｜回ALL=）", "｜回ALL="),
     # ★★★ 第 135 轮（P3-a 实机缺陷修复 · 注入上下文未接线）：拦截 handler（设 mask +
     #   注入 / 恢复）全部操作 `ctx.list`，而它此前从未被赋值（空 Value）⇒ 第 134 轮
@@ -1987,9 +1989,9 @@ def main() -> int:
                         ("P2 冲突判定断言", "assert.log UI 通道不可用".encode()),
                         ("P2 停推降噪断言（不再出现「推送放弃」）",
                          "assert.nolog 推送放弃".encode()),
-                        # ★★★ 第 127 轮（提示时机）：关菜单后的「眼睛」静默窗口。
-                        ("P2 眼睛窗口（关菜单后提示静默期）",
-                         "step = wait 10000".encode()),
+                        # ★★★ 第 142 轮（眼睛判据去除）：原第 127 轮「关菜单后 10 秒
+                        #   静默期（提示播完 + 留给眼睛）」已删除 —— 提示时机本身已由
+                        #   第 127 轮实机确认；零人工观察由下方反向检查兜底。
                         # ★★★ 第 130 轮（功能迁移探针 v4 · docs/15 十一）：`r130_gfx_migrate`
                         #   两段判据 —— 4a（读条目/语言/类通道/造对象/接管/注入/选中/置灰）
                         #   + 4b（刷新/文本/关菜单入口）。三项能力边界（类通道/造对象/接管）
@@ -2012,9 +2014,9 @@ def main() -> int:
                          "assert.log 界面注入PoC .*Menu_mc=ok".encode()),
                         ("P2 注入 PoC 五段汇总断言（快照/扩tab/注入数据/对账/恢复 同现）",
                          "界面注入PoC .*快照=ok.*扩tab=ok.*注入数据=ok.*对账=ok.*恢复=ok".encode()),
-                        #  ★ 眼睛窗口：用例结束时界面停在**第 8 个 tab「可接任务」**，
-                        #    列表 = 真实可接任务（真任务名/描述）—— 30 秒供玩家亲自确认。
-                        ("P2 注入 PoC 眼睛窗口（30 秒）", "step = wait 30000".encode()),
+                        #  ★★★ 第 142 轮（眼睛判据去除）：原 30 秒眼睛窗口已删除 ——
+                        #    真实列表判据由第 139/140 轮实机确认；零人工观察由下方
+                        #    反向检查兜底。
                         # ★★ 第 137 轮（P3-b · UI 注入形态产品化）：`r137_product_inject`
                         #   —— **产品路径**验收（UiMode=auto ⇒ 冲突环境自动激活注入；
                         #   不走 harness 原语 ui.inject）。
@@ -2061,6 +2063,16 @@ def main() -> int:
                     print(("MISS" if p2_bad else "OK  ") +
                           " 用例计划 · r120 只走 C++ 原语（无 ui.tab/select/key/assert.ui，反向检查）")
                     all_ok &= not p2_bad
+                    # ★★★ 第 142 轮（眼睛判据去除）：P2 计划**零人工观察窗口** ——
+                    #   全部观察窗口（r120 的 wait 10000 / r130 / r133 / r137 的
+                    #   wait 30000）已删除；界面与提示的判据都由 assert.log 自动化
+                    #   兜底（第 136/139/140/141 轮实机确认完毕）。要看界面时对相应
+                    #   用例临时加回 wait（计划注释里已写明）。
+                    p2_eye = [s for s in ("step = wait 30000", "step = wait 10000")
+                              if s in p2_steps]
+                    print(("MISS" if p2_eye else "OK  ") +
+                          " 用例计划 · P2 零人工观察窗口（眼睛判据已去除，反向检查）")
+                    all_ok &= not p2_eye
                     p2_deployed = MO2_MOD / "SFSE/Plugins/SAQ_TestPlan_p2.txt"
                     if p2_deployed.exists():
                         same_p2 = p2_deployed.read_bytes() == p2_src.read_bytes()
