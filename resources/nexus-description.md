@@ -1,4 +1,4 @@
-# Nexus 上传素材（v0.1.16）
+# Nexus 上传素材（v0.1.17）
 
 > 用途：复制下面内容到 Nexus 的 mod 页。Summary 填「名称/摘要」栏，
 > Description 填「描述」栏（Nexus 描述框可用 BBCode，纯文本换行也正常）。
@@ -35,7 +35,7 @@ Starfield 从不告诉你去哪接任务，全靠自己撞见。这个 mod 在�
 [*] 已完成的、已在任务日志里的任务自动隐藏（**可重复任务例外**：这类任务完成一次后仍留在列表里 —— 共 21 条，名字前同样带「（可重复）」标记并整组排在列表末尾，描述第一句写明「（可重复）怎么再接」）
 [*] **进度没到不会显示**：前置任务没做完、剧情还没推进到的任务不会出现在列表里（判据来自游戏数据里的任务条件 + 对话条件；列表里留下的都是你现在真能接的）
 [*] 没有导航目标的任务会明确提示：条目名字前面直接标注**「（不可导航）」**，描述里写明原因，不用点就知道它没法引导
-[*] 导航目标很远的任务：远处点引导会先落到**就近位置**（不再「点了没反应」），走近后自动切换到精确目标；v0.1.14 起这批任务的兜底目标已补全 —— 只剩 1 条 DLC 收集型任务仍需**靠近**目标区域（描述会**提前**写明，HUD 会提示、引导保持待生效，靠近后自动生效，不必重新点）
+[*] 导航目标很远的任务：远处点引导会先落到**就近位置**（不再「点了没反应」），走近后自动切换到精确目标；v0.1.17 起兜底目标已**全部**补全 —— 任何任务在任意距离点一下引导都会立即生效，不再需要靠近
 [*] 被引导的任务一旦接取，引导自动取消
 [*] 界面文件被其它任务菜单 mod 覆盖 / 未安装时（v0.1.16 起）：**自动切换到内置注入形态** —— 不依赖自己的界面文件，直接接管出「可接任务」标签页，功能照常可用（一般不再需要打补丁）；并带**结构指纹自检**：万一游戏版本更新改了界面结构，功能会保持关闭并给出明确日志提示，**不会显示错乱的列表**
 [*] 支持中文 / 英文
@@ -88,7 +88,7 @@ Starfield never tells you where to pick up quests — you just have to stumble i
 [*] SET COURSE (R / X) goes one step further: it also opens the star map with the route plotted to the pickup location, exactly like a vanilla quest
 [*] Already-completed quests and quests already in your log are hidden (repeatable quests are the exception: they stay listed after you finish them - 21 of them - and are tagged "(Repeatable)" and grouped at the end of the list; their description tells you how to take them again)
 [*] Quests with no navigation target are clearly flagged (the description explains why) — no dead ends
-[*] Guidance now works from any distance for almost every quest (as of v0.1.14): only one DLC collection quest still needs you to get near (the description says so in advance, the HUD reminds you after you press guide, and the guidance activates automatically once you arrive - no need to press it again)
+[*] Guidance now works from any distance for every quest (as of v0.1.17): the fallback targets are complete - one click anywhere activates the guidance immediately, no need to get near the target area first
 [*] Guidance is cancelled automatically once you accept the quest
 [*] If the mission-menu UI is overridden by another mission-menu mod (or missing / outdated), the mod now **switches to its built-in injection mode** (as of v0.1.16): the "Available Quests" tab keeps working (usually no patch needed), and a **structure fingerprint self-check** keeps the feature off with a clear log message - instead of showing a broken list - if a game update ever changes the UI layout
 [*] Chinese and English games supported
@@ -127,6 +127,10 @@ Please include SFSE\Plugins\SAQ_ShowAvailableQuests.log, install method (MO2 / m
 ---
 
 ## 更新日志（Changelog）
+
+### v0.1.17（2026-09-24）
+- 修复：最后一条引导目标**需要靠近目标区域才会生效**的任务（破碎空间 DLC 的收集型任务）已补全兜底 —— 现在**全部任务**在任意距离点一下引导都会**立即生效**，不再出现「目标尚未加载，保持待生效」的等待
+- 其它：内部数据与验证设施更新（不影响游戏内行为；发布包仍不包含任何测试代码）
 
 ### v0.1.16（2026-09-23）
 - 新增：**界面兼容性升级 —— 与其它任务菜单 mod 共存**。此前本 mod 的界面文件（`Interface\missionmenu.swf`）被其它修改任务菜单的 mod 覆盖 / 未安装时，只能提示「界面未生效」（标签页不可用）。现在**自动切换到内置注入形态**：不依赖自己的界面文件，直接在原版任务菜单里接管出「可接任务」标签页 —— 功能照常可用，一般不再需要打补丁（可在 ini 的 `[UI] UiMode` 里强制 `swf` / `auto` / `inject`，默认 `auto` 即自动判断）
@@ -215,7 +219,7 @@ Please include SFSE\Plugins\SAQ_ShowAvailableQuests.log, install method (MO2 / m
 
 | 项 | 说明 |
 | --- | --- |
-| 上传包 | `dist\SAQ-ShowAvailableQuests-0.1.16.zip`（由 `tools\package-saq.ps1` 生成；会先以发布构建重编 DLL —— 包里不含任何 harness/测试代码） |
+| 上传包 | `dist\SAQ-ShowAvailableQuests-0.1.17.zip`（由 `tools\package-saq.ps1` 生成；会先以发布构建重编 DLL —— 包里不含任何 harness/测试代码） |
 | 测试功能 | 包内**不含任何测试资产**（用例文件 / 结果 JSON），配置强制为「正常玩」的默认值（ini `[Test] Mode=0 / Harness=0`）；发布 DLL 不含 harness 编译 —— 由打包脚本 + `verify_saq_build.py` 三层校验把守 |
 | 版本号 | 三处一致：`plugin\xmake.lua`、`plugin\src\main.cpp`、`meta.ini` |
 | 依赖声明 | Nexus 上标注 SFSE 为必需依赖（版本 0.2.21+） |

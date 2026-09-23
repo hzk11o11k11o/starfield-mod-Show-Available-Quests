@@ -58,9 +58,8 @@
   · 无限生成任务本身不显示，但其接取入口（13 处任务板 + 8 位可重复任务 NPC）会作为独立条目列出；
     无论你在哪都能一键导航过去——远处先给大致方位，走到那块板所在的区域后
     蓝点会自动落到板上（读档/重启后也会自动校正）。
-  · 导航兜底基本补全（v0.1.14）：只剩 1 条 DLC 收集型任务的引导目标要**先靠近
-    才会加载**（描述里提前写明；HUD 会提示「目标尚未加载」），走近后自动生效、
-    不必重新点；其余任务在远处点一下就会直接生效。
+  · 导航兜底已**全部**补全（v0.1.17）：所有任务的引导在任意距离点一下都会直接
+    生效，不再有「需要先靠近目标区域才会加载」的任务。
   · 「游戏进度还没到时应当不显示」覆盖两类条件：任务记录里「引用别的任务」的
     前置条件（7 条任务 / 11 条条件，含条件组里的「或」逻辑），以及任务对话
     （INFO）里的同类条件（84 条任务 / 425 条对话 / 512 条条件，含官方 DLC，
@@ -156,11 +155,9 @@
     get the approximate direction, and once you reach the board's area the
     marker snaps onto the board itself (it also self-corrects after a save
     reload or restart).
-  · Navigation fallbacks are now complete (v0.1.14): only one DLC
-    collection quest still needs you to get near (the description says so;
-    the HUD says "target not loaded yet") and it activates automatically once
-    you arrive - no need to press again. Everything else works from any
-    distance.
+  · Navigation fallbacks are complete (v0.1.17): every quest's guidance now
+    activates immediately from any distance - no quest needs you to get near
+    its target area first anymore.
   · "Not shown when your progress is not far enough" covers two layers of
     conditions: record-level preconditions that reference another quest
     (7 quests / 11 conditions, including "or" groups) and the same kind of
