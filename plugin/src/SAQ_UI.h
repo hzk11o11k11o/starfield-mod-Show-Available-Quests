@@ -30,8 +30,8 @@ namespace SAQ
 		//   所有条目的图标都是「任务」那一个；现在推**真实类型**，界面才能像原版一样
 		//   区分活动 / 杂项 / 任务 / 势力（势力图标由下面的 faction 决定）。
 		// ★ 入口条目用非原版枚举：100 = 任务板（kEntryQuestType）、101 = 可重复 NPC
-		//   （kNpcEntryQuestType，第 80 轮）——界面识别它换文案（子项/描述），
-		//   并在显示层折叠回「任务」图标。
+		//   （kNpcEntryQuestType，第 80 轮）、102 = 可招募船员（kCrewEntryQuestType，
+		//   第 156 轮）——界面识别它换文案（子项/描述），并在显示层折叠回「任务」图标。
 		std::int32_t  type{};
 		// ★ 第 65 轮（任务专属图标）：原版 UI 的阵营枚举（= SWF 里 FactionUtils 的顺序，
 		//   -1 = 无阵营）——由 QUST 的 FTYP 关键字离线映射（gen_faction_types.py）。

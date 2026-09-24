@@ -110,6 +110,12 @@ package
       //   名字里自带「（可重复）」前缀（C++ 侧数据加好，界面原样显示）。
       private static const SAQ_REPEAT_NPC_TYPE:int = 101;
       
+      // ★★★ 第 156 轮：type == 102 = 「可招募船员」条目（24 位精英船员）——同属「入口」
+      //   （uID = 船员放置引用的 FormID），文案：子项「招募他作为船员」+ 描述写明
+      //   「可招募为船员 / 引导到他的位置」。名字里自带「（可招募）」前缀（C++ 侧加好）。
+      //   ★ C++ 侧对这类条目做 P/A 判据过滤（未解锁 / 已招募的不推）——界面只管显示。
+      private static const SAQ_CREW_TYPE:int = 102;
+      
       private static const SAQ_EMBEDDED_CHUNKS:Array = [/*__SAQ_EMBEDDED__*/];
       
       public var UniversalBackButton_mc:BSButton;
@@ -705,8 +711,9 @@ package
       //    TrackersAlliance / Constellation / TerranArmada / Creations）。
       //   原版枚举 0..4 **全部**能安全 gotoAndStop（此前担心的「None 帧不存在」不成立），
       //   所以不再把派系(2)/主线(1) 归一成 4：真实类型 + 真实阵营 = 与原版任务菜单一致的图标。
-      //   只有我们自己的扩展值（100 = 任务板入口 / 101 = 可重复 NPC 入口，见
-      //   SAQ_ENTRY_TYPE / SAQ_REPEAT_NPC_TYPE）折叠回「任务」图标，保持入口条目既有视觉。
+      //   只有我们自己的扩展值（100 = 任务板入口 / 101 = 可重复 NPC 入口 /
+      //   102 = 可招募船员入口，见 SAQ_ENTRY_TYPE / SAQ_REPEAT_NPC_TYPE / SAQ_CREW_TYPE）
+      //   折叠回「任务」图标，保持入口条目既有视觉。
       private static function SaqSafeType(param1:int) : int
       {
          if(param1 == QuestUtils.ACTIVITY_QUEST_TYPE || param1 == QuestUtils.MAIN_QUEST_TYPE || param1 == QuestUtils.FACTION_QUEST_TYPE || param1 == QuestUtils.MISC_QUEST_TYPE || param1 == QuestUtils.MISSION_QUEST_TYPE)
@@ -722,12 +729,13 @@ package
       //   为什么要范围检查：这两个值会直接交给原版函数（GetQuestIconLabel 的
       //   gotoAndStop、MissionInfo.GetQuestColorIcon 的 getDefinitionByName）——
       //   「协议演进 / 数据串列」产生的越界值不应该带着疑问进原版代码。
-      // ★★ 第 80 轮：入口条目的合并判据（任务板 100 / 可重复 NPC 101）——
+      // ★★ 第 80 轮：入口条目的合并判据（任务板 100 / 可重复 NPC 101 /
+      //   ★★★ 第 156 轮：可招募船员 102）——
       //   「按入口处理」的地方统一用它（子项名 / 描述 / 不可导航提示），
       //   防止以后再加入口类型时漏掉某一处（第 51/52 轮的教训：判断散落 = 漏改）。
       private static function SaqIsEntryType(param1:int) : Boolean
       {
-         return param1 == SAQ_ENTRY_TYPE || param1 == SAQ_REPEAT_NPC_TYPE;
+         return param1 == SAQ_ENTRY_TYPE || param1 == SAQ_REPEAT_NPC_TYPE || param1 == SAQ_CREW_TYPE;
       }
       
       private static function SaqSafeFaction(param1:int) : int
@@ -757,11 +765,14 @@ package
             "iFaction":FactionUtils.FACTION_NONE,
             // ★ 第 27 轮：入口条目（任务板）的子项名不同 —— 它不是「任务」而是「入口」。
             // ★★ 第 80 轮：可重复 NPC（101）再单独一档 —— 它不是地点，是「人」。
-            "sName":param1.iType == SAQ_REPEAT_NPC_TYPE
-               ? (this.SaqUseChinese() ? "与他交谈（可重复任务）" : "Talk to them (repeatable job)")
-               : (param1.iType == SAQ_ENTRY_TYPE
-                  ? (this.SaqUseChinese() ? "前往任务板" : "Go to the mission board")
-                  : (this.SaqUseChinese() ? "前往接取地点" : "Reach the pickup location")),
+            // ★★★ 第 156 轮：可招募船员（102）—— 同属「人」，文案改为「招募他作为船员」。
+            "sName":param1.iType == SAQ_CREW_TYPE
+               ? (this.SaqUseChinese() ? "招募他作为船员" : "Recruit them as crew")
+               : (param1.iType == SAQ_REPEAT_NPC_TYPE
+                  ? (this.SaqUseChinese() ? "与他交谈（可重复任务）" : "Talk to them (repeatable job)")
+                  : (param1.iType == SAQ_ENTRY_TYPE
+                     ? (this.SaqUseChinese() ? "前往任务板" : "Go to the mission board")
+                     : (this.SaqUseChinese() ? "前往接取地点" : "Reach the pickup location"))),
             "sDescription":"",
             "bComplete":false,
             "bFailed":false,
@@ -882,9 +893,32 @@ package
          {
             if(param1 != true)
             {
+               // ★★★ 第 156 轮（可招募船员）：船员的「不可导航」多半**不是**「稍后重试」
+               //   —— 3 位（别名暂存格 / 运行时生成内景）的位置是**设计上**不固定的
+               //   （数据侧不配兜底候选 ⇒ 平时取不到）。照第 91 轮口径：明说原因，
+               //   不让玩家以为「等一等就能导」。
+               if(param2 == SAQ_CREW_TYPE)
+               {
+                  return this.SaqUseChinese()
+                     ? "暂时无法导航到这位船员 —— 他的位置不在地图上的固定地点（或当前取不到）。遇到他时就能招募。"
+                     : "Cannot navigate to this crew member right now - their location is not a fixed spot (or is not available yet). You can recruit them when you meet them.";
+               }
                return this.SaqUseChinese()
                   ? "暂时无法导航 —— 这个位置此刻取不到（多半是所在区域还没加载出来）。稍后重新打开一次任务菜单再试。"
                   : "Cannot navigate right now - the location is not available at the moment (its area has not loaded yet). Reopen the mission menu and try again.";
+            }
+            // ★★★ 第 156 轮（可招募船员 · 102）：描述写明「可招募 + 怎么去」。
+            if(param2 == SAQ_CREW_TYPE)
+            {
+               if(this.SaqCourseKeyName().length == 0)
+               {
+                  return this.SaqUseChinese()
+                     ? "这位 NPC 可以招募为你的船员 —— 与他交谈即可招募（已招募的船员不会再出现在这里）。使用底部的「设定航线」即可引导到他的位置。"
+                     : "This NPC can join your crew - talk to them to recruit (recruited crew members no longer appear here). Use SET COURSE to be guided to their location.";
+               }
+               return this.SaqUseChinese()
+                  ? "这位 NPC 可以招募为你的船员 —— 与他交谈即可招募（已招募的船员不会再出现在这里）。按 " + this.SaqCourseKeyName() + "（设定航线）即可引导到他的位置。"
+                  : "This NPC can join your crew - talk to them to recruit (recruited crew members no longer appear here). Press " + this.SaqCourseKeyName() + " (SET COURSE) to be guided to their location.";
             }
             if(param2 == SAQ_REPEAT_NPC_TYPE)
             {
@@ -1038,6 +1072,63 @@ package
             {
                var _loc4_:Object = this.SaqRawQuests[_loc3_];
                if(_loc4_ != null && int(_loc4_.iType) == SAQ_REPEAT_NPC_TYPE)
+               {
+                  _loc1_++;
+                  if(_loc2_.length < 2)
+                  {
+                     var _loc5_:String = this.SaqUseChinese() ? _loc4_.sNameZh : _loc4_.sNameEn;
+                     if(_loc5_ == null)
+                     {
+                        _loc5_ = "";
+                     }
+                     if(_loc2_.length == 0)
+                     {
+                        if(_loc5_.length > 24)
+                        {
+                           _loc5_ = _loc5_.substr(0,24);
+                        }
+                        _loc2_.push("0x" + Number(_loc4_.uID).toString(16) + "=" + _loc5_);
+                     }
+                     else
+                     {
+                        _loc2_.push("0x" + Number(_loc4_.uID).toString(16));
+                     }
+                  }
+               }
+               _loc3_++;
+            }
+            return _loc1_ + "|" + _loc2_.join(",");
+         }
+         catch(e:Error)
+         {
+            return "(ex)";
+         }
+      }
+      
+      // ★★★ 第 156 轮（可招募船员入口）：报告里报出「可招募船员条目」的计数 + 前 2 条 uID
+      //   （短格式，例：`crew=[21|0x15062=（可招募）玛丽卡·波罗斯,0x15063]`
+      //   —— 第一条带名字，用例据此断言「（可招募）」前缀真的进了载荷、以及
+      //   P/A 判据过滤之后的条数）。
+      //   为什么需要：C++ 静态表 24 条（type=102）⇒ 判据过滤（P=0/A=1 藏）⇒ 载荷 ⇒
+      //   界面解析 ⇒ `SaqRawQuests` 里真的存在这些条目 ——「数据对了 ≠ 界面拿到了」
+      //   这条链路只靠读代码保证（与 rep= / order= / pin= 探针同一思路）。
+      //   用 SaqRawQuests（**未折叠 iType** 的原始解析结果）：AvailableQuests 里的
+      //   iType 已被 SaqSafeType 折成原版枚举，认不出 102。
+      private function SaqCrewProbe() : String
+      {
+         try
+         {
+            if(this.SaqRawQuests == null)
+            {
+               return "";
+            }
+            var _loc1_:int = 0;
+            var _loc2_:Array = new Array();
+            var _loc3_:int = 0;
+            while(_loc3_ < this.SaqRawQuests.length)
+            {
+               var _loc4_:Object = this.SaqRawQuests[_loc3_];
+               if(_loc4_ != null && int(_loc4_.iType) == SAQ_CREW_TYPE)
                {
                   _loc1_++;
                   if(_loc2_.length < 2)
@@ -1509,7 +1600,11 @@ package
          //     同款：**AS3 代码本身没改**，改的是内嵌回退载荷（19 条基础游戏任务的
          //     `needsApproach` 由 1 → 0 —— 它们新增了「world 级常驻兜底」，远处点引导
          //     不再走「待生效」链路；内嵌数据必须与 C++ 载荷重新逐条对齐）。
-         _loc8_ += " stamp=65";
+         //   ★★★ 第 156 轮（可招募船员入口）：stamp 66 —— AS3 代码改了三处：
+         //     ① 新 type 102（SAQ_CREW_TYPE）并入 SaqIsEntryType；② 子项名「招募他作为
+         //     船员」；③ 描述（含「不可导航」的船员专用措辞）+ 新 `crew=` 探针。
+         //     内嵌回退载荷不变（入口条目不在内嵌里 —— 老约定）。
+         _loc8_ += " stamp=66";
          // ★★ 第 51 轮：入口自检（ep=）—— 见 SaqEntryProbe 的说明。
          //   位置在 stamp 之后、其余字段之前：报告有长度上限，这个字段是当前排查
          //   「测试入口调不到」问题的关键证据，必须优先保下来。
@@ -1540,6 +1635,9 @@ package
          // ★★ 第 80 轮（可重复 NPC 入口）：可重复 NPC 条目计数 + 前 2 条 uID
          //   （见 SaqRepeatNpcProbe；短格式，几乎不占报告长度）。
          _loc8_ += " rep=[" + this.SaqRepeatNpcProbe() + "]";
+         // ★★★ 第 156 轮（可招募船员入口）：船员条目计数 + 前 2 条 uID
+         //   （见 SaqCrewProbe；与 rep= 同款短格式）——判据过滤后的实际条数证据。
+         _loc8_ += " crew=[" + this.SaqCrewProbe() + "]";
          // ★★ 第 89 轮（可重复任务）：「已完成 + 可重复 ⇒ 在显示层被放行保留」的
          //   条目计数 + uID 名单（最多 6 条，见 FilterKnownQuests 的 SaqRepeatKept*）。
          //   用例判据：把一条可重复任务推到完成 stage ⇒ 重开菜单 ⇒ 这里应出现它的 uID

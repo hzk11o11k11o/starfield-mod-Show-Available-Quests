@@ -27,6 +27,7 @@
 #include "PCH.h"
 
 #include "SAQ.h"
+#include "SAQ_Crew.h"        // ★★★ 第 156 轮：可招募船员的 crew faction 直读（kind=2 过滤判据）
 #include "SAQ_Decision.h"    // ★★ 第 64 轮（大项 K）：离线层决策纯函数（有单元测试）
 #include "SAQ_Guide.h"       // 引导通道（DLL ↔ ESM 的 GLOB ↔ SAQ_Main.psc）
 #include "SAQ_Masters.h"     // 「插件名 + 记录号」→ 运行期 FormID（DLC / 多 master）
@@ -95,8 +96,14 @@ namespace SAQ
 		//   载荷 type 用 101（AS3 侧：子项「找他接活」+ 可重复任务专用描述）。
 		//   名字里自带「（可重复）」前缀（数据侧加好，见 SAQ_EntryTable.h）。
 		constexpr std::int32_t kNpcEntryQuestType = 101;
+		// ★★★ 第 156 轮：「可招募船员」入口（精英船员 `Crew_Elite_*`）——载荷 type 用 102
+		//   （AS3 侧：子项「招募他作为船员」+ 可招募专用描述）；名字自带「（可招募）」前缀。
+		//   与 100/101 的区别：kind=2 要做**运行时判据过滤**（P/A，见 AppendEntryRows）——
+		//   其它两类入口永远显示（无限任务无法预判玩家接不接得到）。
+		constexpr std::int32_t kCrewEntryQuestType = 102;
 
-		// ★ 第 80 轮：入口表两类的条数（编译期从静态表算 —— 日志/用例对账用）。
+		// ★ 第 80 轮：入口表三类的条数（编译期从静态表算 —— 日志/用例对账用）。
+		//   ★★★ 第 156 轮：+kEntryKindCrew。
 		constexpr std::size_t CountEntryKind(std::uint8_t a_kind)
 		{
 			std::size_t n = 0;
@@ -109,6 +116,15 @@ namespace SAQ
 		}
 		constexpr std::size_t kEntryBoardCount = CountEntryKind(kEntryKindBoard);
 		constexpr std::size_t kEntryNpcCount = CountEntryKind(kEntryKindRepeatNpc);
+		constexpr std::size_t kEntryCrewCount = CountEntryKind(kEntryKindCrew);
+
+		// ★★★ 第 156 轮：kind=2 条目的载荷 type（与 EntryKind 一一对应；见 AppendEntryRows）。
+		constexpr std::int32_t EntryTypeOfKind(std::uint8_t a_kind)
+		{
+			return a_kind == kEntryKindCrew      ? kCrewEntryQuestType
+				: a_kind == kEntryKindRepeatNpc ? kNpcEntryQuestType
+												: kEntryQuestType;
+		}
 		// 测试模式 5 = 只显示入口条目（在列表里单独验证任务板入口，不受 260 条任务干扰）。
 		constexpr int kEntryOnlyTestMode = 5;
 		// ★ 第 46 轮：测试模式值的**上限**（6 = 只显示「需要靠近」的任务）。
@@ -240,6 +256,17 @@ namespace SAQ
 			std::string chainOverflowSamples;
 			std::size_t hiddenOverflow{};           // 「隐藏」名单未列出的条数
 			std::string hiddenOverflowSamples;
+			// ★★★ 第 156 轮（可招募船员 · kind=2）：P/A 判据过滤（「显示 = P=1 /
+			//   隐藏 = A=1（或 P=0）」；引用未加载读不到 ⇒ 保守放行）——
+			//   判据来源 = SAQ_Crew::ReadState（DLL 直读 Actor::IsInFaction × 3）。
+			//   只统计 kind=2 条目（其它入口不受影响）。
+			std::size_t crewGated{};          // 判定过的条数（= 引用可读位的数量）
+			std::size_t crewShown{};          // P=1 且 A=0 → 显示
+			std::size_t crewHiddenA{};        // A=1（已招募）→ 隐藏
+			std::size_t crewHiddenP{};        // P=0（未解锁）→ 隐藏
+			std::size_t crewUnknown{};        // 引用未加载 / 读不到 → 放行（保守显示）
+			bool        crewFilterOff{};      // ini 把过滤关了（只统计不隐藏）
+			std::string crewSamples;          // 「船员隐藏」的名单（名字 + 原因）
 		};
 
 		// 推送重试状态（只在主线程读写，不需要锁）。
@@ -587,7 +614,8 @@ namespace SAQ
 				";   2 = 只显示「没有引导目标」的任务（52 条，测界面回滚）\r\n"
 				";   3 = 只显示 DLC 任务（59 条）\r\n"
 				";   4 = 只显示「有引导目标 + 有具名地点」的任务（85 条，最少最好找）\r\n"
-				";   5 = 只显示「无限任务入口」（任务板，12 条）—— 验证任务板条目的显示与引导\r\n"
+				";   5 = 只显示「无限任务入口」（任务板 13 + 可重复 NPC 8 + 可招募船员 24，共 45 条）\r\n"
+				";       —— 验证入口条目的显示与引导（第 156 轮起含船员；船员会按 P/A 判据过滤）\r\n"
 				";   6 = 只显示「需要靠近」的任务（全部候选都非常驻）—— 远处点「前往接取地点」\r\n"
 				";       会提示「目标尚未加载」并等待你靠近（靠近后自动生效）；验证待生效 / HUD 提示 /\r\n"
 				";       自动重试链路（第 46/48 轮）。★ 第 146 轮起为 0 条（最后 1 条也补了兜底）——\r\n"
@@ -625,10 +653,16 @@ namespace SAQ
 				"; 判据来自官方 Papyrus 源码里的启动边（CF01 stage 1000 里 CF02.SetStage(10) 这种，\r\n"
 				"; 目前覆盖 25 条任务 / 26 条启动边）：全部启动边都还没触发 ⇒ 不显示。\r\n"
 				";   1 = 过滤（默认）；0 = 只写日志（便于对照界面）\r\n"
+				";\r\n"
+				"; ---- 可招募船员判据（第 156 轮，「可接任务」列表里的船员条目） ----\r\n"
+				"; 判据 = 船员的 crew faction 运行时状态（游戏内直读）：「可招募解锁」（P=1）才显示；\r\n"
+				"; 已招募过的（A=1）不显示；船员不在当前区域（引用未加载）⇒ 照常显示（判不了就不藏）。\r\n"
+				";   1 = 过滤（默认）；0 = 全部显示（只写日志，便于对照界面）\r\n"
 				"[Filter]\r\n"
 				"ProgressCond=1\r\n"
 				"InfoCond=1\r\n"
 				"ChainCond=1\r\n"
+				"CrewCond=1\r\n"
 				";\r\n"
 				"; ---- 界面形态（第 137 轮 · 无 SWF 覆盖的注入形态） ----\r\n"
 				"; 我们的任务 tab 有两种实现：SWF 覆盖（默认部署）与「注入原版菜单」\r\n"
@@ -749,6 +783,22 @@ namespace SAQ
 			const auto path = TestModeIniPath();
 			if (!path.empty()) {
 				return ::GetPrivateProfileIntW(L"Filter", L"ChainCond", 1, path.c_str()) != 0;
+			}
+			return true;
+		}
+
+		// ★★★ 第 156 轮：可招募船员（kind=2）P/A 判据过滤开关（ini `[Filter] CrewCond`）。
+		//   1 = 过滤（默认）：引用可读的船员按「P=1 且 A=0 才显示」判定（P=0 未解锁 /
+		//       A=1 已招募 ⇒ 隐藏；引用未加载读不到 ⇒ 保守放行）；
+		//   0 = 只把判据结果写进日志、**不隐藏**（实机对照用：能直接对照「船员隐藏」
+		//       名单和界面里实际出现的条目）。
+		//   用途之二：直读（Actor::IsInFaction 虚调用）万一在某些版本上行为异常，
+		//   玩家可以把它关掉回到「24 位全显示」的老行为（零 RE 回退口）。
+		bool ResolveCrewCondFilter()
+		{
+			const auto path = TestModeIniPath();
+			if (!path.empty()) {
+				return ::GetPrivateProfileIntW(L"Filter", L"CrewCond", 1, path.c_str()) != 0;
 			}
 			return true;
 		}
@@ -938,20 +988,60 @@ namespace SAQ
 		{
 			std::string diagAbnormal;  // 没走精确目标（走兜底/不可用）的条目诊断 —— 正常应完全为空
 
+			// ★★★ 第 156 轮（可招募船员 · kind=2）：P/A 判据过滤开关（ini `[Filter] CrewCond`）。
+			//   口径（docs/16 16.7 定案）：「显示 = P=1 / 隐藏 = A=1」——
+			//     * A=1（AvailableCrewFaction 成员）＝曾经招募过（官方 Recruited() 的收费判据）
+			//       ⇒ 隐藏（「已招募」的船员不该再提示）；
+			//     * P=0（PotentialCrewFaction 非成员）＝招募任务 stage 1 还没打
+			//       ⇒「进度没到」不显示（与三类门槛同一语义）；
+			//     * 引用未加载（LookupByID 取不到）⇒ **保守放行**（判不了就不藏 —— 与其它
+			//       门槛的「求值不了 ⇒ 放行」一致；远处船员的引导链照常可用）。
+			//   判据来源 = SAQ_Crew::ReadState（DLL 直读 Actor::IsInFaction × 3；正确性由
+			//   harness `crew.probe` 的「Papyrus vs 直读」逐位对照钉死，docs/16 16.8）。
+			const bool crewFilter = ResolveCrewCondFilter();
+			a_stats.crewFilterOff = !crewFilter;
+
 			for (std::size_t i = 0; i < kEntryTableSize; ++i) {
 				const auto& e = kEntryTable[i];
 				const auto boardID = Masters::MakeFormID(e.master, e.refLocal);
 				if (boardID == 0) {
 					continue;  // 所属 master 没加载（入口目前全在基础游戏，理论上不会发生）
 				}
+
+				// —— kind=2：先判 P/A（隐藏的条目**不进列表**，也不更新引导状态）——
+				bool crewHidden = false;
+				if (e.kind == kEntryKindCrew) {
+					const auto cs = Crew::ReadState(boardID);
+					if (!cs.readable) {
+						++a_stats.crewUnknown;   // 引用未加载 ⇒ 保守放行
+					} else {
+						++a_stats.crewGated;
+						if (cs.available) {
+							crewHidden = true;
+							++a_stats.crewHiddenA;
+							a_stats.crewSamples += std::format("{}[0x{:08X} 已招募] ", e.nameZh, boardID);
+						} else if (!cs.potential) {
+							crewHidden = true;
+							++a_stats.crewHiddenP;
+							a_stats.crewSamples += std::format("{}[0x{:08X} 未解锁] ", e.nameZh, boardID);
+						} else {
+							++a_stats.crewShown;
+						}
+					}
+				}
+				if (crewHidden && crewFilter) {
+					continue;  // 藏掉（`CrewCond=0` 只统计不隐藏，便于实机对照）
+				}
+
 				const auto st = EvaluateEntryGuide(i);
 				g_entryGuide[i] = st;
 
 				QuestEntry entry;
 				entry.formID = boardID;
-				// AS3：入口条目（子项/描述换文案）—— 任务板 100 / 可重复 NPC 101（第 80 轮）。
-				entry.type = (e.kind == kEntryKindRepeatNpc) ? kNpcEntryQuestType : kEntryQuestType;
-				// 入口不是任务：没有阵营（界面把 type=100 折叠回「任务」图标显示）。
+				// AS3：入口条目（子项/描述换文案）—— 任务板 100 / 可重复 NPC 101（第 80 轮）/
+				//   可招募船员 102（第 156 轮）。
+				entry.type = EntryTypeOfKind(e.kind);
+				// 入口不是任务：没有阵营（界面把 type=100/101/102 折叠回「任务」图标显示）。
 				entry.faction = -1;
 				entry.hasGuideTarget = (st.target != 0);
 				entry.nameZh = e.nameZh;
@@ -971,6 +1061,9 @@ namespace SAQ
 				} else {
 					// 所有候选都取不到（连兜底常驻引用都取不到）——留完整诊断，便于判断
 					// 「常驻引用是否真的与 cell 加载无关」这个引擎行为问题。
+					//   ★ 第 156 轮：kind=2 里 3 位「位置不适合导航」的船员（别名暂存格 /
+					//   运行时生成内景）**本来就不配兜底** ⇒ 平时落在这里 ⇒ 界面显示
+					//   「（不可导航）」前缀（第 91 轮口径，设计如此不是 bug）。
 					a_stats.entryUnavailable += std::format("{}[0x{:08X} {}] ", e.nameZh, boardID, st.diag);
 				}
 				a_out.push_back(std::move(entry));
@@ -1562,6 +1655,20 @@ namespace SAQ
 				out += std::format("（另有 {} 条未列出：{}）",
 					a_stats.chainOverflow, a_stats.chainOverflowSamples);
 			}
+			// ★★★ 第 156 轮（可招募船员 · kind=2）：P/A 判据统计与「船员隐藏」名单。
+			//   `过` = P=1 且 A=0（显示）；`藏` = 已招募(A) + 未解锁(P)；`未知` = 引用未加载
+			//   （保守放行）。只在表里有船员条目时打（kEntryCrewCount 是编译期常量）。
+			if (kEntryCrewCount != 0) {
+				out += std::format(" 船员门槛={}(过{}/藏{}+{}/未知{}",
+					a_stats.crewGated, a_stats.crewShown,
+					a_stats.crewHiddenA, a_stats.crewHiddenP, a_stats.crewUnknown);
+				out += a_stats.crewFilterOff ? "｜过滤=ini关闭)" : ")";
+			}
+			if (!a_stats.crewSamples.empty()) {
+				// 「船员隐藏」名单：每条后面括号里是**隐藏原因**（已招募 / 未解锁）——
+				//   玩家报「某位船员没显示」时先在这里搜名字；不在 = 引用未加载（保守放行）。
+				out += " 船员隐藏: " + a_stats.crewSamples;
+			}
 			if (!a_stats.samples.empty()) {
 				// 名单（第 11 轮起不只记前几条；★★ 第 79 轮起带截断留痕，上限 kMaxSamples）：
 				// 玩家反馈「某条任务没显示」时，先在 `隐藏:` 这一段里搜 FormID ——
@@ -1674,9 +1781,10 @@ namespace SAQ
 			std::size_t companion{};      // 同伴任务（按同伴分组）
 			std::size_t other{};          // 其余（入口段在它的末尾）
 			std::size_t repeat{};         // 可重复任务（整组排末尾）
-			std::size_t entryCount{};     // 入口条目总数（任务板 + 可重复 NPC）
+			std::size_t entryCount{};     // 入口条目总数（任务板 + 可重复 NPC + 可招募船员）
 			std::size_t entryBoard{};     // 其中：任务板
 			std::size_t entryNpc{};       // 其中：可重复 NPC
+			std::size_t entryCrew{};      // 其中：可招募船员（★ 第 156 轮）
 			std::size_t entryFirst{};     // 入口段首下标（无入口时 = 下面的 kNoIndex 哨兵）
 			std::size_t entryLast{};      // 入口段末下标
 			bool        entryContiguous{ true };   // 入口条目是否连续
@@ -1684,6 +1792,7 @@ namespace SAQ
 			std::string headNames;        // 头部名字链（势力入口，固定顺序）
 			std::string boardNames;       // 任务板段名字链（显示名顺序）
 			std::string npcNames;         // 可重复 NPC 段名字链（显示名顺序）
+			std::string crewNames;        // 可招募船员段名字链（显示名顺序；★ 第 156 轮）
 		};
 
 		// 「A → B → C」形式的追加（顺序清单的通用写法）。
@@ -1702,7 +1811,8 @@ namespace SAQ
 			s.entryFirst = kNoIndex;
 			for (std::size_t i = 0; i < a_quests.size(); ++i) {
 				const auto& e = a_quests[i];
-				const bool isEntry = (e.type == kEntryQuestType || e.type == kNpcEntryQuestType);
+				const bool isEntry = (e.type == kEntryQuestType || e.type == kNpcEntryQuestType ||
+									  e.type == kCrewEntryQuestType);
 				if (e.factionEntry >= 0) {
 					++s.faction;
 				} else if (e.companion >= 0) {
@@ -1717,9 +1827,13 @@ namespace SAQ
 					if (e.type == kEntryQuestType) {
 						++s.entryBoard;
 						AppendOrderName(s.boardNames, e.nameZh);
-					} else {
+					} else if (e.type == kNpcEntryQuestType) {
 						++s.entryNpc;
 						AppendOrderName(s.npcNames, e.nameZh);
+					} else {
+						// ★ 第 156 轮：可招募船员段（段序 = 任务板 → 可重复 NPC → 可招募船员）
+						++s.entryCrew;
+						AppendOrderName(s.crewNames, e.nameZh);
 					}
 					if (s.entryFirst == kNoIndex) {
 						s.entryFirst = i;
@@ -1766,15 +1880,21 @@ namespace SAQ
 			return out;
 		}
 
-		// 行②：入口段的显示名顺序（任务板 → 可重复 NPC）。没有入口条目 ⇒ 空串（不打这行）。
+		// 行②：入口段的显示名顺序（任务板 → 可重复 NPC → 可招募船员）。没有入口条目 ⇒ 空串。
 		std::string FormatEntryOrder(const std::vector<QuestEntry>& a_quests)
 		{
 			const auto s = ScanOrder(a_quests);
 			if (s.entryCount == 0) {
 				return {};
 			}
-			return std::format("入口顺序：任务板 {}[{}]｜可重复 NPC {}[{}]",
+			std::string out = std::format("入口顺序：任务板 {}[{}]｜可重复 NPC {}[{}]",
 				s.entryBoard, s.boardNames, s.entryNpc, s.npcNames);
+			// ★ 第 156 轮：可招募船员段（判据过滤会改变条数 —— 藏几位就是少几位，
+			//   与「船员门槛」统计对账；名单顺序 = 界面顺序）。
+			if (s.entryCrew != 0) {
+				out += std::format("｜可招募船员 {}[{}]", s.entryCrew, s.crewNames);
+			}
+			return out;
 		}
 
 		// （第 17 轮删掉了「DNAM 位分布」那行诊断日志：它要回答的问题在 xEdit 的
@@ -4051,8 +4171,10 @@ namespace SAQ
 			const auto collectCost = NowMs() - t0;
 			// ★ 第 27 轮：入口条目表一并报出来 —— 排查「入口没显示」先看这里。
 			//   ★ 第 80 轮：两类（任务板 + 提供无限任务的 NPC），数字让排查一眼能对账。
-			REX::INFO("数据源：{}；入口条目表={} 条（任务板 {} + 可重复 NPC {}）",
-				masters, kEntryTableSize, kEntryBoardCount, kEntryNpcCount);
+			//   ★★★ 第 156 轮：+可招募船员（kind=2）——「表里有 24 条」与「这次显示几条」
+			//   分别由本行与「船员门槛=」对账（判据过滤会把藏掉的减下去）。
+			REX::INFO("数据源：{}；入口条目表={} 条（任务板 {} + 可重复 NPC {} + 可招募船员 {}）",
+				masters, kEntryTableSize, kEntryBoardCount, kEntryNpcCount, kEntryCrewCount);
 			// ★ 第 46 轮：**无论开没开都打这一行**。起因：ini 写 `Mode=6` 而解析层把未知值
 			//   静默折成 0 时，日志里**一行都没有** —— 玩家只知道「过滤没生效」，无从下手。
 			//   现在 mode=0 也会写 `测试模式：0（关闭（显示全部））[来源=ini]`，

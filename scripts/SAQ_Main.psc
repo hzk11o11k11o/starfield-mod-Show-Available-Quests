@@ -712,6 +712,9 @@ EndFunction
 ;    ★★ 第 155 轮：op=7（船员探针，只读）改用「16 + 状态位」编码
 ;       （bit0 AvailableCrew / bit1 CurrentCrew / bit2 PotentialCrew / bit3 已分配；
 ;        失败仍是 1/2 —— 见 ProcessTestCommand 的 op==7 分支）。
+;    ★★★ 第 156 轮：op=8（模拟招募往返，研究用）用「32 + 状态位」编码
+;       （bit0 前置已招募(未写入) / bit1 Add 后 A=1 / bit2 Remove 后仍 A=1；
+;        失败仍是 1/2 —— 见 op==8 分支）。
 ; ============================================================================
 
 ; 取测试通道的 8 条 GLOB（只做一次）。旧 ESM（没有这套记录）⇒ 返回 False、整套静默关闭。
@@ -857,6 +860,52 @@ Function ProcessTestCommand()
 			EndIf
 			result = 16 + crewMask
 			cmdNote = "船员探针：状态位=" + crewMask + "（1=AvailableCrew 2=CurrentCrew 4=PotentialCrew 8=已分配；只读）"
+		EndIf
+	ElseIf op == 8
+		; ★★★ 第 156 轮（可招募船员 · 「已招募」判据正样本复核 —— docs/16 16.8）：
+		;   **模拟招募往返**（净副作用为零，研究用）：前置读 A → AddToAvailableCrew →
+		;   读 → RemoveFromAvailableCrew → 读 → 复原。
+		;
+		;   为什么需要：判据「显示 = P=1 / 隐藏 = A=1」里的 A 位（AvailableCrewFaction）
+		;   在测试存档（2 级早期）**没有已招募样本**（第 155 轮实机：A=1 0 位）——
+		;   用官方 `Recruited()` 内的同一条引擎调用（Game.AddToAvailableCrew）现场
+		;   制造一次「0→1」，看 A 位是否随之变化：变 = 判据成立（可以拿它做「已招募 ⇒
+		;   隐藏」）；不变 = 判据不成立（要换判据）。随后 Remove 复原。
+		;
+		;   安全设计：**前置已 A=1 ⇒ 完全跳过写入**（不碰已招募玩家的状态）；
+		;   只在未招募（A=0）时执行 Add→Remove 往返（与官方 _CustomSetRoleUnavaliable
+		;   同一条调用，净效果 = 回到 A=0）。
+		;
+		;   结果码 = 32 + 状态位（bit0 前置已招募(未写入) / bit1 Add 后 A=1 /
+		;   bit2 Remove 后仍 A=1）；失败 = 1（引用取不到）/ 2（不是 Actor /
+		;   AvailableCrewFaction 取不到 ⇒ 未写入）。
+		Actor simActor = Game.GetForm(fid) as Actor
+		If simActor == None
+			result = 1
+			cmdNote = "模拟招募：引用取不到 / 不是 Actor（FormID=" + fid + "）"
+		Else
+			Faction simAvail = Game.GetForm(0x00014314) as Faction
+			If simAvail == None
+				result = 2
+				cmdNote = "模拟招募：AvailableCrewFaction（0x00014314）取不到 —— 未写入"
+			Else
+				Int simMask = 0
+				If simActor.IsInFaction(simAvail)
+					simMask += 1
+				EndIf
+				If simMask == 0
+					Game.AddToAvailableCrew(simActor)
+					If simActor.IsInFaction(simAvail)
+						simMask += 2
+					EndIf
+					Game.RemoveFromAvailableCrew(simActor)
+					If simActor.IsInFaction(simAvail)
+						simMask += 4
+					EndIf
+				EndIf
+				result = 32 + simMask
+				cmdNote = "模拟招募：状态位=" + simMask + "（1=前置已招募(未写入) 2=Add 后 A=1 4=Remove 后仍 A=1；已复原）"
+			EndIf
 		EndIf
 	Else
 		result = 4

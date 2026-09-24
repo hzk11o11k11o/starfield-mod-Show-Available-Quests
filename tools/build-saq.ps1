@@ -468,6 +468,16 @@ if (-not $SkipDeploy) {
         #   ★ 第 49 轮的教训是「键落错段」，那只对 GetPrivateProfileInt 的**段名**敏感，
         #   这里补的就是 [Log] 段本身）。值按构建：开发部署 10 / 发布部署 1；
         #   **已有值不动**（尊重手改）。
+        # ★★★ 第 156 轮：同理补 [Filter] CrewCond=1（可招募船员 P/A 判据过滤）——
+        #   老部署的 ini 里没有这个键（功能默认开：键不存在 = 默认值 1，行为不受影响），
+        #   但配置项要能在 ini 里看到、能手动关。
+        if ($iniText -notmatch '(?m)^\s*CrewCond\s*=') {
+            if ($iniText -match '(?m)^\s*\[Filter\]\s*$') {
+                $iniText = $iniText -replace '(?m)^(\s*\[Filter\]\s*)$', "`$1`r`nCrewCond=1"
+                $iniChanged = $true
+                Write-Host '    已补 ini [Filter] CrewCond=1（第 156 轮：可招募船员判据过滤）'
+            }
+        }
         if ($iniText -notmatch '(?m)^\s*MaxSizeMB\s*=') {
             $logVal = if ($Release) { '1' } else { '10' }
             if ($iniText -match '(?m)^\s*\[Log\]\s*$') {

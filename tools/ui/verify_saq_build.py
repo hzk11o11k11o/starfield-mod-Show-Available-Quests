@@ -290,6 +290,27 @@
           数据表样本名「林监工」「瓦斯科」）+ PEX 三条（船员探针 Trace / IsInFaction /
           GetCrewAssignment）+ 驱动器版本串 v71 + 反向检查（v70 不得残留）+
           用例计划（case 在 + 步骤 + 汇总断言 + 三条反向断言）。
+  第 156 轮（**可招募船员入口段落地 + 模拟招募正样本复核** —— 玩家决策：两个都做）：
+          ① 入口段（kind=2「可招募船员」）：`gen_entry_table.py` 合并
+             `ref/hirable_crew.json` ⇒ 入口表 21 → **45** 条（任务板 13 + 可重复 NPC 8 +
+             可招募船员 24）；段序固定「任务板 → 可重复 NPC → 可招募船员」（布局硬校验）；
+             3 位「位置不适合导航」**丢弃兜底** ⇒ 平时不可导航（界面显示「（不可导航）」
+             前缀 + 专属提示，不是 bug）；
+          ② 产品判据（「显示 = P=1 / 隐藏 = A=1」）：`SAQ_Crew`（新模块）DLL 直读
+             `Actor::IsInFaction`（AvailableCrew / PotentialCrew）—— 引用可读才判定；
+             P=0（未解锁）/ A=1（已招募）⇒ 隐藏；读不到 ⇒ 保守放行；ini `[Filter] CrewCond`
+             可关（只写日志不隐藏）；日志 `船员门槛=…(过/藏+藏/未知)` + `船员隐藏:` 名单；
+             顺序行 `入口顺序：…｜可招募船员 N[…]`；
+          ③ 界面（SWF 重编 stamp=66）：type 102 —— 子项「招募他作为船员」+ 描述分支
+             （含船员专用「不可导航」措辞）+ `crew=` 探针；
+          ④ 正样本复核（`crew.probe sim=<FormID>`）：Papyrus op=8 模拟招募往返
+             （Add → 读 → Remove → 读；A=1 前置跳过写入；净副作用为零）+ 直读对照
+             （Papyrus vs SAQ_Crew 逐位一致）；r155 用例升级（先 teleport.entry 到玛丽卡
+             → crew.probe sim=0x00015062 → 断言「A 位随招募往返 0→1→0」+ 五条反向）。
+          本脚本检查：入口表 45 条与 hirable_crew.json 逐项一致 + 3 位 noNav 兜底=0 +
+          船员样本 + DLL 产品串（三类计数 / 船员门槛 / 船员隐藏 / CrewCond）+ SWF 七条 +
+          PEX 三条（模拟招募）+ 驱动器 v72（反向 v71）+ 用例计划（sim=/teleport.entry/
+          判定断言/五条反向）。
 
 用法：python tools/ui/verify_saq_build.py [--release|--dev]
 """
@@ -587,14 +608,23 @@ HARNESS_STRINGS = (
     #      （星图 = 暂停菜单 ⇒ 脚本定时器冻结 ⇒ ping 无回执）。修法：只有**真的看到并
     #      关掉星图**才提前结束窗口；关掉星图后再留一段（kInterCaseDelayMs）才开下一条。
     ("harness 驱动器版本串",
-     "驱动器 v71：新 op `crew.probe`"),
+     "驱动器 v72：`crew.probe` 扩展"),
     # ★★★ 第 155 轮（可招募船员跟踪研究 · docs/16 16.3）：新 op `crew.probe` ——
     #   24 位可招募船员的**只读**探针（Papyrus faction 三件套 + DLL 直读招募任务状态）。
     #   逐位行 / 汇总行 / 数据表样本名都进 dev DLL ⇒ 发布构建必须一条都不见
     #   （SAQ_Test.cpp 不编译，本表反向检查覆盖）。
+    #   ★★★ 第 156 轮扩展：③ 直读对照（`｜直读: ` + `对照=一致/不一致`）+ ④ 模拟招募
+    #   往返（`模拟招募：` + 判定文案）—— 同样只在 dev 构建。
     ("harness 船员探针 op 名", "crew.probe"),
     ("harness 船员探针逐位行格式", "｜Papyrus: "),
+    ("harness 船员探针直读对照格式", "｜直读: "),
+    ("harness 船员探针对照标记（一致）", "｜对照=一致"),
+    ("harness 船员探针对照标记（不一致）", "｜对照=不一致"),
+    ("harness 船员探针模拟招募行", "模拟招募："),
+    ("harness 船员探针模拟招募判定（A 判据）", "A 位随招募往返 0→1→0（A 判据成立）"),
+    ("harness 船员探针模拟招募跳过文案", "引用未加载 —— 跳过（未做写入"),
     ("harness 船员探针汇总行格式", "｜招募任务：未开始 "),
+    ("harness 船员探针直读汇总段", "｜直读读到 "),
     ("harness 船员探针数据表(样本名1)", "林监工"),
     ("harness 船员探针数据表(样本名2)", "瓦斯科"),
     ("harness 船员探针跳过未加载文案", "引用未加载（A/C/P 读不到）"),
@@ -1089,7 +1119,18 @@ def main() -> int:
         #     同款（AS3 代码本身没改）：19 条基础游戏任务新增「world 级常驻兜底」
         #     ⇒ 内嵌回退载荷的 `needsApproach` 列由 1 → 0，内嵌数据与 C++ 载荷
         #     重新逐条对齐（见 SaqEmbeddedPayload.inc）。
-        "构建指纹 stamp=65": b"stamp=65",
+        #   ★★★ 第 156 轮（可招募船员入口）：stamp 66 —— AS3 代码三处改动：
+        #     ① 常量 SAQ_CREW_TYPE 并入 SaqIsEntryType；② 子项名「招募他作为船员」；
+        #     ③ 描述（含「不可导航」的船员专用措辞）+ `crew=` 探针（SaqCrewProbe）。
+        #     内嵌回退载荷不变（入口条目不在内嵌里 —— 老约定）。
+        "构建指纹 stamp=66": b"stamp=66",
+        "可招募船员类型常量": b"SAQ_CREW_TYPE",
+        "可招募船员子项名(中)": "招募他作为船员".encode(),
+        "可招募船员子项名(英)": b"Recruit them as crew",
+        "可招募船员描述(中)": "可以招募为你的船员".encode(),
+        "可招募船员描述(英)": b"This NPC can join your crew",
+        "可招募船员不可导航文案(中)": "暂时无法导航到这位船员".encode(),
+        "可招募船员探针(crew=)": b"SaqCrewProbe",
         # ★★ 第 80 轮（可重复 NPC 入口）：type 101 的界面链路 ——
         #   ① 常量与合并判据（SaqIsEntryType —— 子项/描述/不可导航提示统一用它）；
         #   ② 子项名与描述文案（中英各一段，证明不是只改了判据没接文案）；
@@ -1232,8 +1273,9 @@ def main() -> int:
         #   起因同第 50 轮的教训：部署了但游戏加载的是旧 SWF 时，指纹是唯一判据）。
         #   ★★★ 第 109 轮：stamp 63 → 64（7 条补收任务的引导候选进了内嵌载荷）；
         #   ★★★★ 第 114 轮：64 → 65（19 条任务新增 world 级常驻兜底 ⇒ needsApproach 列变化）。
-        gone = b"stamp=64" not in blob
-        print(("OK  " if gone else "MISS") + f" {p.name} · 旧构建指纹 stamp=64 已替换(反向检查)")
+        #   ★★★★★ 第 156 轮：65 → 66（可招募船员入口的 AS3 文案 + `crew=` 探针）。
+        gone = b"stamp=64" not in blob and b"stamp=65" not in blob
+        print(("OK  " if gone else "MISS") + f" {p.name} · 旧构建指纹 stamp=64/65 已替换(反向检查)")
         all_ok &= gone
 
     # ★★ 第 49 轮补丁③（复测复查）：**入口发布清单**检查 —— 新增 root 入口必须挂到 root。
@@ -1342,7 +1384,13 @@ def main() -> int:
             #   release 反向）；放这里会让 `verify --release` 假 MISS（挡住打包）。
             # ★★ 第 80 轮（可重复 NPC 入口）：入口表两类的计数日志 + NPC 名字前缀
             #   （数据真的进了 DLL 的静态表 —— 不只是生成脚本写对了文件）。
-            "入口两类计数(日志)": "（任务板 {} + 可重复 NPC {}）".encode(),
+            # ★★★ 第 156 轮：第三类「可招募船员」——计数日志 + 名字前缀 + P/A 判据统计。
+            "入口三类计数(日志)": "（任务板 {} + 可重复 NPC {} + 可招募船员 {}）".encode(),
+            "可招募船员名字前缀(中)": "（可招募）玛丽卡·波罗斯".encode(),
+            "可招募船员名字前缀(英)": b"(Recruitable) Marika Boros",
+            "船员判据统计(日志)": "船员门槛={}(过{}/藏{}+{}/未知{}".encode(),
+            "船员隐藏名单(日志)": " 船员隐藏: ".encode(),
+            "船员判据 ini 开关（[Filter] CrewCond）": "CrewCond=1".encode(),
             "可重复NPC名字前缀(中)": "（可重复）贸易管理局 · 邓肯·林奇".encode(),
             "可重复NPC名字前缀(英)": b"(Repeatable) Trackers Alliance Agent - Akila City",
             "引导确认降噪文案": "关菜单后自动确认".encode(),
@@ -1650,9 +1698,11 @@ def main() -> int:
                     # ★★ 第 69 轮：v68 同理（新版串里带的是「沿用 v68 …」）。
                     "驱动器 v68".encode() not in blob and
                     # ★★★ 第 155 轮：v70 同理（新版串里带的是「v70 `ui.*` …」）。
-                    "驱动器 v70".encode() not in blob)
+                    "驱动器 v70".encode() not in blob and
+                    # ★★★ 第 156 轮：v71 同理（新版串里带的是「；v71 新 op `crew.probe`…」）。
+                    "驱动器 v71".encode() not in blob)
             print(("OK  " if gone else "MISS") +
-                  " DLL · 旧驱动器版本串 v57~v63/v66/v68/v70 已替换(反向检查)")
+                  " DLL · 旧驱动器版本串 v57~v63/v66/v68/v70/v71 已替换(反向检查)")
             all_ok &= gone
             # ★★ 第 54 轮：用例计划本身也该被查 —— 历史判据（第 26/44~48 轮）落成用例后，
             #   最怕的是「源码改了没部署」或「用例被误删」。这里只查**开发模式**：
@@ -1750,21 +1800,34 @@ def main() -> int:
                 print(("MISS " if bad_r146_old else "OK  ") +
                       " 用例计划 · r146 旧断言不再把候选 [1] 名字当任务名（反向检查，第 147 轮）")
                 all_ok &= not bad_r146_old
-                # ★★★ 第 155 轮（可招募船员 faction 判据只读探针）：步骤 + 断言形状 ——
-                #   ① 步骤在（`crew.probe timeout=` 写法：只读探针跑全表 24 位）；
-                #   ② 汇总行断言必须带**产品行前缀**（`船员探针 汇总：24 位` —— 红线六，
+                # ★★★ 第 155/156 轮（可招募船员探针 + 模拟招募正样本复核）：步骤 + 断言形状 ——
+                #   ① 步骤在（`crew.probe sim=0x00015062 timeout=` 写法：全表 24 位 + 对玛丽卡
+                #      做模拟招募往返）；
+                #   ② **先传送**（`teleport.entry 0x00015062` 走船员条目的引导候选链）——
+                #      模拟招募要求她的引用已加载；
+                #   ③ 汇总行断言必须带**产品行前缀**（`船员探针 汇总：24 位` —— 红线六，
                 #      第 147 轮 guide.probe 踩过的坑：探针不打产品行 ⇒ 断言必然假 FAIL）；
-                #   ③ 三条反向断言（失败码 / 等回执超时 / 招募任务表单取不到）= 链路健康判据。
-                all_ok &= check("用例计划 · r155 船员探针步骤", plan_text.encode(),
-                                "crew.probe timeout=".encode())
+                #   ④ 模拟招募判定断言（`A 位随招募往返 0→1→0` = A 判据钉死）；
+                #   ⑤ 五条反向断言（失败码 / 等回执超时 / 招募任务表单取不到 / 直读不一致 /
+                #      模拟招募跳过）= 链路健康判据。
+                all_ok &= check("用例计划 · r155 船员探针步骤（含 sim=）", plan_text.encode(),
+                                "crew.probe sim=0x00015062 timeout=".encode())
+                all_ok &= check("用例计划 · r155 先传送（船员引导候选链）", plan_text.encode(),
+                                "teleport.entry 0x00015062".encode())
                 all_ok &= check("用例计划 · r155 汇总行断言（产品行前缀）", plan_text.encode(),
                                 "assert.log 船员探针 汇总：24 位".encode())
+                all_ok &= check("用例计划 · r155 模拟招募判定断言（A 判据）", plan_text.encode(),
+                                "assert.log 船员探针 模拟招募：.*A 位随招募往返 0→1→0".encode())
                 all_ok &= check("用例计划 · r155 链路健康反向断言（失败码）", plan_text.encode(),
                                 "assert.nolog 船员探针 .*失败（结果码".encode())
                 all_ok &= check("用例计划 · r155 链路健康反向断言（等回执超时）", plan_text.encode(),
                                 "assert.nolog 船员探针 .*等回执超时".encode())
                 all_ok &= check("用例计划 · r155 招募任务表单反向断言", plan_text.encode(),
                                 "assert.nolog 船员探针 .*｜招募任务 表单取不到".encode())
+                all_ok &= check("用例计划 · r155 直读对照反向断言", plan_text.encode(),
+                                "assert.nolog 船员探针 .*对照=不一致".encode())
+                all_ok &= check("用例计划 · r155 模拟招募跳过反向断言", plan_text.encode(),
+                                "assert.nolog 船员探针 模拟招募：.*引用未加载".encode())
                 # ★★★ 第 98 轮：两条 DLC 链式用例的断言形状（防被改回「点名一条」
                 #   或写死运行期 FormID —— 六条里任意一条命中即可；ID 用 `[0x` 通配）。
                 #   ★ 第 99 轮：名字修正（「狂热逾界」「发掘过去」—— 旧版手打成了
@@ -2896,6 +2959,12 @@ def main() -> int:
         all_ok &= check("PEX · 船员探针 Trace 文案", blob, "船员探针：状态位=".encode())
         all_ok &= check("PEX · 船员探针-成员查询 API", blob, b"IsInFaction")
         all_ok &= check("PEX · 船员探针-分配查询 API", blob, b"GetCrewAssignment")
+        # ★★★ 第 156 轮（可招募船员 · 模拟招募正样本复核 —— docs/16 16.8）：op=8 ——
+        #   AddToAvailableCrew → 读 → RemoveFromAvailableCrew → 读（净副作用为零）。
+        #   同样只在 DLL 主动下命令时起作用（发布版无调用路径；PEX 常驻部署无害）。
+        all_ok &= check("PEX · 模拟招募 Trace 文案", blob, "模拟招募：状态位=".encode())
+        all_ok &= check("PEX · 模拟招募-加入调用 API", blob, b"AddToAvailableCrew")
+        all_ok &= check("PEX · 模拟招募-移除调用 API", blob, b"RemoveFromAvailableCrew")
         # 反向检查：第 40 轮把「地点自己没有行星，改用父地点」并入候选链诊断，旧串不应再出现
         gone = "地点自己没有行星，改用父地点".encode() not in blob
         print(("OK  " if gone else "MISS") + " PEX · 旧父地点兜底文案已替换(反向检查)")
@@ -4091,15 +4160,20 @@ def main() -> int:
         all_ok = False
 
     # ★★ 第 80 轮（可重复 NPC 入口）：入口条目表（SAQ_EntryTable.h）**数据侧**完整性 ——
-    #   ① 20 条（任务板 12 + 可重复 NPC 8；kEntryTableSize）；
+    #   ① 45 条（任务板 13 + 可重复 NPC 8 + 可招募船员 24；kEntryTableSize）；
+    #      ★★★ 第 156 轮：+24 条船员（hirable_crew.json）；
     #   ② 名字前缀「（可重复）」/"(Repeatable)" **只在 NPC 条目上**（玩家要求：
-    #      「任务板不需要，只需要 NPC 这样做」）；
+    #      「任务板不需要，只需要 NPC 这样做」）；「（可招募）」/"(Recruitable)"
+    #      **只在船员条目上**（第 156 轮）；
     #   ③ 与 ref/repeatable_givers.json（数据源）逐项一致：uID / 名字 / 兜底候选；
+    #      ★ 第 156 轮：与 ref/hirable_crew.json 逐项一致（uID / 名字 / 兜底；noNav ⇒ 兜底 0）；
     #   ④ 与 ref/board_markers.json（ESM 侧建档产物）一致：markerLocal；
     #   ⑤ marker 分配：NPC 从 0x90B 起连续 7 条（外景条目 0x00216D34 无 marker = 0）；
+    #      ★ 船员全不带 marker（第 154 轮结论：兜底候选已就位 ⇒ 不新建）；
     #   ⑥ 样本：邓肯·林奇（0x00214684）= marker 0x910 + 兜底 0xC35BA（内景：同 cell）；
     #      「追踪者联盟探员 · 阿基拉城」（0x00216D34）= marker 0 + 兜底 0x21D003
-    #      （外景：世界级常驻引用）。
+    #      （外景：世界级常驻引用）；船员样本：玛丽卡·波罗斯（0x00015062）= marker 0 +
+    #      兜底 0x286A53（world 级）；瓦斯科（0x000057BE）= 常驻 + 同 cell 兜底。
     entry_h = ROOT / "plugin" / "src" / "SAQ_EntryTable.h"
     if entry_h.exists():
         ent_blob = entry_h.read_text(encoding="utf-8", errors="replace")
@@ -4113,16 +4187,20 @@ def main() -> int:
         ent_size = int(m_ent_size.group(1)) if m_ent_size else -1
         n_board = sum(1 for r_ in ent_rows if r_[6] == "0")
         n_npc = sum(1 for r_ in ent_rows if r_[6] == "1")
+        n_crew = sum(1 for r_ in ent_rows if r_[6] == "2")
         bad_prefix = [r_[0] for r_ in ent_rows
                       if (r_[6] == "1") != (r_[8].startswith("（可重复）")
-                                            and r_[7].startswith("(Repeatable)"))]
+                                            and r_[7].startswith("(Repeatable)"))
+                      or (r_[6] == "2") != (r_[8].startswith("（可招募）")
+                                            and r_[7].startswith("(Recruitable)"))]
         #   ★★★ 第 110 轮：+1 条任务板（追踪者联盟悬赏信息台，SFBGS003.esm · medium）
         #   ⇒ 20 → **21**（任务板 12 → 13）。
-        ent_ok = (len(ent_rows) == 21 == ent_size and n_board == 13 and n_npc == 8
-                  and not bad_prefix)
+        #   ★★★ 第 156 轮：+24 条可招募船员 ⇒ 21 → **45**（段序：任务板 → NPC → 船员）。
+        ent_ok = (len(ent_rows) == 45 == ent_size and n_board == 13 and n_npc == 8
+                  and n_crew == 24 and not bad_prefix)
         print(("OK  " if ent_ok else "MISS") +
-              f" 入口表 · 21 条（任务板 {n_board} + 可重复 NPC {n_npc}；"
-              f"「（可重复）」前缀只在 NPC 上={not bad_prefix}）")
+              f" 入口表 · 45 条（任务板 {n_board} + 可重复 NPC {n_npc} + 可招募船员 {n_crew}；"
+              f"前缀只在对应类别上={not bad_prefix}）")
         all_ok &= ent_ok
 
         # ★★★ 第 110 轮：追踪者联盟悬赏信息台（第 21 条）—— master=1 +
@@ -4178,6 +4256,53 @@ def main() -> int:
                       and int(r_[4], 16) == want_fb1 and int(r_[6]) == 1)
             print(("OK  " if ok_row else "MISS") + f" 入口表 · NPC 样本（{tag}）")
             all_ok &= ok_row
+
+        # ★★★ 第 156 轮（可招募船员）：与 ref/hirable_crew.json 逐项一致 ——
+        #   uID / 名字 / 兜底候选；noNav 的 3 位**兜底必须为 0**（否则「不可导航」条目
+        #   会落进玩家到不了的 cell 里的常驻引用上）；船员全不带 marker。
+        cr_json = ROOT / "ref" / "hirable_crew.json"
+        cr_ok = cr_json.exists()
+        cr_n = 0
+        if cr_ok:
+            crew = json.loads(cr_json.read_text(encoding="utf-8"))["npcs"]
+            cr_n = len(crew)
+            cr_ok = cr_n == 24
+            for c_ in crew:
+                r_ = by_local.get(c_["refLocal"])
+                want_fb1 = 0 if c_["noNav"] else (c_.get("fallback1") or 0)
+                want_fb2 = 0 if c_["noNav"] else (c_.get("fallback2") or 0)
+                if r_ is None or (int(r_[6]) != 2
+                                  or r_[8] != c_["displayZh"] or r_[7] != c_["displayEn"]
+                                  or int(r_[3], 16) != 0
+                                  or int(r_[4], 16) != want_fb1
+                                  or int(r_[5], 16) != want_fb2):
+                    cr_ok = False
+                    break
+        print(("OK  " if cr_ok else "MISS") +
+              f" 入口表 · 可招募船员与 ref/hirable_crew.json 逐项一致（{cr_n} 条；noNav ⇒ 兜底=0）")
+        all_ok &= cr_ok
+
+        #   样本：玛丽卡·波罗斯（0x00015062，world 级兜底）+ 瓦斯科（0x000057BE，
+        #   唯一常驻的船员 + 同 cell 兜底）—— 数字钉死，防生成器回归。
+        for local, want_p, want_fb1, tag in (
+                ("00015062", False, 0x00286A53, "玛丽卡·波罗斯（world 级兜底 0x286A53）"),
+                ("000057BE", True, 0x000A2566, "瓦斯科（唯一常驻 + 同 cell 兜底 0xA2566）")):
+            r_ = by_local.get(int(local, 16))
+            ok_row = (r_ is not None and int(r_[6]) == 2
+                      and (r_[2] == "true") == want_p
+                      and int(r_[4], 16) == want_fb1)
+            print(("OK  " if ok_row else "MISS") + f" 入口表 · 船员样本（{tag}）")
+            all_ok &= ok_row
+
+        #   3 位「位置不适合导航」（别名暂存格 / 运行时生成内景）⇒ 兜底必须为 0
+        #   （界面照第 91 轮显示「（不可导航）」—— 数据侧保证「平时取不到」）。
+        nav_off = [r_ for r_ in ent_rows if r_[6] == "2"
+                   and int(r_[0], 16) in (0x0020DC69, 0x0022198C, 0x0029C982)]
+        nav_off_ok = (len(nav_off) == 3
+                      and all(int(r_[4], 16) == 0 and int(r_[5], 16) == 0 for r_ in nav_off))
+        print(("OK  " if nav_off_ok else "MISS") +
+              " 入口表 · 船员「不可导航」3 位兜底=0（贝蒂/埃里克/莫亚拉）")
+        all_ok &= nav_off_ok
     else:
         print(f"MISS 缺少 {entry_h}")
         all_ok = False

@@ -129,6 +129,7 @@ namespace SAQ::Test
 		case Op::kQuestComplete: return "完成(CompleteQuest)";
 		case Op::kTeleport: return "传送玩家(MoveTo)";
 		case Op::kCrewFaction: return "船员状态(Papyrus 只读)";
+		case Op::kCrewSimRecruit: return "船员模拟招募(Papyrus 写+复原)";
 		default: return "None";
 		}
 	}

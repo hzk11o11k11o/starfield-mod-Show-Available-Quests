@@ -58,6 +58,15 @@ namespace SAQ::Test
 		//   「commonlibsf 偏移不可信」）；而 Papyrus 语言级 API 是本项目已验证的
 		//   「零 RE 工作」路线（第 49 轮起写侧就这么做，这里只是把它用于读）。
 		kCrewFaction = 7,
+		// ★★★ 第 156 轮（可招募船员 · 「已招募」判据正样本复核 —— docs/16 16.8）：
+		//   **模拟招募往返**（研究用；净副作用为零）—— 对一位未招募（A=0）的船员：
+		//   前置读 A → `Game.AddToAvailableCrew` → 读 → `Game.RemoveFromAvailableCrew`
+		//   → 读 → 复原。动作 = 官方 `Recruited()` 内的同一条引擎调用 ⇒ 用它验证
+		//   「A 位随招募动作 0→1」是否成立（A 判据的实验假设）。
+		//   前置已 A=1 ⇒ 完全跳过写入（不碰既有状态）。
+		//   结果码 = 32 + 状态位（bit0 前置已招募 / bit1 Add 后 A=1 / bit2 Remove 后仍 A=1）；
+		//   失败 = 1（引用取不到）/ 2（不是 Actor / faction 取不到 ⇒ 未写入）。
+		kCrewSimRecruit = 8,
 	};
 
 	const char* OpName(Op a_op);

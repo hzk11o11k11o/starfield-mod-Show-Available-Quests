@@ -33,8 +33,8 @@
     },
     "ref/entry_targets.json": {
       "desc": "任务板入口表（gen_entry_table.py）",
-      "sha256": "c102e26ed32c338c0ac679619e568a03a0346c462149cae9d14ae867b1929185",
-      "summary": "条目 21"
+      "sha256": "83497572c9feeb4d08c3caf20592430cd6af21ec69ac1e9570f301eb2bd30c90",
+      "summary": "条目 45"
     },
     "ref/board_markers.json": {
       "desc": "新建常驻 marker（create_board_markers.py）",
@@ -83,8 +83,8 @@
     },
     "plugin/src/SAQ_EntryTable.h": {
       "desc": "入口条目表（gen_entry_table.py，DLL 编译进去）",
-      "sha256": "04556f1ed450a67afced045f5847b73ac0e34e396d2fb91681b48c3425317fe5",
-      "summary": "入口 21"
+      "sha256": "8235b666519bbbfd4f278a2b07dbbb1e5fdbd6127b9b2145c3bb0f828fc23859",
+      "summary": "入口 45"
     },
     "esm/SAQ_ShowAvailableQuests.esm": {
       "desc": "代理任务 ESM（patch_saq_esm.py 等，幂等补丁）",

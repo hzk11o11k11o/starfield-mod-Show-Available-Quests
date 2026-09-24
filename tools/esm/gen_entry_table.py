@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
-"""gen_entry_table.py - 生成「无限任务入口」条目表（任务板 + 提供无限任务的 NPC）。
+"""gen_entry_table.py - 生成「无限任务入口」条目表（任务板 + 提供无限任务的 NPC + 可招募船员）。
 
 背景（AGENTS.md 需求）：无限生成任务本身不显示，但「接取入口」可以作为一条数据出现在
-可接任务列表里 —— 玩家点了就引导到那块任务板 / 那位 NPC 的具体位置。两类入口：
+可接任务列表里 —— 玩家点了就引导到那块任务板 / 那位 NPC 的具体位置。三类入口：
 
 * **任务板**（第 27 轮起）：白名单在下面（每个城市/据点一块，14 个基础对象里挑）；
 * **提供无限任务的 NPC**（第 80 轮新增）：数据来自 ref/repeatable_givers.json
   （tools/esm/gen_repeatable_givers.py）—— RAD03「长途运输」的 4 位贸易管理局商人 +
-  RAD04「死亡通缉令」的 4 城追踪者联盟探员；名字自带「（可重复）」前缀（任务板不加）。
+  RAD04「死亡通缉令」的 4 城追踪者联盟探员；名字自带「（可重复）」前缀（任务板不加）；
+* **可招募船员**（★★★ 第 156 轮新增）：数据来自 ref/hirable_crew.json
+  （tools/esm/gen_hirable_crew.py）—— 24 位精英船员（EDID 前缀 `Crew_Elite_*`）；
+  名字自带「（可招募）」前缀；3 位位置不适合导航（别名暂存格 / 运行时生成内景）⇒ 不配
+  兜底候选（引导链只剩引用自身 ⇒ 平时不可导航，界面照第 91 轮显示「（不可导航）」）。
 
 任务板在数据里是 ACTIVATOR `MissionBoardConsole*`：
     python tools/esm/esm_probe.py list ACTI --grep board     # 可复现（14 条基础对象）
@@ -58,12 +62,18 @@ from esm_probe import (  # noqa: E402
 BOARD_MARKERS_JSON = Path("ref/board_markers.json")
 ENTRY_SCAN_JSON = Path("ref/entry_persistent_scan.json")
 GIVERS_JSON = Path("ref/repeatable_givers.json")   # ★ 第 80 轮：NPC 入口数据（上游工具产物）
+CREW_JSON = Path("ref/hirable_crew.json")          # ★★★ 第 156 轮：可招募船员数据（gen_hirable_crew.py）
 XMARKER_BASES = {0x3B, 0x34}      # XMarker / XMarkerHeading（纯位置标记，位置最稳定）
 FALLBACK_MAX_DIST = 25.0          # 兜底候选的最大距离（同房间级；再远就不是「这块板」了）
 
 # ★ 第 80 轮：入口条目的 kind（与 C++ 的 StaticEntryInfo::kind / AS3 的载荷 type 对应）。
 KIND_BOARD = 0        # 任务板（AS3 type 100：子项「前往任务板」）
 KIND_REPEAT_NPC = 1   # 提供无限任务的 NPC（AS3 type 101：子项「找他接活」；名字带「（可重复）」）
+KIND_CREW = 2         # ★★★ 第 156 轮：可招募船员（AS3 type 102；名字带「（可招募）」）
+
+# ★★★ 第 156 轮：段序 = 界面顺序（DLL 按表追加 + 组内稳定排序，见 main 的布局硬校验）。
+#   新增入口类别时**插在最后**（同类相邻；中间插花会直接构建失败）。
+SEGMENT_ORDER = (KIND_BOARD, KIND_REPEAT_NPC, KIND_CREW)
 
 
 def load_markers() -> dict[int, int]:
@@ -101,6 +111,24 @@ def load_givers() -> list[dict]:
               f"—— NPC 入口条目将缺失")
         return []
     return json.loads(GIVERS_JSON.read_text(encoding="utf-8"))
+
+
+def load_crew() -> list[dict]:
+    """★★★ 第 156 轮：「可招募船员」入口数据（上游 tools/esm/gen_hirable_crew.py）。
+
+    口径（docs/16 第 154/155 轮研究结论）：
+      * 每位 1 处放置引用（= 引导链的「精确目标」，同时是界面 uID）；
+      * 兜底候选（同 cell / world 级常驻）已经备齐 —— **不新建 marker**（第 154 轮结论：
+        不新建也能配出「精确引用 → 常驻兜底」候选链）；
+      * 3 位位置不适合导航（别名暂存格 / 运行时生成内景）⇒ **丢弃兜底**：引导链只剩
+        引用自身（平时取不到）⇒ 条目平时不可导航 —— 界面照第 91 轮加「（不可导航）」
+        前缀 + 点击提示（不是 bug，是设计）。
+    """
+    if not CREW_JSON.exists():
+        print(f"!! 缺少 {CREW_JSON}（先跑 tools/esm/gen_hirable_crew.py）—— 船员入口条目将缺失")
+        return []
+    data = json.loads(CREW_JSON.read_text(encoding="utf-8"))
+    return data.get("npcs", [])
 
 # 任务板的 14 个基础对象（esm_probe list ACTI --grep board 的结果）；
 # 白名单只收录其中「激活的、每个地点一块」的实例，这里仍然全列出来做 base 校验。
@@ -224,6 +252,7 @@ def main() -> int:
     markers = load_markers()
     fallbacks = load_fallbacks()
     givers = load_givers()
+    crew = load_crew()
 
     rows = []
     problems = []
@@ -304,19 +333,55 @@ def main() -> int:
             "nameZh": g["nameZh"],
         })
 
-    # ★★★ 第 150 轮：**布局硬校验** —— 同类入口必须连成一段（任务板段在前、可重复 NPC
-    #   段在后）。第 110 轮的手工条目曾被追加在表末尾（落在 NPC 段之后）⇒ 界面里那块
-    #   任务板混进「（可重复）…」堆里（本轮玩家反馈的直接原因：表顺序 = 列表顺序，
-    #   DLL 先按表追加、再按组稳定排序 ⇒ 组内保持表顺序）。把「顺序即布局」钉在这里：
-    #   以后新增条目插花会直接构建失败，而不是静默错位。
-    seen_npc = False
+    # ★★★ 第 156 轮：「可招募船员」条目（ref/hirable_crew.json —— 上游 gen_hirable_crew.py
+    #   已把「放置引用 / 常驻性 / 两档兜底候选 / 招募任务 / 不可导航」全部核验过，
+    #   这里只做合并与交叉校验）。
+    #   不新建 marker（第 154 轮结论：兜底候选已就位）；3 位不可导航的**丢弃兜底** ——
+    #   引导链只剩引用自身 ⇒ 平时不可导航，界面显示「（不可导航）」前缀（第 91 轮口径）。
+    for c in crew:
+        no_nav = bool(c.get("noNav"))
+        if not c.get("refLocal"):
+            problems.append(f"{c.get('edid', '?')} 没有放置引用（RefLocal=0）")
+            continue
+        if not no_nav and not c.get("fallback1"):
+            problems.append(f"{c['edid']} 没有兜底候选（远处将不可导航）—— "
+                            f"重跑 gen_hirable_crew.py 或检查 noNav 口径")
+        if no_nav and not c.get("noNavReason"):
+            problems.append(f"{c['edid']} 标了 noNav 但没有理由（口径要能解释给玩家看）")
+        rows.append({
+            "refLocal": c["refLocal"],
+            "refHex": c["refHex"],
+            "master": 0,                                   # 全在 Starfield.esm（kQuestMasters[0]）
+            "persistent": bool(c.get("persistent")),
+            "base": c["edid"],                             # NPC_ EDID（人工核对用）
+            "cell": c.get("cell", ""),
+            "markerLocal": 0,                              # 不新建 marker（兜底候选已就位）
+            # 不可导航 ⇒ 丢弃兜底（否则远处会落到「玩家到不了的 cell 里」的常驻引用上）
+            "fallback1": 0 if no_nav else (c.get("fallback1") or 0),
+            "fallback2": 0 if no_nav else (c.get("fallback2") or 0),
+            "kind": KIND_CREW,
+            "nameEn": c["displayEn"],
+            "nameZh": c["displayZh"],
+        })
+
+    # ★★★ 第 150/156 轮：**布局硬校验** —— 同类入口必须连成一段，且段序 = SEGMENT_ORDER
+    #   （任务板段 → 可重复 NPC 段 → 可招募船员段）。第 110 轮的手工条目曾被追加在表末尾
+    #   （落在 NPC 段之后）⇒ 界面里那块任务板混进「（可重复）…」堆里（第 150 轮玩家反馈的
+    #   直接原因：表顺序 = 列表顺序，DLL 先按表追加、再按组稳定排序 ⇒ 组内保持表顺序）。
+    #   把「顺序即布局」钉在这里：以后新增条目插花会直接构建失败，而不是静默错位。
+    #   实现 = 段序下标必须**单调不减**（等价于「同类相邻」）。
+    seg_index = {k: i for i, k in enumerate(SEGMENT_ORDER)}
+    max_seen = -1
     for r in rows:
-        if r["kind"] == KIND_REPEAT_NPC:
-            seen_npc = True
-        elif seen_npc:
+        idx = seg_index.get(r["kind"])
+        if idx is None:
+            problems.append(f"入口顺序：{r['nameZh']} 的 kind={r['kind']} 不在 SEGMENT_ORDER 里")
+            continue
+        if idx < max_seen:
             problems.append(
-                f"入口顺序：{r['nameZh']}（kind={r['kind']}）排在可重复 NPC 段之后 —— "
-                f"同类入口必须相邻（任务板段 → 可重复 NPC 段，见第 150 轮）")
+                f"入口顺序：{r['nameZh']}（kind={r['kind']}）插在了后面的段落里 —— "
+                f"同类入口必须相邻（段序 = 任务板 → 可重复 NPC → 可招募船员，见第 150/156 轮）")
+        max_seen = max(max_seen, idx)
 
     if problems:
         print("!! 入口数据校验失败：")
@@ -326,17 +391,21 @@ def main() -> int:
 
     n_board = sum(1 for r in rows if r["kind"] == KIND_BOARD)
     n_npc = sum(1 for r in rows if r["kind"] == KIND_REPEAT_NPC)
+    n_crew = sum(1 for r in rows if r["kind"] == KIND_CREW)
+    n_crew_nav = sum(1 for r in rows if r["kind"] == KIND_CREW and r["fallback1"])
     n_pers = sum(1 for r in rows if r["persistent"])
     n_marker = sum(1 for r in rows if r["markerLocal"])
     n_fb = sum(1 for r in rows if r["fallback1"])
-    print(f"入口条目：{len(rows)} 条（任务板 {n_board} / 可重复 NPC {n_npc}；"
+    print(f"入口条目：{len(rows)} 条（任务板 {n_board} / 可重复 NPC {n_npc} / "
+          f"可招募船员 {n_crew}（其中可兜底导航 {n_crew_nav}）；"
           f"原生常驻 {n_pers}；新建 marker {n_marker} 条；兜底候选 {n_fb} 条）")
+    kind_tag = {KIND_BOARD: "板", KIND_REPEAT_NPC: "NPC", KIND_CREW: "船员"}
     for r in rows:
         flag = "P" if r["persistent"] else "-"
         mk = f"marker=0x{r['markerLocal']:03X}" if r["markerLocal"] else "marker=--- "
         fb = (f"兜底=0x{r['fallback1']:06X}/0x{r['fallback2']:06X}" if r["fallback1"]
               else "兜底=---")
-        kind = "板" if r["kind"] == KIND_BOARD else "NPC"
+        kind = kind_tag.get(r["kind"], "?")
         print(f"  [{flag}][{kind}] {r['refHex']} {mk} {fb} {r['cell']:<32s} {r['nameZh']}")
 
     # ---- 头文件 ----
@@ -345,21 +414,25 @@ def main() -> int:
     lines.append("// 本文件由 tools/esm/gen_entry_table.py 自动生成，请勿手改。")
     lines.append("//")
     lines.append("// 「无限任务入口」条目（AGENTS.md 需求 —— 无限生成任务本身不显示，但「接取入口」")
-    lines.append("// 作为一条数据显示在列表里，点了就引导到它的位置）。两类：")
+    lines.append("// 作为一条数据显示在列表里，点了就引导到它的位置）。三类：")
     lines.append("//   kind=0（任务板，13 条）：ACTIVATOR `MissionBoardConsole*`，名字「任务板 · <地点>」；")
     lines.append("//     ★★ 第 110 轮 +1：追踪者联盟总部（SFBGS003.esm · medium 档手工条目，见 EXTRA_ENTRIES）")
     lines.append("//        —— ★★★ 第 150 轮：它追加在**任务板段末尾**、与 12 条基础任务板连成一段")
     lines.append("//        （界面里紧挨其它「任务板 · <地点>」；此前排在表末尾 ⇒ 混进了「（可重复）…」堆）；")
     lines.append("//   kind=1（可重复 NPC，8 条）：贸易管理局商人 / 追踪者联盟探员（第 80 轮），")
     lines.append("//     名字自带「（可重复）」前缀 —— 数据 ref/repeatable_givers.json；")
-    lines.append("//     ★★★ 第 150 轮：本表**行顺序 = 界面列表顺序**（DLL 按表追加 + 组内稳定排序）")
-    lines.append("//       —— 段序固定为「任务板段 → 可重复 NPC 段」（main 有布局硬校验）。")
+    lines.append("//   kind=2（可招募船员，24 条）：精英船员（`Crew_Elite_*`，第 156 轮），")
+    lines.append("//     名字自带「（可招募）」前缀 —— 数据 ref/hirable_crew.json；")
+    lines.append("//     3 位位置不适合导航（别名暂存格 / 运行时生成内景）⇒ 不配兜底（平时不可导航，")
+    lines.append("//     界面照第 91 轮显示「（不可导航）」前缀）；")
+    lines.append("//     ★★★ 第 150/156 轮：本表**行顺序 = 界面列表顺序**（DLL 按表追加 + 组内稳定排序）")
+    lines.append("//       —— 段序固定为「任务板段 → 可重复 NPC 段 → 可招募船员段」（main 有布局硬校验）。")
     lines.append("//")
     lines.append("// 字段说明（★ 第 30 轮起，引导目标是**候选链**：DLL 依次 LookupByID 取第一个命中的）——")
     lines.append("//   refLocal   条目引用的记录号（任务板 ACTIVATOR / NPC 的 ACHR）—— 同时是界面条目的")
     lines.append("//              uID（运行期 FormID）。")
     lines.append("//   master     所属 master 下标（kQuestMasters[]；第 110 轮起含 SFBGS003.esm=medium）。")
-    lines.append("//   persistent 条目引用自身是否**原生常驻**（20 条里只有阿基拉城任务板是）。")
+    lines.append("//   persistent 条目引用自身是否**原生常驻**（45 条里只有阿基拉城任务板与船员瓦斯科是）。")
     lines.append("//   markerLocal ① 本插件（ESM 记录号：任务板 0x900~0x90A、NPC 0x90B~0x911）新建的")
     lines.append("//              **常驻 XMarker**，位置 = 条目坐标：常驻引用在 cell 未加载时依然存在")
     lines.append("//              ⇒ 任何位置都取得到 ⇒ 引导目标。外景条目（阿基拉城广场的探员）不建")
@@ -370,7 +443,11 @@ def main() -> int:
     lines.append("//              内景条目 = 同 cell 的原生常驻引用；外景条目 = 该 worldspace 的**世界级")
     lines.append("//              常驻引用**（`WRLD > WorldChildren > CellChildren > CellPersistent`）。")
     lines.append("//   kind       0 = 任务板（AS3 type 100，子项「前往任务板」）；")
-    lines.append("//              1 = 可重复 NPC（AS3 type 101，子项「找他接活」+ 名字带「（可重复）」）。")
+    lines.append("//              1 = 可重复 NPC（AS3 type 101，子项「找他接活」+ 名字带「（可重复）」）；")
+    lines.append("//              2 = 可招募船员（AS3 type 102，子项「招募他作为船员」+ 名字带「（可招募）」。")
+    lines.append("//                  ★ 第 156 轮起：DLL 对 kind=2 做 P/A 判据过滤 —— 引用可读时")
+    lines.append("//                  「P=1 且 A=0」才显示（P=0 未解锁 / A=1 已招募 都隐藏；")
+    lines.append("//                  引用未加载读不到 ⇒ 保守显示，见 SAQ.cpp::AppendEntryRows）。")
     lines.append("//   nameZh/En  列表里显示的名字（中英都推，AS3 按游戏语言挑）。")
     lines.append("//")
     lines.append("// 实机排查看 DLL 日志的「入口=…(可导航 N｜marker a 原板 b 兜底 c 不可用 d)」与")
@@ -385,6 +462,7 @@ def main() -> int:
     lines.append("\t{")
     lines.append("\t\tkEntryKindBoard = 0,        // 任务板（AS3 type 100）")
     lines.append("\t\tkEntryKindRepeatNpc = 1,    // 提供无限任务的 NPC（AS3 type 101）")
+    lines.append("\t\tkEntryKindCrew = 2,         // ★ 第 156 轮：可招募船员（AS3 type 102）")
     lines.append("\t};")
     lines.append("")
     lines.append("\tstruct StaticEntryInfo")

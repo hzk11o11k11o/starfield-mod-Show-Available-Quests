@@ -1751,22 +1751,40 @@ step = menu.close
 ;  状态（DLL 直读，与产品同一套 ReadQuestRuntimeState）？本用例把两者一起读出来，
 ;  用实机数据说话 —— Lin 是对照组（无三件套、主线剧情加入）。
 ;
-;  判据（**只读**：不 reset / 不推 stage / 不传送、不改任何游戏状态）：
+;  判据：
 ;    ① `crew.probe` 打出 24 行 `船员探针 [i/24] …` + 一行 `船员探针 汇总：…`；
 ;    ② 探针链路健康：没有「失败（结果码 …）」/「等回执超时」；
 ;    ③ 招募任务状态每行都有结果（任务状态不依赖引用加载 —— 不许「｜招募任务 表单取不到」）；
 ;       faction 位只在「引用已加载」时可读（玩家当前位置决定，不断言具体值 —— 判读看日志）。
 ;  ★ 怎么用这份数据：找一名**已招募**的船员（如开局就有的 Vasco）与一名**未招募**的
 ;    对比 —— A/C/P 位与任务状态谁在两者之间有差异，谁就是「已招募」的判据。
+;
+;  ★★★ 第 156 轮扩展（本用例升级；docs/16 16.8）：
+;    ④ **直读对照** —— 探针同时用「与产品 kind=2 过滤同一套」的 DLL 直读
+;       （SAQ_Crew::ReadState / Actor::IsInFaction）读同一位，逐位与 Papyrus 对照
+;       （每行 `｜对照=一致/不一致` + 汇总「不一致 N 位」）⇒ 钉死「直读判据成立」；
+;    ⑤ **模拟招募正样本复核**（`sim=0x00015062` = 玛丽卡·波罗斯）—— 全表读完后对
+;       她走一遍 `AddToAvailableCrew → 读 → RemoveFromAvailableCrew → 读`（官方
+;       `Recruited()` 内的同一条引擎调用；净副作用为零），判定「A 位随招募往返
+;       0→1→0」⇒ 钉死「A=1 = 已招募」这个「隐藏已招募」判据。
+;       为什么先传送：模拟招募要求她的引用**已加载**（非常驻引用在远处取不到）——
+;       `teleport.entry 0x00015062` 走 kind=2 条目的**引导候选链**（她自身 → 常驻
+;       兜底 0x286A53）落在她身边（顺带验证船员条目的候选链可用）。
 ; ----------------------------------------------------------------------------
 [case:r155_crew_probe]
-desc = 第 155 轮：可招募船员 faction 判据只读探针（24 位 faction 三件套 + 招募任务状态）
-step = note === 预热：命令通道（探针的 faction 位走 Papyrus op=7，需要通道就绪）===
+desc = 第 155/156 轮：可招募船员探针（24 位 faction + 直读对照 + 模拟招募正样本复核）
+step = note === 预热：命令通道（探针的 faction 位走 Papyrus op=7/op=8，需要通道就绪）===
 step = ping
-step = note === 只读探针：24 位逐位读（引用已加载的位才有 faction 位；任务状态 24/24 都有）===
-step = crew.probe timeout=90000
+step = note === 传送到玛丽卡·波罗斯身边（走她的引导候选链 —— 确保引用已加载，模拟招募要求）===
+step = teleport.entry 0x00015062
+step = note === 只读探针：24 位逐位读（Papyrus + 直读对照；任务状态 24/24 都有）===
+step = crew.probe sim=0x00015062 timeout=120000
 step = assert.log 船员探针 汇总：24 位 scope=prev timeout=120000
-step = note === 反向检查：探针链路必须健康（不许失败码 / 超时；任务表单必须齐）===
+step = note === 正样本复核：模拟招募往返必须完成，且「A 位随招募往返 0→1→0」判据成立 ===
+step = assert.log 船员探针 模拟招募：.*A 位随招募往返 0→1→0 scope=prev timeout=120000
+step = note === 反向检查：探针链路必须健康（不许失败码 / 超时 / 任务表单缺失 / 直读不一致 / 跳过）===
 step = assert.nolog 船员探针 .*失败（结果码 scope=case timeout=1000
 step = assert.nolog 船员探针 .*等回执超时 scope=case timeout=1000
 step = assert.nolog 船员探针 .*｜招募任务 表单取不到 scope=case timeout=1000
+step = assert.nolog 船员探针 .*对照=不一致 scope=case timeout=1000
+step = assert.nolog 船员探针 模拟招募：.*引用未加载 scope=case timeout=1000

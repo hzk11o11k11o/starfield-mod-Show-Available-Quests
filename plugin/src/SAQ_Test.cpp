@@ -16,6 +16,7 @@
 #include "SAQ_EntryTable.h"  // 任务板入口表（`teleport.entry` 要把「板/常驻 marker」解析成引用）
 #include "SAQ_Guide.h"       // Guide::EnsureChannel（入口 marker 的运行期前缀）
 #include "SAQ_Masters.h"     // Masters::MakeFormID（「master + 记录号」→ 运行期 FormID）
+#include "SAQ_Crew.h"        // ★★★ 第 156 轮：crew.probe 的直读对照（与产品 kind=2 同一套）
 #include "SAQ_QuestCond.h"   // ★ 第 101 轮补丁：ProbeQuestStages（quest.probe 只读探针）
 #include "SAQ_QuestState.h"  // ★★★ 第 155 轮：crew.probe 读招募任务的运行时状态
 #include "SAQ_QuestTable.h"  // 静态任务表（`~0x…` = 记录号，按加载顺序解析成运行期 FormID）
@@ -305,6 +306,15 @@ namespace SAQ::Test
 			std::size_t   crewQRunning{};
 			std::size_t   crewQDone{};
 			std::size_t   crewQOther{};
+			// ★★★ 第 156 轮（crew.probe 扩展）：
+			//   ③ 直读对照 —— 与产品 kind=2 过滤同一套 SAQ_Crew::ReadState；
+			//      只有「Papyrus 与直读都读到位」的位参与对照。
+			std::size_t   crewDirectRead{};    // 直读读到位数（应与 Papyrus 读到位数一致）
+			std::size_t   crewDirectPairs{};   // 参与对照的位数（两边都读到）
+			std::size_t   crewMismatch{};      // 三者（A/C/P）有不一致的位数 —— 应为 0
+			//   ④ 模拟招募往返（可选 sim=<FormID>；净副作用为零）
+			bool          crewSimDone{};       // 是否已做完（或跳过）
+			std::string   crewSimNote;         // 判定简语（进汇总行；空 = 未做）
 		};
 		StepState g_cur;
 
@@ -722,15 +732,29 @@ namespace SAQ::Test
 				//     ② 招募载体任务 CREW_EliteCrew_* 的运行时状态（DLL 直读 ——
 				//        不依赖引用加载，24/24 总有结果 ⇒ 判据的主证据）。
 				//   用途：验证「已招募 ⇒ 隐藏」的判据（faction vs 任务状态，哪个可靠）。
-				//   无参数（始终全表）；支持 `timeout=` 覆盖默认总窗口（见下方常量）。
+				//   ★★★ 第 156 轮扩展：
+				//     ③ **直读对照** —— 与产品 kind=2 过滤**同一套** DLL 直读
+				//        （SAQ_Crew::ReadState）逐位读，与 Papyrus 值对照（不一致会带
+				//        「对照=不一致」⇒ 用例反向断言）。
+				//     ④ 可选 `sim=<FormID>` —— 全表读完后对这位做「模拟招募往返」
+				//        （Papyrus op=8：Add → 读 → Remove → 读；净副作用为零）——
+				//        「已招募 ⇒ 隐藏」判据的正样本复核（docs/16 16.8）。
+				//   参数：可选 `timeout=`（总窗口）/ `sim=<FormID>`。
 				a_step.kind = Kind::kCrewProbe;
 				rest = ExtractTimeout(rest, a_step.timeoutMs);
 				if (a_step.timeoutMs == kDefaultStepTimeoutMs) {
 					a_step.timeoutMs = kCrewProbeTotalTimeoutMs;
 				}
-				if (!Trim(rest).empty()) {
-					a_error = "不接受参数（始终全表 24 位；可选 timeout=）";
-					return false;
+				for (const auto& tok : SplitWs(rest)) {
+					if (tok.rfind("sim=", 0) == 0) {
+						if (!parseFormIDToken(tok.substr(4), a_step.formId)) {
+							a_error = "sim= 的 FormID 解析失败：" + tok.substr(4);
+							return false;
+						}
+					} else {
+						a_error = "不接受的参数：" + tok + "（可选 timeout= / sim=<FormID>）";
+						return false;
+					}
 				}
 			} else if (op == "ui.research") {
 				// ★★★ 第 117 轮（无 SWF 覆盖的 UI 注入研究 · docs/15）：
@@ -1527,8 +1551,36 @@ namespace SAQ::Test
 						g_cur.crewP += (a_mask & 4u) ? 1 : 0;
 						g_cur.crewAssign += (a_mask & 8u) ? 1 : 0;
 					}
-					std::string line = std::format("[{}/{}] {}（0x{:08X}）｜Papyrus: {}｜招募任务 {}",
-						a_idx + 1, kCrewProbeCount, info.nameZh, info.refForm, a_papyrus, qt);
+					// ★★★ 第 156 轮：直读对照（与产品 kind=2 过滤同一套 SAQ_Crew::ReadState）——
+					//   「Papyrus 与直读都读到」的位参与对照（三者 A/C/P 全同 = 一致）。
+					//   用途：产品过滤用的是直读 ⇒ 直读的正确性必须被独立来源（Papyrus）
+					//   钉死；不一致会打「对照=不一致」+ 用例反向断言（见 r155）。
+					const auto direct = Crew::ReadState(info.refForm);
+					std::string directText = direct.readable
+						? std::format("A={} C={} P={}",
+							direct.available ? 1 : 0, direct.current ? 1 : 0,
+							direct.potential ? 1 : 0)
+						: std::string{ "引用未加载" };
+					std::string cmpText;
+					if (direct.readable) {
+						++g_cur.crewDirectRead;
+					}
+					if (a_read && direct.readable) {
+						++g_cur.crewDirectPairs;
+						const bool same = ((a_mask & 1u) != 0) == direct.available &&
+							((a_mask & 2u) != 0) == direct.current &&
+							((a_mask & 4u) != 0) == direct.potential;
+						if (!same) {
+							++g_cur.crewMismatch;
+							cmpText = "｜对照=不一致";  // ← 用例反向断言盯这个（正常恒不出现）
+						} else {
+							cmpText = "｜对照=一致";
+						}
+					}
+					std::string line = std::format(
+						"[{}/{}] {}（0x{:08X}）｜Papyrus: {}｜直读: {}｜招募任务 {}{}",
+						a_idx + 1, kCrewProbeCount, info.nameZh, info.refForm, a_papyrus,
+						directText, qt, cmpText);
 					REX::INFO("船员探针 {}", line);
 					g_cur.crewReport += "船员探针 " + line + "\n";
 				};
@@ -1598,13 +1650,106 @@ namespace SAQ::Test
 						emit(idx, std::format("失败（结果码 {}：{}）", code, ResultText(code)), false, 0);
 					}
 				}
+
+				// ★★★ 第 156 轮：阶段 2 —— **模拟招募往返**（可选 `sim=<FormID>`）。
+				//   用途（docs/16 16.8）：「已招募 ⇒ 隐藏」判据（A 位）的正样本复核 ——
+				//   对一位未招募（A=0）的船员走一遍 `AddToAvailableCrew → 读 → Remove
+				//   → 读`（官方 `Recruited()` 内的同一条引擎调用；净副作用为零），
+				//   看 A 位是否 0→1。A=1 的位 Papyrus 侧跳过写入（不碰既有状态）。
+				if (step.formId != 0 && !g_cur.crewSimDone) {
+					const std::uint32_t simRef = step.formId;
+					std::string simName;  // 表内查名字（不在表里也允许 —— 用 0x… 代替）
+					for (const auto& ci : kCrewProbeTable) {
+						if (ci.refForm == simRef) {
+							simName = ci.nameZh;
+							break;
+						}
+					}
+					// 模拟招募的产品行（红线六：产品日志 + 结果 JSON 的 detail 都记）。
+					const auto emitSim = [&](const std::string& a_tail) {
+						const std::string line = std::format("模拟招募：{}（0x{:08X}）｜{}",
+							simName.empty() ? std::string{ "?" } : simName, simRef, a_tail);
+						REX::INFO("船员探针 {}", line);
+						g_cur.crewReport += "船员探针 " + line + "\n";
+					};
+
+					if (!g_cur.crewSubmitted) {
+						// 引用可读性预检（与 Papyrus `Game.GetForm` 同源）—— 不可读直接跳过
+						// （用例编排应先把玩家传送到目标附近；跳过 = 用例断言会 FAIL 提醒）。
+						if (RE::TESForm::LookupByID(simRef) == nullptr) {
+							g_cur.crewSimDone = true;
+							g_cur.crewSimNote = "引用未加载 —— 跳过（未做写入）";
+							emitSim("引用未加载 —— 跳过（未做写入；先传送/靠近再试）");
+						} else {
+							std::string detail;
+							if (!Submit(Op::kCrewSimRecruit, simRef, 0, detail)) {
+								CompleteStep(false, std::format("模拟招募提交失败：{}", detail),
+									LogSince(g_cur.logMark, kEvidenceMaxLines));
+								return true;
+							}
+							g_cur.crewSubmitted = true;
+							return false;  // 等回执（下一 Tick 继续）
+						}
+					} else {
+						std::int32_t code = 0;
+						std::string detail;
+						const int rc = Poll(code, detail);
+						if (rc == 0) {
+							if (now - SubmittedAtMs() >= kCrewProbeAckTimeoutMs) {
+								Abandon("crew.probe 模拟招募等回执超时");
+								g_cur.crewSubmitted = false;
+								g_cur.crewSimDone = true;
+								g_cur.crewSimNote = std::format("等回执超时（{} ms）", kCrewProbeAckTimeoutMs);
+								emitSim(g_cur.crewSimNote);
+							} else {
+								return false;  // 继续等
+							}
+						} else if (rc < 0) {
+							CompleteStep(false, "命令通道不可用：" + detail,
+								LogSince(g_cur.logMark, kEvidenceMaxLines));
+							return true;
+						} else {
+							// rc == 1：回执到了。结果码 = 32 + 状态位（见 Papyrus op=8）。
+							g_cur.crewSubmitted = false;
+							g_cur.crewSimDone = true;
+							if (code >= 32) {
+								const unsigned mask = static_cast<unsigned>(code - 32);
+								const unsigned pre = mask & 1u, add = mask & 2u, rem = mask & 4u;
+								std::string verdict;
+								if (pre != 0) {
+									verdict = "前置已招募 —— 跳过写入（不动既有状态）";
+								} else if (add != 0 && rem == 0) {
+									verdict = "A 位随招募往返 0→1→0（A 判据成立）";
+								} else if (add == 0) {
+									verdict = "AddToAvailableCrew 未改变 A 位（A 判据不成立）";
+								} else {
+									verdict = "Remove 后仍 A=1 —— 未复原（状态可能残留）";
+								}
+								g_cur.crewSimNote = verdict;
+								emitSim(std::format("前置 A={}｜Add 后 A={}｜Remove 后 A={}｜判定：{}",
+									pre != 0 ? 1 : 0, add != 0 ? 1 : 0, rem != 0 ? 1 : 0, verdict));
+							} else {
+								g_cur.crewSimNote = std::format("失败（结果码 {}：{}）", code, ResultText(code));
+								emitSim(g_cur.crewSimNote);
+							}
+						}
+					}
+				}
+
 				// 全部处理完：汇总行（逐位行已在上面逐条打出）
+				//   ★★★ 第 156 轮：+直读对照段（直读到位数 / 对照位数 / 不一致数）与
+				//   模拟招募段（只在实际做过时出现 —— 不写 sim= 时汇总行保持原格式）。
 				const auto summary = std::format(
 					"汇总：{} 位｜Papyrus 读到 {} 位（A=1 {} / C=1 {} / P=1 {} / 已分配 {}）"
-					"｜招募任务：未开始 {} / 运行中 {} / 已完成 {} / 其它 {}",
+					"｜直读读到 {} 位（对照 {} 位 / 不一致 {} 位）"
+					"｜招募任务：未开始 {} / 运行中 {} / 已完成 {} / 其它 {}{}",
 					kCrewProbeCount, g_cur.crewRead, g_cur.crewA, g_cur.crewC, g_cur.crewP,
-					g_cur.crewAssign, g_cur.crewQNotStarted, g_cur.crewQRunning,
-					g_cur.crewQDone, g_cur.crewQOther);
+					g_cur.crewAssign, g_cur.crewDirectRead, g_cur.crewDirectPairs,
+					g_cur.crewMismatch, g_cur.crewQNotStarted, g_cur.crewQRunning,
+					g_cur.crewQDone, g_cur.crewQOther,
+					g_cur.crewSimNote.empty()
+						? std::string{}
+						: std::format("｜模拟招募：{}", g_cur.crewSimNote));
 				REX::INFO("船员探针 {}", summary);
 				CompleteStep(true, g_cur.crewReport + "船员探针 " + summary, {});
 				return true;
@@ -2272,9 +2417,15 @@ namespace SAQ::Test
 		//   ★★★ 第 155 轮（v71）：新 op `crew.probe`（可招募船员只读探针，docs/16 16.3）
 		//   —— 逐位读 24 位的 faction 三件套（Papyrus op=7）+ 招募任务状态（直读）
 		//   + 汇总行；引用未加载的位跳过（引擎限制）。
-		REX::INFO("harness：已启用（{} 个用例；驱动器 v71：新 op `crew.probe`（可招募船员只读探针"
-				  " —— 24 位逐位读 Papyrus faction 三件套 + DLL 直读招募任务状态；引用未加载的位"
-				  "跳过）；沿用以来的：v70 `ui.*` 遇到「桥没通」在步骤超时内自动重试"
+		//   ★★★ 第 156 轮（v72）：`crew.probe` 扩展 —— ③ 直读对照（与产品 kind=2 过滤
+		//   同一套 SAQ_Crew::ReadState；「对照=不一致」+ 汇总不一致数）+ ④ 可选
+		//   `sim=<FormID>` 模拟招募往返（Papyrus op=8；A 判据正样本复核，docs/16 16.8）。
+		REX::INFO("harness：已启用（{} 个用例；驱动器 v72：`crew.probe` 扩展 —— ③ 直读对照"
+				  "（与产品 kind=2 过滤同一套 SAQ_Crew::ReadState）+ ④ 可选 `sim=<FormID>`"
+				  " 模拟招募往返（Papyrus op=8：Add→读→Remove→读；A 判据正样本复核）"
+				  "；v71 新 op `crew.probe`（可招募船员只读探针 —— 24 位逐位读 Papyrus faction"
+				  " 三件套 + DLL 直读招募任务状态；引用未加载的位跳过）；沿用以来的：v70 `ui.*`"
+				  " 遇到「桥没通」在步骤超时内自动重试"
 				  "（菜单刚打开那一两拍，产品侧首次推送同样会失败）/ 清场延迟复查只在**真的看到"
 				  "并关掉星图**时才提前结束（关残留任务菜单不算 —— 22:52 会话 r62 的 ping 超时"
 				  "就是这么来的）/ 断言超时报文带「窗口/本步/用例」三个打点 / v69 用例解析失败"

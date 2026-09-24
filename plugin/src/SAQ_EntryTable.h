@@ -2,21 +2,25 @@
 // 本文件由 tools/esm/gen_entry_table.py 自动生成，请勿手改。
 //
 // 「无限任务入口」条目（AGENTS.md 需求 —— 无限生成任务本身不显示，但「接取入口」
-// 作为一条数据显示在列表里，点了就引导到它的位置）。两类：
+// 作为一条数据显示在列表里，点了就引导到它的位置）。三类：
 //   kind=0（任务板，13 条）：ACTIVATOR `MissionBoardConsole*`，名字「任务板 · <地点>」；
 //     ★★ 第 110 轮 +1：追踪者联盟总部（SFBGS003.esm · medium 档手工条目，见 EXTRA_ENTRIES）
 //        —— ★★★ 第 150 轮：它追加在**任务板段末尾**、与 12 条基础任务板连成一段
 //        （界面里紧挨其它「任务板 · <地点>」；此前排在表末尾 ⇒ 混进了「（可重复）…」堆）；
 //   kind=1（可重复 NPC，8 条）：贸易管理局商人 / 追踪者联盟探员（第 80 轮），
 //     名字自带「（可重复）」前缀 —— 数据 ref/repeatable_givers.json；
-//     ★★★ 第 150 轮：本表**行顺序 = 界面列表顺序**（DLL 按表追加 + 组内稳定排序）
-//       —— 段序固定为「任务板段 → 可重复 NPC 段」（main 有布局硬校验）。
+//   kind=2（可招募船员，24 条）：精英船员（`Crew_Elite_*`，第 156 轮），
+//     名字自带「（可招募）」前缀 —— 数据 ref/hirable_crew.json；
+//     3 位位置不适合导航（别名暂存格 / 运行时生成内景）⇒ 不配兜底（平时不可导航，
+//     界面照第 91 轮显示「（不可导航）」前缀）；
+//     ★★★ 第 150/156 轮：本表**行顺序 = 界面列表顺序**（DLL 按表追加 + 组内稳定排序）
+//       —— 段序固定为「任务板段 → 可重复 NPC 段 → 可招募船员段」（main 有布局硬校验）。
 //
 // 字段说明（★ 第 30 轮起，引导目标是**候选链**：DLL 依次 LookupByID 取第一个命中的）——
 //   refLocal   条目引用的记录号（任务板 ACTIVATOR / NPC 的 ACHR）—— 同时是界面条目的
 //              uID（运行期 FormID）。
 //   master     所属 master 下标（kQuestMasters[]；第 110 轮起含 SFBGS003.esm=medium）。
-//   persistent 条目引用自身是否**原生常驻**（20 条里只有阿基拉城任务板是）。
+//   persistent 条目引用自身是否**原生常驻**（45 条里只有阿基拉城任务板与船员瓦斯科是）。
 //   markerLocal ① 本插件（ESM 记录号：任务板 0x900~0x90A、NPC 0x90B~0x911）新建的
 //              **常驻 XMarker**，位置 = 条目坐标：常驻引用在 cell 未加载时依然存在
 //              ⇒ 任何位置都取得到 ⇒ 引导目标。外景条目（阿基拉城广场的探员）不建
@@ -27,7 +31,11 @@
 //              内景条目 = 同 cell 的原生常驻引用；外景条目 = 该 worldspace 的**世界级
 //              常驻引用**（`WRLD > WorldChildren > CellChildren > CellPersistent`）。
 //   kind       0 = 任务板（AS3 type 100，子项「前往任务板」）；
-//              1 = 可重复 NPC（AS3 type 101，子项「找他接活」+ 名字带「（可重复）」）。
+//              1 = 可重复 NPC（AS3 type 101，子项「找他接活」+ 名字带「（可重复）」）；
+//              2 = 可招募船员（AS3 type 102，子项「招募他作为船员」+ 名字带「（可招募）」。
+//                  ★ 第 156 轮起：DLL 对 kind=2 做 P/A 判据过滤 —— 引用可读时
+//                  「P=1 且 A=0」才显示（P=0 未解锁 / A=1 已招募 都隐藏；
+//                  引用未加载读不到 ⇒ 保守显示，见 SAQ.cpp::AppendEntryRows）。
 //   nameZh/En  列表里显示的名字（中英都推，AS3 按游戏语言挑）。
 //
 // 实机排查看 DLL 日志的「入口=…(可导航 N｜marker a 原板 b 兜底 c 不可用 d)」与
@@ -42,6 +50,7 @@ namespace SAQ
 	{
 		kEntryKindBoard = 0,        // 任务板（AS3 type 100）
 		kEntryKindRepeatNpc = 1,    // 提供无限任务的 NPC（AS3 type 101）
+		kEntryKindCrew = 2,         // ★ 第 156 轮：可招募船员（AS3 type 102）
 	};
 
 	struct StaticEntryInfo
@@ -79,6 +88,30 @@ namespace SAQ
 		{ 0x001d8bd1u, 0u, false, 0x0000090fu, 0x0024afd2u, 0x0024afd1u, 1u, "(Repeatable) Trackers Alliance Agent - Cydonia", "（可重复）追踪者联盟探员 · 赛多尼亚" },
 		{ 0x001d8bceu, 0u, false, 0x0000090eu, 0x0010cac4u, 0x0010cac5u, 1u, "(Repeatable) Trackers Alliance Agent - Neon", "（可重复）追踪者联盟探员 · 霓虹城" },
 		{ 0x001b20b3u, 0u, false, 0x0000090du, 0x001ebffdu, 0x001ebffbu, 1u, "(Repeatable) Trackers Alliance Agent - New Atlantis", "（可重复）追踪者联盟探员 · 新亚特兰蒂斯城" },
+		{ 0x001631c5u, 0u, false, 0x00000000u, 0x000ee079u, 0x000c8214u, 2u, "(Recruitable) Adoring Fan", "（可招募）铁杆粉丝" },
+		{ 0x00299f66u, 0u, false, 0x00000000u, 0x000bd68eu, 0x0028fe2eu, 2u, "(Recruitable) Amelia Earhart", "（可招募）阿梅莉亚·埃尔哈特" },
+		{ 0x0016b3d0u, 0u, false, 0x00000000u, 0x0016b3cfu, 0x0019a5adu, 2u, "(Recruitable) Andromeda Kepler", "（可招募）安德洛美达·开普勒" },
+		{ 0x001f0262u, 0u, false, 0x00000000u, 0x000c66a1u, 0x001d6ca4u, 2u, "(Recruitable) Autumn MacMillan", "（可招募）奥特姆·麦克米伦" },
+		{ 0x0020dc69u, 0u, false, 0x00000000u, 0x00000000u, 0x00000000u, 2u, "(Recruitable) Betty Howser", "（可招募）贝蒂·侯赛" },
+		{ 0x001cdafcu, 0u, false, 0x00000000u, 0x001a0d4bu, 0x000de768u, 2u, "(Recruitable) Dani Garcia", "（可招募）丹尼·卡尔西亚" },
+		{ 0x0022198cu, 0u, false, 0x00000000u, 0x00000000u, 0x00000000u, 2u, "(Recruitable) Erick Von Price", "（可招募）埃里克·冯·普莱斯" },
+		{ 0x0017a859u, 0u, false, 0x00000000u, 0x0017a856u, 0x001dc4b4u, 2u, "(Recruitable) Ezekiel", "（可招募）以西结" },
+		{ 0x00015064u, 0u, false, 0x00000000u, 0x00185a7bu, 0x00067069u, 2u, "(Recruitable) Gideon Aker", "（可招募）吉迪恩·艾克" },
+		{ 0x002b17c4u, 0u, false, 0x00000000u, 0x0026fd1cu, 0x0026ffa0u, 2u, "(Recruitable) Hadrian", "（可招募）哈德良" },
+		{ 0x0000563cu, 0u, false, 0x00000000u, 0x0001403au, 0x00018adeu, 2u, "(Recruitable) Heller", "（可招募）海勒" },
+		{ 0x001d898eu, 0u, false, 0x00000000u, 0x001bb12du, 0x0008cbd1u, 2u, "(Recruitable) Jessamine Griffin", "（可招募）杰萨敏·格弗林" },
+		{ 0x00005639u, 0u, false, 0x00000000u, 0x0001403au, 0x00018adeu, 2u, "(Recruitable) Supervisor Lin", "（可招募）林监工" },
+		{ 0x0017a858u, 0u, false, 0x00000000u, 0x0017a857u, 0x001dc4b4u, 2u, "(Recruitable) Lyle Brewer", "（可招募）莱尔·布鲁尔" },
+		{ 0x00015062u, 0u, false, 0x00000000u, 0x00286a53u, 0x001a0d48u, 2u, "(Recruitable) Marika Boros", "（可招募）玛丽卡·波罗斯" },
+		{ 0x000189b2u, 0u, false, 0x00000000u, 0x001af7dcu, 0x0021fe58u, 2u, "(Recruitable) Mathis Castillo", "（可招募）马西斯·卡斯蒂罗" },
+		{ 0x0016d16au, 0u, false, 0x00000000u, 0x0016d169u, 0x0026fabfu, 2u, "(Recruitable) Mickey Caviar", "（可招募）米奇·卡威亚" },
+		{ 0x0029c982u, 0u, false, 0x00000000u, 0x00000000u, 0x00000000u, 2u, "(Recruitable) Moara Otero", "（可招募）莫亚拉·奥泰罗" },
+		{ 0x001593f8u, 0u, false, 0x00000000u, 0x001593f9u, 0x000951f4u, 2u, "(Recruitable) Omari Hassan", "（可招募）奥马里·哈桑" },
+		{ 0x000c4632u, 0u, false, 0x00000000u, 0x001a0d48u, 0x001a0d4au, 2u, "(Recruitable) Rafael Aguerro", "（可招募）拉斐尔·阿盖罗" },
+		{ 0x001a0cb1u, 0u, false, 0x00000000u, 0x001a0d58u, 0x001593f9u, 2u, "(Recruitable) Rosie Tannehill", "（可招募）罗茜·泰诺希" },
+		{ 0x00015063u, 0u, false, 0x00000000u, 0x001a0d4au, 0x001a0d48u, 2u, "(Recruitable) Simeon Bankowski", "（可招募）西米恩·班科夫斯基" },
+		{ 0x00147954u, 0u, false, 0x00000000u, 0x00147957u, 0x002bab6au, 2u, "(Recruitable) Sophia Grace", "（可招募）索菲亚·格雷丝" },
+		{ 0x000057beu, 0u, true , 0x00000000u, 0x000a2566u, 0x0000543au, 2u, "(Recruitable) Vasco", "（可招募）瓦斯科" },
 	};
-	inline constexpr std::size_t kEntryTableSize = 21;
+	inline constexpr std::size_t kEntryTableSize = 45;
 }
