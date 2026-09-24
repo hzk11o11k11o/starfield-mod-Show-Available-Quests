@@ -11,10 +11,13 @@
 //      ⇒ A=1 = 曾经招募过 ⇒ 隐藏（已招募）。
 //
 //  为什么是 DLL 直读而不是 Papyrus 通道：菜单打开时 Papyrus 定时器冻结（第 27 轮定案）
-//  ⇒ 「开菜单当场读」只能走引擎调用。`Actor::IsInFaction(TESFaction*)` 是 Actor 的
-//  虚函数（commonlibsf vtable 第 175 条）—— **实机对照验证** = harness `crew.probe`
-//  同一会话里同时用 Papyrus op=7（研究用已验证读法）与这里的直读逐位比对（不一致
-//  会在产品行里带「对照=不一致」+ 用例反向断言）。
+//  ⇒ 「开菜单当场读」只能走引擎调用。`Actor::IsInFaction(TESFaction*)` 的位置
+//  **以实测为准 = vtable 槽 0x174**（第 157 轮修正 —— commonlibsf 的 Actor.h 标在
+//  0x175，比 1.16.244 实际多 1 槽；证据 = Papyrus native 实现虚调用 `[rax+0xBA0]`，
+//  见 SAQ_Crew.cpp 顶部注释与 docs/16 16.9）。直读实现带**函数头指纹校验**：
+//  换游戏版本 ⇒ 指纹不符 ⇒ 自动停用（保守放行）+ 一行 WARN。
+//  正确性验证 = harness `crew.probe` 同一会话里同时用 Papyrus op=7（官方同款读法）
+//  与这里的直读逐位比对（不一致会在产品行里带「对照=不一致」+ 用例反向断言）。
 //
 //  引擎限制（与 Papyrus `Game.GetForm` 同源）：非常驻引用在所在 cell 未加载时
 //  `LookupByID` 取不到 ⇒ readable = false ⇒ **保守放行（显示）**——判不了就不藏。
