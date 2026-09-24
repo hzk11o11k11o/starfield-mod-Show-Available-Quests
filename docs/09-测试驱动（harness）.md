@@ -1154,3 +1154,46 @@ if (line.find("harness：") != std::string::npos) { continue; }
 * 工作区 == 部署（DLL **1207808 B** / SHA256 `C3235C6F…C6795F1`；`SAQ_TestPlan.txt` 哈希一致）；
 * 待复跑 = 主计划 44 条（预期 **44/44**）；判据链照旧 = `check_results` + `log_hygiene`
   + `plan_regex_audit` + `verify --dev` + 离线层 5 步。
+
+## 十四·补三十八（第 155 轮 · 2026-09-24）：`crew.probe` 只读探针（可招募船员 faction 判据）—— 用例集 44 → **45**（驱动器 v71）
+
+> 背景：玩家提问「可以被招募为船员的有名字 NPC 能不能跟踪」⇒ 第 154 轮研究
+> （`docs/16`）结论「能」，剩一件事 = **「是否已招募」用什么判据**（决定「已招募 ⇒ 隐藏」
+> 能不能做）：faction 三件套成员状态（Papyrus）还是招募任务状态（DLL 直读）？
+> 本轮把它做成只读探针，用实机数据说话。
+
+### 1. 新 op `crew.probe`（只读；三条路拼一只探针）
+
+* **数据**（生成物 `plugin/src/SAQ_TestCrewProbe.h`，24 位）：
+  `tools/esm/gen_hirable_crew.py` 与入口数据 `ref/hirable_crew.json` 同一次扫描产出
+  （明细 = `docs/16` 16.6）；黄金快照 +2（19 件）。
+* **运行时读取（逐位；一位一阶段，每 Tick 推进）**：
+  1. DLL 侧 `LookupByID(放置引用)` 预检 —— 不可读 ⇒ 记「引用未加载」并跳过 Papyrus
+     （与 `Game.GetForm` 同源）；
+  2. 可读 ⇒ 提交 **Papyrus op=7**（`Actor.IsInFaction` 三件套 + `GetCrewAssignment`；
+     结果码 = `16 + 状态位`：bit0 AvailableCrew / bit1 CurrentCrew / bit2 PotentialCrew /
+     bit3 已分配）；单窗口 8000 ms、连续 2 位无回执 ⇒ 整步失败（防脚本僵死白跑 24 位）；
+  3. 每位顺带 DLL 直读**招募任务**运行时状态（`ReadQuestRuntimeState`，与产品同源 ——
+     任务状态不依赖引用加载，24/24 总有结果 = 判据主证据）。
+* **红线六**：逐位产品行 `船员探针 [i/24] 名字（0x…）｜Papyrus: …｜招募任务 …`
+  + 汇总行 `船员探针 汇总：24 位｜Papyrus 读到 N 位（A=1 … C=1 … P=1 … 已分配 …）｜招募任务：未开始 … 运行中 … 已完成 … 其它 …`；
+  结果进步骤 detail（结果 JSON 的硬证据）。
+* 步骤解析：`crew.probe [timeout=]`（默认总窗口 180 秒；用例写 90000 —— 24 位里只有
+  「引用已加载」的位需要 Papyrus 往返，正常几秒）。
+
+### 2. 用例 `r155_crew_probe`（只读纪律）
+
+* 步骤：`ping` → `crew.probe timeout=90000` → 断言；
+* 断言：① 汇总行（产品行前缀 `船员探针 汇总：24 位`，`scope=prev`）；
+  ② 三条**链路健康反向断言**（`assert.nolog`）：不许「失败（结果码 …）」/
+  「等回执超时」/「｜招募任务 表单取不到」（`scope=case`）；
+* **不断言 faction 具体值**（引用可加载性由玩家位置决定 —— 判读看日志）。
+
+### 3. 判据（本轮已做）与待实机
+
+* `verify --dev` **1082 行 / 2 MISS** —— 两条 MISS =「MO2 部署副本与工作区一致」
+  （部署时游戏正在运行、DLL 被占用；关游戏重跑部署即清零）；新增 10 条船员探针特征全 OK
+  （DLL 6 + PEX 3 + 计划 1 + 反向检查 v70）；
+* 离线层 5 步全过（含快照 19 件）；
+* 待实机：主计划 **45 条**（44 + r155）—— 判读 = 已招募（如 Vasco）vs 未招募对比
+  A/C/P 位与任务状态谁在两者间有差异（差异项 = 「已招募 ⇒ 隐藏」判据）。

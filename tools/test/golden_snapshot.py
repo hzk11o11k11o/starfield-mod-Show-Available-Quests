@@ -45,6 +45,11 @@ ITEMS: list[tuple[str, str]] = [
     # ★★ 第 80 轮：提供无限任务的 NPC 入口（贸易管理局商人 / 追踪者联盟探员；
     #   gen_repeatable_givers.py —— 是 entry_targets / board_markers 的上游数据源）
     ("ref/repeatable_givers.json", "可重复任务 NPC 入口（gen_repeatable_givers.py）"),
+    # ★★★ 第 155 轮（可招募船员跟踪研究 · docs/16）：可招募船员入口数据
+    #   （gen_hirable_crew.py，与 repeatable_givers 同构；未来并入 gen_entry_table.py）
+    #   + harness 只读探针 `crew.probe` 的数据表（仅开发构建 include）。
+    ("ref/hirable_crew.json", "可招募船员入口数据（gen_hirable_crew.py）"),
+    ("plugin/src/SAQ_TestCrewProbe.h", "可招募船员探针表（gen_hirable_crew.py，harness 用）"),
     ("ref/entry_targets.json", "任务板入口表（gen_entry_table.py）"),
     ("ref/board_markers.json", "新建常驻 marker（create_board_markers.py）"),
     # ★★ 第 74 轮：同伴好感度任务（入口固定显示 + 后续启动边；gen_companion_quests.py）
@@ -133,6 +138,13 @@ def summarize(rel: str, path: pathlib.Path) -> str:
                 # ★★ 第 80 轮：可重复任务 NPC —— 条数 + 内景建档数（外景的不建 marker）
                 n_int = sum(1 for g in obj if g.get("interior"))
                 return f"NPC {len(obj)}（内景建档 {n_int} / 外景 {len(obj) - n_int}）"
+            if rel.endswith("hirable_crew.json") and isinstance(obj, dict) and "npcs" in obj:
+                # ★★★ 第 155 轮：可招募船员 —— 条数 + 不可导航数 + 招募任务齐全数
+                #   （后两个数字变了要么是有意扩充，要么是数据管线回归 —— docs/16）
+                npcs = obj["npcs"]
+                n_nonav = sum(1 for r in npcs if r.get("noNav"))
+                n_q = sum(1 for r in npcs if r.get("recruitQuest"))
+                return f"船员 {len(npcs)}（不可导航 {n_nonav} / 招募任务 {n_q}）"
             if rel.endswith("repeatable_quests.json") and isinstance(obj, list):
                 # ★★ 第 89 轮：可重复任务 —— 条数 + 有引导候选数（导航能力的第一眼证据）
                 # ★★ 第 90 轮：+「无固定接取点」（随机太空遭遇）条数 —— 它们的说明文案
@@ -178,6 +190,11 @@ def summarize(rel: str, path: pathlib.Path) -> str:
             return f"条目 {len(rows)} / 第一条 {first} / 末尾可重复 {tail}"
         if path.suffix.lower() == ".h":
             text = path.read_text(encoding="utf-8-sig")
+            if rel.endswith("SAQ_TestCrewProbe.h"):
+                # ★★★ 第 155 轮：探针表大小是 `sizeof(...)/sizeof(...)` 形式（防手改计数），
+                #   摘要改数表行（`{ 0x…`）—— 数字变了要么是有意扩充、要么是数据回归。
+                n = len(re.findall(r"(?m)^\s*\{ 0x", text))
+                return f"船员探针 {n}"
             names = {
                 "kQuestTableSize": "任务",
                 "kGuideCandidateCount": "候选",

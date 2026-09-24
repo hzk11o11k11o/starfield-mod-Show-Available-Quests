@@ -274,6 +274,22 @@
           0x01114EC2=可得`）⇒ **产品侧零缺陷**，两处都在 harness/用例侧。
           本脚本检查：dev 特征串 `引导探针 {}`（发布反向）+ r146 两条断言按新格式 +
           反向检查（旧断言不得残留）。
+  第 155 轮（**可招募船员跟踪研究 · 第二阶段** —— `gen_hirable_crew.py` 入口数据 +
+          只读 faction 判据探针）：
+          ① 数据：新工具 `tools/esm/gen_hirable_crew.py`（仿 gen_repeatable_givers.py）
+             扫 Starfield.esm → `ref/hirable_crew.json`（24 位可招募船员的放置引用 /
+             两档常驻兜底候选 / crew faction 三件套 / 招募任务 / 不可导航标记；
+             口径 = 第 154 轮研究，docs/16）+ **harness 探针数据头**
+             `plugin/src/SAQ_TestCrewProbe.h`（仅 SAQ_Test.cpp include）；
+          ② 探针：新 op `crew.probe`（驱动器 v71）—— 逐位读 24 位的
+             crew faction 三件套 + 已分配（Papyrus op=7 `Actor.IsInFaction` ——
+             引用未加载的位跳过）+ 招募任务运行时状态（DLL 直读）；
+          ③ 用例：`r155_crew_probe`（只读：不 reset / 不推 stage / 不传送；
+             断言 = 汇总行产品日志 + 三条反向检查）。
+          本脚本检查：dev 特征串（`crew.probe` op 名 / 逐位行格式 / 汇总行格式 /
+          数据表样本名「林监工」「瓦斯科」）+ PEX 三条（船员探针 Trace / IsInFaction /
+          GetCrewAssignment）+ 驱动器版本串 v71 + 反向检查（v70 不得残留）+
+          用例计划（case 在 + 步骤 + 汇总断言 + 三条反向断言）。
 
 用法：python tools/ui/verify_saq_build.py [--release|--dev]
 """
@@ -571,7 +587,17 @@ HARNESS_STRINGS = (
     #      （星图 = 暂停菜单 ⇒ 脚本定时器冻结 ⇒ ping 无回执）。修法：只有**真的看到并
     #      关掉星图**才提前结束窗口；关掉星图后再留一段（kInterCaseDelayMs）才开下一条。
     ("harness 驱动器版本串",
-     "驱动器 v70：`ui.*` 遇到「桥没通」在步骤超时内自动重试"),
+     "驱动器 v71：新 op `crew.probe`"),
+    # ★★★ 第 155 轮（可招募船员跟踪研究 · docs/16 16.3）：新 op `crew.probe` ——
+    #   24 位可招募船员的**只读**探针（Papyrus faction 三件套 + DLL 直读招募任务状态）。
+    #   逐位行 / 汇总行 / 数据表样本名都进 dev DLL ⇒ 发布构建必须一条都不见
+    #   （SAQ_Test.cpp 不编译，本表反向检查覆盖）。
+    ("harness 船员探针 op 名", "crew.probe"),
+    ("harness 船员探针逐位行格式", "｜Papyrus: "),
+    ("harness 船员探针汇总行格式", "｜招募任务：未开始 "),
+    ("harness 船员探针数据表(样本名1)", "林监工"),
+    ("harness 船员探针数据表(样本名2)", "瓦斯科"),
+    ("harness 船员探针跳过未加载文案", "引用未加载（A/C/P 读不到）"),
     ("harness ui 桥没通重试文案", "桥没通 —— 等界面桥就绪后重试"),
     ("harness 清场延迟复查窗口开启文案", "延迟复查窗口开启"),
     ("harness 清场时星图已开（短窗口）文案", "星图已在清场时关掉，只等关闭生效"),
@@ -1622,9 +1648,11 @@ def main() -> int:
                     #   带的是「沿用：v66 …」而不是「驱动器 v66 …」（同一条判据的延伸）。
                     "驱动器 v66".encode() not in blob and
                     # ★★ 第 69 轮：v68 同理（新版串里带的是「沿用 v68 …」）。
-                    "驱动器 v68".encode() not in blob)
+                    "驱动器 v68".encode() not in blob and
+                    # ★★★ 第 155 轮：v70 同理（新版串里带的是「v70 `ui.*` …」）。
+                    "驱动器 v70".encode() not in blob)
             print(("OK  " if gone else "MISS") +
-                  " DLL · 旧驱动器版本串 v57~v63/v66/v68 已替换(反向检查)")
+                  " DLL · 旧驱动器版本串 v57~v63/v66/v68/v70 已替换(反向检查)")
             all_ok &= gone
             # ★★ 第 54 轮：用例计划本身也该被查 —— 历史判据（第 26/44~48 轮）落成用例后，
             #   最怕的是「源码改了没部署」或「用例被误删」。这里只查**开发模式**：
@@ -1693,6 +1721,9 @@ def main() -> int:
                             # ★★★★★★ 第 146 轮（DLC world 级常驻兜底收口）：VKaiZ02
                             #   只读候选探针（4 NPC + 第 5 条 world 级兜底）。
                             "r146_vkaiz02_fb",
+                            # ★★★ 第 155 轮（可招募船员跟踪研究 · docs/16 16.3）：
+                            #   24 位可招募船员只读探针（Papyrus faction + 招募任务状态）。
+                            "r155_crew_probe",
                             "r62_reload_observe"):
                     all_ok &= check(f"用例计划 · [case:{cid}]", plan_text.encode(),
                                     f"[case:{cid}]".encode())
@@ -1719,6 +1750,21 @@ def main() -> int:
                 print(("MISS " if bad_r146_old else "OK  ") +
                       " 用例计划 · r146 旧断言不再把候选 [1] 名字当任务名（反向检查，第 147 轮）")
                 all_ok &= not bad_r146_old
+                # ★★★ 第 155 轮（可招募船员 faction 判据只读探针）：步骤 + 断言形状 ——
+                #   ① 步骤在（`crew.probe timeout=` 写法：只读探针跑全表 24 位）；
+                #   ② 汇总行断言必须带**产品行前缀**（`船员探针 汇总：24 位` —— 红线六，
+                #      第 147 轮 guide.probe 踩过的坑：探针不打产品行 ⇒ 断言必然假 FAIL）；
+                #   ③ 三条反向断言（失败码 / 等回执超时 / 招募任务表单取不到）= 链路健康判据。
+                all_ok &= check("用例计划 · r155 船员探针步骤", plan_text.encode(),
+                                "crew.probe timeout=".encode())
+                all_ok &= check("用例计划 · r155 汇总行断言（产品行前缀）", plan_text.encode(),
+                                "assert.log 船员探针 汇总：24 位".encode())
+                all_ok &= check("用例计划 · r155 链路健康反向断言（失败码）", plan_text.encode(),
+                                "assert.nolog 船员探针 .*失败（结果码".encode())
+                all_ok &= check("用例计划 · r155 链路健康反向断言（等回执超时）", plan_text.encode(),
+                                "assert.nolog 船员探针 .*等回执超时".encode())
+                all_ok &= check("用例计划 · r155 招募任务表单反向断言", plan_text.encode(),
+                                "assert.nolog 船员探针 .*｜招募任务 表单取不到".encode())
                 # ★★★ 第 98 轮：两条 DLC 链式用例的断言形状（防被改回「点名一条」
                 #   或写死运行期 FormID —— 六条里任意一条命中即可；ID 用 `[0x` 通配）。
                 #   ★ 第 99 轮：名字修正（「狂热逾界」「发掘过去」—— 旧版手打成了
@@ -2844,6 +2890,12 @@ def main() -> int:
         all_ok &= check("PEX · 写侧-完成", blob, b"CompleteQuest")
         all_ok &= check("PEX · 写侧-推阶段", blob, b"SetStage")
         all_ok &= check("PEX · 写侧-传送", blob, b"MoveTo")
+        # ★★★ 第 155 轮（可招募船员跟踪研究 · docs/16 16.3）：op=7 —— **只读**探针，
+        #   读 actor 的 crew 状态位（faction 三件套 IsInFaction + GetCrewAssignment）。
+        #   与本区其它条目同源：只有 DLL 主动写通道时才起作用（发布版无调用路径）。
+        all_ok &= check("PEX · 船员探针 Trace 文案", blob, "船员探针：状态位=".encode())
+        all_ok &= check("PEX · 船员探针-成员查询 API", blob, b"IsInFaction")
+        all_ok &= check("PEX · 船员探针-分配查询 API", blob, b"GetCrewAssignment")
         # 反向检查：第 40 轮把「地点自己没有行星，改用父地点」并入候选链诊断，旧串不应再出现
         gone = "地点自己没有行星，改用父地点".encode() not in blob
         print(("OK  " if gone else "MISS") + " PEX · 旧父地点兜底文案已替换(反向检查)")

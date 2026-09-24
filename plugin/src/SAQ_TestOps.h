@@ -49,6 +49,15 @@ namespace SAQ::Test
 		kQuestStage = 4,
 		kQuestComplete = 5,
 		kTeleport = 6,
+		// ★★★ 第 155 轮（可招募船员跟踪研究 · docs/16 16.3）：**只读** op ——
+		//   读一个 actor 的 crew 状态位（Papyrus `Actor.IsInFaction` 三件套 + 已分配），
+		//   结果码 = 16 + 状态位（bit0 AvailableCrew / bit1 CurrentCrew / bit2 PotentialCrew /
+		//   bit3 已分配）；失败 = 1（引用取不到）/ 2（不是 Actor）。
+		//   为什么走 Papyrus 而不是 DLL 直读：actor 的 faction 成员状态没有便宜、
+		//   已验证的引擎读法（IsInFaction 是 Actor 的虚函数，偏移未验证 —— 通则
+		//   「commonlibsf 偏移不可信」）；而 Papyrus 语言级 API 是本项目已验证的
+		//   「零 RE 工作」路线（第 49 轮起写侧就这么做，这里只是把它用于读）。
+		kCrewFaction = 7,
 	};
 
 	const char* OpName(Op a_op);

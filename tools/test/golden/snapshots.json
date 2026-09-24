@@ -21,6 +21,16 @@
       "sha256": "8a97ec5a3de02e8f0a48828b22c1878db3cfcced19bc78d434a5af1f6e24a6dd",
       "summary": "NPC 8（内景建档 7 / 外景 1）"
     },
+    "ref/hirable_crew.json": {
+      "desc": "可招募船员入口数据（gen_hirable_crew.py）",
+      "sha256": "5225cfcdeff1f3759c3e312f60ba21bf1d06c63ab21a8003d0403ed6e1dcf3ab",
+      "summary": "船员 24（不可导航 3 / 招募任务 24）"
+    },
+    "plugin/src/SAQ_TestCrewProbe.h": {
+      "desc": "可招募船员探针表（gen_hirable_crew.py，harness 用）",
+      "sha256": "b13a58090675181dffa3ca9d42dc8c67cd1ff8ce6a22c8453a26d5d2fef0ae8c",
+      "summary": "船员探针 24"
+    },
     "ref/entry_targets.json": {
       "desc": "任务板入口表（gen_entry_table.py）",
       "sha256": "c102e26ed32c338c0ac679619e568a03a0346c462149cae9d14ae867b1929185",

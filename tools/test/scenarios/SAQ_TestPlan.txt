@@ -1738,3 +1738,35 @@ step = assert.log 推送成功 scope=prev timeout=12000
 step = wait 2500
 step = assert.nolog UI 通道不可用 scope=case timeout=1000
 step = menu.close
+
+; ----------------------------------------------------------------------------
+;  用例：第 155 轮 —— **可招募船员 faction 判据只读探针**（`docs/16` 16.3）
+;
+;  背景（玩家提问）：可以被招募为船员的有名字 NPC 能不能跟踪？第 154 轮研究
+;  （`docs/16`）结论：24 位可招募船员（EDID 前缀 `Crew_Elite_*`；排除模板）数据齐备
+;  —— 每人 1 处固定放置引用 + 1 条招募载体任务 `CREW_EliteCrew_*` + crew faction
+;  三件套（`AvailableCrewFaction` 0x00014314 / `CurrentCrewFaction` 0x00014312 /
+;  `PotentialCrewFaction` 0x000143A2）。尚待回答的问题 = **「是否已招募」用什么判据**
+;  （决定「已招募 ⇒ 隐藏」能不能做）：faction 成员状态（Papyrus 只读）还是招募任务
+;  状态（DLL 直读，与产品同一套 ReadQuestRuntimeState）？本用例把两者一起读出来，
+;  用实机数据说话 —— Lin 是对照组（无三件套、主线剧情加入）。
+;
+;  判据（**只读**：不 reset / 不推 stage / 不传送、不改任何游戏状态）：
+;    ① `crew.probe` 打出 24 行 `船员探针 [i/24] …` + 一行 `船员探针 汇总：…`；
+;    ② 探针链路健康：没有「失败（结果码 …）」/「等回执超时」；
+;    ③ 招募任务状态每行都有结果（任务状态不依赖引用加载 —— 不许「｜招募任务 表单取不到」）；
+;       faction 位只在「引用已加载」时可读（玩家当前位置决定，不断言具体值 —— 判读看日志）。
+;  ★ 怎么用这份数据：找一名**已招募**的船员（如开局就有的 Vasco）与一名**未招募**的
+;    对比 —— A/C/P 位与任务状态谁在两者之间有差异，谁就是「已招募」的判据。
+; ----------------------------------------------------------------------------
+[case:r155_crew_probe]
+desc = 第 155 轮：可招募船员 faction 判据只读探针（24 位 faction 三件套 + 招募任务状态）
+step = note === 预热：命令通道（探针的 faction 位走 Papyrus op=7，需要通道就绪）===
+step = ping
+step = note === 只读探针：24 位逐位读（引用已加载的位才有 faction 位；任务状态 24/24 都有）===
+step = crew.probe timeout=90000
+step = assert.log 船员探针 汇总：24 位 scope=prev timeout=120000
+step = note === 反向检查：探针链路必须健康（不许失败码 / 超时；任务表单必须齐）===
+step = assert.nolog 船员探针 .*失败（结果码 scope=case timeout=1000
+step = assert.nolog 船员探针 .*等回执超时 scope=case timeout=1000
+step = assert.nolog 船员探针 .*｜招募任务 表单取不到 scope=case timeout=1000

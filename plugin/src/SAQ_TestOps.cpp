@@ -128,6 +128,7 @@ namespace SAQ::Test
 		case Op::kQuestStage: return "推阶段(SetStage)";
 		case Op::kQuestComplete: return "完成(CompleteQuest)";
 		case Op::kTeleport: return "传送玩家(MoveTo)";
+		case Op::kCrewFaction: return "船员状态(Papyrus 只读)";
 		default: return "None";
 		}
 	}

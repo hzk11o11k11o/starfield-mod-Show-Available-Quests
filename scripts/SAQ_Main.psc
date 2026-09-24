@@ -709,6 +709,9 @@ EndFunction
 ;
 ;    0 = 成功 / 1 = 表单取不到（含非常驻引用未加载）/ 2 = 表类型不对 / 3 = 执行异常
 ;    4 = 未知操作码 / 5 = 通道未就绪（ESM 缺 GLOB 或 harness 开关关着）
+;    ★★ 第 155 轮：op=7（船员探针，只读）改用「16 + 状态位」编码
+;       （bit0 AvailableCrew / bit1 CurrentCrew / bit2 PotentialCrew / bit3 已分配；
+;        失败仍是 1/2 —— 见 ProcessTestCommand 的 op==7 分支）。
 ; ============================================================================
 
 ; 取测试通道的 8 条 GLOB（只做一次）。旧 ESM（没有这套记录）⇒ 返回 False、整套静默关闭。
@@ -817,6 +820,43 @@ Function ProcessTestCommand()
 		Else
 			player.MoveTo(target)
 			cmdNote = "MoveTo " + FormText(target) + "（cell=" + FormText(target.GetParentCell()) + "）"
+		EndIf
+	ElseIf op == 7
+		; ★★★ 第 155 轮（可招募船员跟踪研究 · docs/16 16.3）：**只读**探针 ——
+		;   读一个 actor 的 crew 状态位（DLL 侧 `crew.probe` 逐位驱动，见 SAQ_Test.cpp）。
+		;
+		;   为什么需要：要验证「已招募 ⇒ 隐藏」的判据（faction 三件套成员状态 /
+		;   招募任务状态）。faction 是 actor 实例状态，只有 Papyrus 的
+		;   `Actor.IsInFaction` 是已验证的读法（DLL 直读要碰未验证的虚表偏移）。
+		;
+		;   结果码 = 16 + 状态位（bit0 AvailableCrewFaction / bit1 CurrentCrewFaction /
+		;   bit2 PotentialCrewFaction / bit3 已分配（GetCrewAssignment 非空））；
+		;   失败 = 1（引用取不到 —— 非常驻引用所在 cell 没加载）/ 2（不是 Actor）。
+		;   本分支**不写任何游戏状态**（只读 + 一行 Trace）。
+		;   ★ faction FormID 是 Starfield.esm 的记录号（主数据永远 index 0，稳定）。
+		Actor probeActor = Game.GetForm(fid) as Actor
+		If probeActor == None
+			result = 1
+			cmdNote = "船员探针：引用取不到 / 不是 Actor（FormID=" + fid + "；非常驻引用可能需要靠近加载）"
+		Else
+			Faction crewAvail = Game.GetForm(0x00014314) as Faction
+			Faction crewCur = Game.GetForm(0x00014312) as Faction
+			Faction crewPot = Game.GetForm(0x000143A2) as Faction
+			Int crewMask = 0
+			If crewAvail != None && probeActor.IsInFaction(crewAvail)
+				crewMask += 1
+			EndIf
+			If crewCur != None && probeActor.IsInFaction(crewCur)
+				crewMask += 2
+			EndIf
+			If crewPot != None && probeActor.IsInFaction(crewPot)
+				crewMask += 4
+			EndIf
+			If probeActor.GetCrewAssignment() != None
+				crewMask += 8
+			EndIf
+			result = 16 + crewMask
+			cmdNote = "船员探针：状态位=" + crewMask + "（1=AvailableCrew 2=CurrentCrew 4=PotentialCrew 8=已分配；只读）"
 		EndIf
 	Else
 		result = 4

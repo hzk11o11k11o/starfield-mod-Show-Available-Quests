@@ -17,7 +17,9 @@
 #include "SAQ_Guide.h"       // Guide::EnsureChannel（入口 marker 的运行期前缀）
 #include "SAQ_Masters.h"     // Masters::MakeFormID（「master + 记录号」→ 运行期 FormID）
 #include "SAQ_QuestCond.h"   // ★ 第 101 轮补丁：ProbeQuestStages（quest.probe 只读探针）
+#include "SAQ_QuestState.h"  // ★★★ 第 155 轮：crew.probe 读招募任务的运行时状态
 #include "SAQ_QuestTable.h"  // 静态任务表（`~0x…` = 记录号，按加载顺序解析成运行期 FormID）
+#include "SAQ_TestCrewProbe.h"  // ★★★ 第 155 轮：crew.probe 的 24 位可招募船员数据（生成物）
 
 #include "RE/T/TESForm.h"
 #include "RE/U/UI.h"
@@ -114,6 +116,15 @@ namespace SAQ::Test
 		constexpr std::uint64_t kReadyCheckIntervalMs = 500;
 		constexpr std::size_t   kEvidenceMaxLines = 60;
 
+		// ★★★ 第 155 轮（可招募船员跟踪研究 · docs/16 16.3）：`crew.probe` 的窗口 ——
+		//   24 位里只有「引用已加载」的位需要 Papyrus 往返（0.5 秒脚本节拍 + 回执），
+		//   其余位 DLL 侧判定不可读直接跳过（与 Papyrus Game.GetForm 同源）⇒ 正常几秒
+		//   跑完；给 3 分钟兜住最坏情况（每位最多 kCrewProbeAckTimeoutMs，
+		//   连续 kCrewProbeMaxTimeouts 位无回执立刻判失败 —— 防脚本僵死时白跑 24 位）。
+		constexpr std::uint64_t kCrewProbeTotalTimeoutMs = 180000;
+		constexpr std::uint64_t kCrewProbeAckTimeoutMs = 8000;
+		constexpr int           kCrewProbeMaxTimeouts = 2;
+
 		std::uint64_t NowMs()
 		{
 			return ::GetTickCount64();
@@ -138,6 +149,7 @@ namespace SAQ::Test
 			kGuideProbe,   // ★ 第 60 轮：候选可得性探针（只读，见 ProbeGuideCandidates）
 			kQuestProbe,   // ★★ 第 101 轮补丁：quest.probe —— 直读 IsStageDone（只读，见 ProbeQuestStages）
 			kInfoProbe,    // ★★★ 第 106 轮：info.probe —— INFO 门槛 OR 组探针（只读，见 ProbeInfoGates）
+			kCrewProbe,    // ★★★ 第 155 轮：crew.probe —— 可招募船员只读探针（faction + 招募任务）
 			kUiResearch,   // ★★★ 第 117 轮：ui.research —— GFx 注入能力探针（见 ResearchGfxCapabilities）
 			kUiInject,     // ★★★ 第 133 轮：ui.inject —— 数据注入 PoC（见 SAQ_UiInject.h）
 			kUiMode,       // ★★★ 第 138 轮：ui.mode —— 运行期强制 UI 形态（隔离探针/产品路径）
@@ -277,6 +289,22 @@ namespace SAQ::Test
 			// ★★ 第 83 轮：`ui.*` 遇到「桥没通」时的重试节流（见 kUi 分支）——
 			//   桥解析（EnsureResolved）不便宜，别每帧都试。
 			std::uint64_t uiRetryAtMs{};
+			// ★★★ 第 155 轮：`crew.probe` 的逐位推进状态（见 kCrewProbe 分支）——
+			//   一位一个阶段：未提交 ⇒ 预检引用可读性 / 提交 Papyrus；已提交 ⇒ 等回执。
+			std::size_t   crewIndex{};        // 下一位要处理的船员下标（== 表长时收尾）
+			bool          crewSubmitted{};    // 当前位是否已提交 Papyrus 命令（等回执中）
+			int           crewTimeouts{};     // 连续「无回执」计数（防脚本僵死白跑 24 位）
+			std::string   crewReport;         // 累积的逐位报告（进步骤 detail / 结果 JSON）
+			// 收尾汇总用的统计（Papyrus 读到位数 / A·C·P·分配 各 1 数 / 任务状态分布）
+			std::size_t   crewRead{};
+			std::size_t   crewA{};
+			std::size_t   crewC{};
+			std::size_t   crewP{};
+			std::size_t   crewAssign{};
+			std::size_t   crewQNotStarted{};
+			std::size_t   crewQRunning{};
+			std::size_t   crewQDone{};
+			std::size_t   crewQOther{};
 		};
 		StepState g_cur;
 
@@ -683,6 +711,25 @@ namespace SAQ::Test
 				const auto itoks = SplitWs(rest);
 				if (itoks.empty() || !parseFormIDToken(itoks[0], a_step.formId)) {
 					a_error = "需要 <记录号>（如 info.probe 0x001C7185）";
+					return false;
+				}
+			} else if (op == "crew.probe") {
+				// ★★★ 第 155 轮（可招募船员跟踪研究 · docs/16 16.3）：`crew.probe` ——
+				//   **只读**探针：逐位读 24 位可招募船员（数据表 = 生成物
+				//   SAQ_TestCrewProbe.h）的：
+				//     ① crew faction 三件套成员状态 + 已分配（Papyrus op=7，
+				//        `Actor.IsInFaction` —— 需要引用已加载；引用没加载的位跳过）；
+				//     ② 招募载体任务 CREW_EliteCrew_* 的运行时状态（DLL 直读 ——
+				//        不依赖引用加载，24/24 总有结果 ⇒ 判据的主证据）。
+				//   用途：验证「已招募 ⇒ 隐藏」的判据（faction vs 任务状态，哪个可靠）。
+				//   无参数（始终全表）；支持 `timeout=` 覆盖默认总窗口（见下方常量）。
+				a_step.kind = Kind::kCrewProbe;
+				rest = ExtractTimeout(rest, a_step.timeoutMs);
+				if (a_step.timeoutMs == kDefaultStepTimeoutMs) {
+					a_step.timeoutMs = kCrewProbeTotalTimeoutMs;
+				}
+				if (!Trim(rest).empty()) {
+					a_error = "不接受参数（始终全表 24 位；可选 timeout=）";
 					return false;
 				}
 			} else if (op == "ui.research") {
@@ -1424,6 +1471,145 @@ namespace SAQ::Test
 				return true;
 			}
 
+			case Kind::kCrewProbe: {
+				// ★★★ 第 155 轮（可招募船员跟踪研究 · docs/16 16.3）：**只读**探针 ——
+				//   逐位读 24 位可招募船员（表 = SAQ_TestCrewProbe.h 生成物）：
+				//     ① crew faction 三件套成员状态 + 已分配（Papyrus op=7 的
+				//        `Actor.IsInFaction` / `GetCrewAssignment` —— 引用没加载就读不到，
+				//        跳过该位；这是引擎限制，如实记录）；
+				//     ② 招募载体任务 CREW_EliteCrew_* 的运行时状态（DLL 直读 ——
+				//        不依赖引用加载，24/24 总有结果 ⇒ 判据的主证据）。
+				//   为什么这样配对：判据「已招募 ⇒ 隐藏」的候选来源 = faction 状态或
+				//   任务状态，实机数据说话（faction 只有站在附近才读得到）。
+				//   红线六（第 104 轮）：逐位行 + 汇总行都打**产品日志**（assert.log
+				//   只认产品行，LogFind 跳过一切含 `harness：` 的行）。
+				//   时序：命令只在菜单关着时被脚本消化（第 27 轮定案）⇒ 开着先请求关闭。
+				if (a_menuOpen) {
+					std::string detail;
+					SetMenuOpen(false, detail);
+					return false;
+				}
+				if (now >= g_cur.deadlineMs) {
+					timeoutFail("船员探针没有跑完",
+						std::format("已处理 {}/{} 位；连续无回执 {} 次",
+							g_cur.crewIndex, kCrewProbeCount, g_cur.crewTimeouts));
+					return true;
+				}
+
+				// 逐位报告的一行（产品日志 + 结果 JSON 的 detail 累积）。
+				auto emit = [&](std::size_t a_idx, const std::string& a_papyrus, bool a_read,
+								unsigned a_mask) {
+					const auto& info = kCrewProbeTable[a_idx];
+					const auto* q = RE::TESForm::LookupByID(info.questForm);
+					std::string qt;
+					if (q == nullptr) {
+						qt = "表单取不到";
+						++g_cur.crewQOther;
+					} else {
+						const auto st = ReadQuestRuntimeState(q);
+						qt = Describe(st);
+						if (!st.readOk) {
+							++g_cur.crewQOther;
+						} else if (st.completed) {
+							++g_cur.crewQDone;
+						} else if (st.running) {
+							++g_cur.crewQRunning;
+						} else if (!st.started) {
+							++g_cur.crewQNotStarted;
+						} else {
+							++g_cur.crewQOther;
+						}
+					}
+					if (a_read) {
+						++g_cur.crewRead;
+						g_cur.crewA += (a_mask & 1u) ? 1 : 0;
+						g_cur.crewC += (a_mask & 2u) ? 1 : 0;
+						g_cur.crewP += (a_mask & 4u) ? 1 : 0;
+						g_cur.crewAssign += (a_mask & 8u) ? 1 : 0;
+					}
+					std::string line = std::format("[{}/{}] {}（0x{:08X}）｜Papyrus: {}｜招募任务 {}",
+						a_idx + 1, kCrewProbeCount, info.nameZh, info.refForm, a_papyrus, qt);
+					REX::INFO("船员探针 {}", line);
+					g_cur.crewReport += "船员探针 " + line + "\n";
+				};
+
+				while (g_cur.crewIndex < kCrewProbeCount) {
+					const auto idx = g_cur.crewIndex;
+					const auto& info = kCrewProbeTable[idx];
+					if (!g_cur.crewSubmitted) {
+						// 引用可读性预检（与 Papyrus `Game.GetForm` 同源：非常驻引用在
+						// 所在 cell 未加载时取不到）—— 不可读就不必走 Papyrus（省一次往返）。
+						if (RE::TESForm::LookupByID(info.refForm) == nullptr) {
+							emit(idx, "引用未加载（A/C/P 读不到）", false, 0);
+							++g_cur.crewIndex;
+							continue;
+						}
+						std::string detail;
+						if (!Submit(Op::kCrewFaction, info.refForm, 0, detail)) {
+							CompleteStep(false,
+								std::format("提交（{}）失败：{}", info.nameZh, detail),
+								LogSince(g_cur.logMark, kEvidenceMaxLines));
+							return true;
+						}
+						g_cur.crewSubmitted = true;
+						return false;  // 等回执（下一 Tick 继续）
+					}
+					// 已提交：等回执
+					std::int32_t code = 0;
+					std::string detail;
+					const int rc = Poll(code, detail);
+					if (rc == 0) {
+						if (now - SubmittedAtMs() >= kCrewProbeAckTimeoutMs) {
+							Abandon("crew.probe 等回执超时");
+							emit(idx, std::format("等回执超时（{} ms）", kCrewProbeAckTimeoutMs), false, 0);
+							g_cur.crewSubmitted = false;
+							++g_cur.crewIndex;
+							if (++g_cur.crewTimeouts >= kCrewProbeMaxTimeouts) {
+								CompleteStep(false,
+									std::format("连续 {} 位没有回执（脚本僵死？）—— 已中止（明细见 detail）",
+										g_cur.crewTimeouts),
+									LogSince(g_cur.logMark, kEvidenceMaxLines));
+								return true;
+							}
+							continue;
+						}
+						return false;  // 继续等
+					}
+					if (rc < 0) {
+						CompleteStep(false, "命令通道不可用：" + detail,
+							LogSince(g_cur.logMark, kEvidenceMaxLines));
+						return true;
+					}
+					// rc == 1：回执到了
+					g_cur.crewTimeouts = 0;
+					g_cur.crewSubmitted = false;
+					++g_cur.crewIndex;
+					if (code >= 16) {
+						// 结果码 = 16 + 状态位（bit0 A / bit1 C / bit2 P / bit3 已分配）
+						const unsigned mask = static_cast<unsigned>(code - 16);
+						emit(idx,
+							std::format("A={} C={} P={} 分配={}",
+								(mask & 1u) ? 1 : 0, (mask & 2u) ? 1 : 0,
+								(mask & 4u) ? 1 : 0, (mask & 8u) ? 1 : 0),
+							true, mask);
+					} else if (code == 1) {
+						emit(idx, "取不到（引用 / cell 未加载？）", false, 0);
+					} else {
+						emit(idx, std::format("失败（结果码 {}：{}）", code, ResultText(code)), false, 0);
+					}
+				}
+				// 全部处理完：汇总行（逐位行已在上面逐条打出）
+				const auto summary = std::format(
+					"汇总：{} 位｜Papyrus 读到 {} 位（A=1 {} / C=1 {} / P=1 {} / 已分配 {}）"
+					"｜招募任务：未开始 {} / 运行中 {} / 已完成 {} / 其它 {}",
+					kCrewProbeCount, g_cur.crewRead, g_cur.crewA, g_cur.crewC, g_cur.crewP,
+					g_cur.crewAssign, g_cur.crewQNotStarted, g_cur.crewQRunning,
+					g_cur.crewQDone, g_cur.crewQOther);
+				REX::INFO("船员探针 {}", summary);
+				CompleteStep(true, g_cur.crewReport + "船员探针 " + summary, {});
+				return true;
+			}
+
 			case Kind::kUiInject: {
 				// ★★★ 第 133 轮（P3 产品化 PoC · docs/15 11.7）：`ui.inject` —— 把产品侧
 				//   「待推送」的可接任务列表（SAQ::PendingQuests()，同一份数据）真实
@@ -2083,15 +2269,20 @@ namespace SAQ::Test
 		//   丢步 —— 15:43 会话 r65_icons 的 `step = ui.state` 就是这样「少测一步还 PASS」）。
 		//   ★★ 第 83 轮（v70）：`ui.*` 桥没通自动重试 + 清场延迟复查只在「真的见到星图」
 		//   时提前结束 + 断言超时报文带上三个打点。
-		REX::INFO("harness：已启用（{} 个用例；驱动器 v70：`ui.*` 遇到「桥没通」在步骤超时内"
-				  "自动重试（菜单刚打开那一两拍，产品侧首次推送同样会失败）；清场延迟复查只在"
-				  "**真的看到并关掉星图**时才提前结束（关残留任务菜单不算 —— 22:52 会话 r62 的"
-				  " ping 超时就是这么来的）；断言超时报文带「窗口/本步/用例」三个打点；"
-				  "沿用以来的：v69 用例解析失败 ⇒ 判 FAIL / v68 断言正则解析期编译校验"
-				  "（非法正则立刻报「正则非法」，不再退化成「日志里没出现」的误导性超时）/"
-				  " 回执 ≥ {} ms 留一行 note / v66 命令回执窗口 8000 ms + ping 用满窗口 /"
-				  " v63 主菜单稳定 {} ms 后自动读档 / save.list / save.load / guide.probe /"
-				  " 传送 20 秒窗口 / 落地静默期每 Tick 推进 / 加载画面证据 / 卡死自动中止））"
+		//   ★★★ 第 155 轮（v71）：新 op `crew.probe`（可招募船员只读探针，docs/16 16.3）
+		//   —— 逐位读 24 位的 faction 三件套（Papyrus op=7）+ 招募任务状态（直读）
+		//   + 汇总行；引用未加载的位跳过（引擎限制）。
+		REX::INFO("harness：已启用（{} 个用例；驱动器 v71：新 op `crew.probe`（可招募船员只读探针"
+				  " —— 24 位逐位读 Papyrus faction 三件套 + DLL 直读招募任务状态；引用未加载的位"
+				  "跳过）；沿用以来的：v70 `ui.*` 遇到「桥没通」在步骤超时内自动重试"
+				  "（菜单刚打开那一两拍，产品侧首次推送同样会失败）/ 清场延迟复查只在**真的看到"
+				  "并关掉星图**时才提前结束（关残留任务菜单不算 —— 22:52 会话 r62 的 ping 超时"
+				  "就是这么来的）/ 断言超时报文带「窗口/本步/用例」三个打点 / v69 用例解析失败"
+				  " ⇒ 判 FAIL / v68 断言正则解析期编译校验（非法正则立刻报「正则非法」，不再"
+				  "退化成「日志里没出现」的误导性超时）/ 回执 ≥ {} ms 留一行 note / v66 命令"
+				  "回执窗口 8000 ms + ping 用满窗口 / v63 主菜单稳定 {} ms 后自动读档 / save.list /"
+				  " save.load / guide.probe / 传送 20 秒窗口 / 落地静默期每 Tick 推进 /"
+				  " 加载画面证据 / 卡死自动中止））"
 				  " —— 等脚本通道就绪后自动开跑",
 			g_cases.size(), kSlowAckNoteMs, kAutoLoadMinMenuAgeMs);
 	}
