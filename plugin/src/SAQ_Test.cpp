@@ -250,6 +250,9 @@ namespace SAQ::Test
 		constexpr std::uint64_t kCleanupRecheckWindowMs = 4000;
 		bool        g_harnessReady{};
 		bool        g_readyWarned{};
+		// ★★★ 第 159 轮补：就绪门的「世界还没落地 / 静态表还没就绪」只记一行（见 Test::Tick）
+		//   —— 门每 500 ms 复查一次，平时它是通道就绪前的那几秒，行数有限但没必要刷屏。
+		bool        g_gateWaitNoted{};
 		bool        g_active{};
 		bool        g_finished{};
 		bool        g_wroteResults{};
@@ -413,6 +416,73 @@ namespace SAQ::Test
 			return Trim(a_text);
 		}
 
+		// ================================================================
+		//  ★★★ 第 159 轮补（第 159 轮 r155 复跑唯一 FAIL 的收口 —— 驱动器侧，产品无缺陷）
+		//
+		//  现场（2026-09-25 06:49:29 会话，`Only=r155` 增量跑第一件事）：
+		//    · Papyrus 日志：`06:49:28 VM is thawing`（读档刚落地）→ 06:49:29 脚本回写
+		//      「测试通道已就绪（前缀=14，基线 seq=0）」；
+		//    · 驱动器 0.35 秒后就开跑 —— 第一步 `teleport.entry 0x00015062` 直接 FAIL：
+		//      「（可招募）玛丽卡·波罗斯（0x00015062）此刻一个候选都取不到：
+		//        任务板自身[无] 新建常驻 marker[无] 同 cell 常驻兜底1[无] 同 cell 常驻兜底2[无]」
+		//      —— **四个候选全是 0**。
+		//    · 四个候选全 0 ⇒ `Masters::MakeFormID()` 对未解析的 master 一律返回 0
+		//      ⇒ **静态表还没建**（不是产品缺陷：玩家路径永远是「打开菜单 ⇒ BuildRuntimeRows
+		//      ⇒ Masters::Refresh()」，表一定已就绪）。
+		//    · 为什么没建：产品的「菜单关着时预建静态表」只挂在 `AdoptExistingGuide()` 上
+		//      （EnsureStaticTablesReady）—— 而它要「通道里有残留引导目标」才跑。增量跑的第一条
+		//      用例可能**就是本会话第一件事**（世界刚 thaw、菜单一次没开过、存档里也没有引导）
+		//      ⇒ 表一直是空的，凡走静态表的步骤（`teleport.entry` / `~0x…` / `guide.probe`）
+		//      都会报「取不到 / 一个候选都取不到」—— **看起来像产品坏了**。
+		//
+		//  两道补强（都在驱动器侧，产品行为零变化）：
+		//    ① 开跑判据加「**世界已落地**」（下）：MainMenu / LoadingMenu / FaderMenu 全关。
+		//       通道就绪只看脚本回写 2，而黑幕期（FaderMenu 还开着）脚本照样在拍 —— 那时做
+		//       引擎查询正是产品刻意回避的（第 62 轮补：静态表预建落在读档窗口里 ⇒ 之后崩溃）。
+		//    ② 开跑前主动把静态表建起来（`Masters::Refresh()`，与产品打开菜单时同一次调用）。
+		// ================================================================
+		bool WorldSettledForHarness(std::string& a_detail)
+		{
+			static const char* kBusyMenus[] = { "MainMenu", "LoadingMenu", "FaderMenu" };
+			std::string open;
+			for (const auto* name : kBusyMenus) {
+				if (MenuIsOpen(name)) {
+					if (!open.empty()) {
+						open += ", ";
+					}
+					open += name;
+				}
+			}
+			if (!open.empty()) {
+				a_detail = std::format("世界还没落地（{} 开着 —— 引擎在加载 / 过渡）", open);
+				return false;
+			}
+			return true;
+		}
+
+		// 静态表（master 前缀 + 运行期行表）按需就绪：已就绪 ⇒ 零开销；未就绪 ⇒ 在世界落地
+		// 的前提下解析一次（与产品「打开菜单」时的同一次 Refresh；幂等、失败不缓存）。
+		// 返回 false 时调用方**不要**做任何「取不到」的判断 —— 那只是表还没就绪，等下一拍再来。
+		bool EnsureMastersReady(std::string& a_detail)
+		{
+			if (Masters::Resolved()) {
+				return true;
+			}
+			std::string why;
+			if (!WorldSettledForHarness(why)) {
+				a_detail = std::format("静态表还没就绪（{}）—— 等世界落地后再解析", why);
+				return false;
+			}
+			Masters::Refresh();
+			if (!Masters::Resolved()) {
+				a_detail = "静态表还没就绪（master 前缀解析失败）—— 下一拍重试";
+				return false;
+			}
+			REX::INFO("harness：  静态表已主动就绪（本会话第一次用到表：解析 master 前缀 —— "
+					  "等价产品打开菜单那一次；第 159 轮补）");
+			return true;
+		}
+
 		// ★ 第 54 轮：`~0x…` = 静态表里的**记录号** ⇒ 运行期 FormID。
 		//   为什么需要：DLC 任务的 FormID 高字节是**加载顺序**（本机 SFBGS050 = 0x03）——
 		//   用例文件里写死运行期值，换一台机器/换一次加载顺序就会指到别的记录
@@ -420,6 +490,12 @@ namespace SAQ::Test
 		bool ResolveLocalFormID(std::uint32_t a_local, std::uint8_t a_master, std::uint32_t& a_out,
 			std::string& a_detail)
 		{
+			// ★★★ 第 159 轮补：表没就绪 ⇒ 先补一次（否则下面会把「表没建」误报成「表里没有这条」）。
+			std::string tableWhy;
+			if (!EnsureMastersReady(tableWhy)) {
+				a_detail = tableWhy;
+				return false;
+			}
 			for (std::size_t i = 0; i < kQuestTableSize; ++i) {
 				const auto& q = kQuestTable[i];
 				if (q.localFormID != a_local) {
@@ -469,6 +545,15 @@ namespace SAQ::Test
 		//   但这里只关心「取得到」（要能 MoveTo —— 取不到的引用 Papyrus 也拿不到）。
 		bool ResolveEntryTarget(std::uint32_t a_boardID, std::uint32_t& a_out, std::string& a_detail)
 		{
+			// ★★★ 第 159 轮补：静态表没就绪 ⇒ 先补一次 —— 否则四个候选会全打印成「[无]」
+			//   （= MakeFormID 对未解析 master 返回 0），看起来像「产品一个候选都取不到」。
+			{
+				std::string tableWhy;
+				if (!EnsureMastersReady(tableWhy)) {
+					a_detail = tableWhy;
+					return false;
+				}
+			}
 			std::size_t idx = kEntryTableSize;
 			for (std::size_t i = 0; i < kEntryTableSize; ++i) {
 				const auto& e = kEntryTable[i];
@@ -521,6 +606,12 @@ namespace SAQ::Test
 		//   取不到 ⇒ 先保持）不成立 —— 详见 SAQ_TestPlan.txt 用例 4 的注释。
 		bool ProbeGuideCandidates(std::uint32_t a_formID, std::string& a_detail)
 		{
+			// ★★★ 第 159 轮补：表没就绪 ⇒ 先补一次（否则 `候选可得性` 会整排报「取不到」）。
+			std::string tableWhy;
+			if (!EnsureMastersReady(tableWhy)) {
+				a_detail = tableWhy;
+				return false;
+			}
 			const StaticQuestInfo* quest = nullptr;
 			for (std::size_t i = 0; i < kQuestTableSize; ++i) {
 				if (Masters::MakeFormID(kQuestTable[i].master, kQuestTable[i].localFormID) == a_formID) {
@@ -2521,6 +2612,7 @@ namespace SAQ::Test
 		g_harnessReady = false;
 		g_active = false;
 		g_readyWarned = false;
+		g_gateWaitNoted = false;
 		// ★ 第 56 轮：带上**驱动器版本串** —— 与 SWF 的 `stamp=` 同一个道理：日志里有没有
 		//   这一串，是「跑的是不是修好窗口 bug 的那版驱动器」的唯一判据（旧版会把
 		//   断言窗口起点清 0 ⇒ 假 PASS/假 FAIL）。
@@ -2536,7 +2628,17 @@ namespace SAQ::Test
 		//   `sim=<FormID>` 模拟招募往返（Papyrus op=8；A 判据正样本复核，docs/16 16.8）。
 		//   ★★★ 第 158 轮（v73）：ini [Test] Only 增量筛选（逗号分隔的用例 id 子串；空 = 全量；
 		//   写错没命中 ⇒ 不跑 + WARN）—— 「先只测改动的部分、收口再全量」的机制（玩家建议）。
-		REX::INFO("harness：已启用（{} 个用例；驱动器 v73（第 158 轮）：新增 ini [Test] Only"
+		//   ★★★ 第 159 轮补（v74）：就绪门加「世界已落地 + 静态表就绪」两道闸 —— 06:49:29
+		//   会话（Only=r155）实测：世界刚 thaw 通道就就绪，用例 0.35 秒后开跑，而静态表
+		//   （master 前缀）本会话一次都没建（菜单没开过 + 存档里没有残留引导）⇒
+		//   `teleport.entry` 报「一个候选都取不到」（四个候选全 0 = MakeFormID 未解析）。
+		//   修法 = 开跑前等黑幕/加载画面关掉 + 主动解析 master 前缀（等价产品打开菜单那一次）；
+		//   三个走静态表的解析器（`teleport.entry` / `~0x…` / `guide.probe`）另加防御性检查。
+		REX::INFO("harness：已启用（{} 个用例；驱动器 v74（第 159 轮补）：就绪门加「世界已落地"
+				  "（MainMenu/LoadingMenu/FaderMenu 全关）+ 静态表就绪（主动解析 master 前缀）」，"
+				  "三个走静态表的解析器加防御性检查 —— 起因 = `Only=r155` 增量跑时用例是世界刚"
+				  " thaw 后的第一件事，表没建 ⇒ `teleport.entry` 误报「一个候选都取不到」"
+				  "（四个候选全 0）；v73 的 ini [Test] Only"
 				  " 增量筛选 —— 逗号分隔的用例 id 子串（如 `r47,r80`）只跑命中的用例"
 				  "（空 = 全量；写错没命中 ⇒ 不跑 + WARN，防静默跑全量白等一轮）"
 				  "；v72 起 `crew.probe` 扩展 —— ③ 直读对照（与产品 kind=2 过滤同一套"
@@ -2737,6 +2839,24 @@ namespace SAQ::Test
 				std::string detail;
 				if (!HarnessReady(detail)) {
 					g_channelDetail = detail;
+					return;
+				}
+				// ★★★ 第 159 轮补（r155 增量复跑 FAIL 的收口 —— 见 EnsureMastersReady 的现场说明）：
+				//   通道就绪 ≠ 可以开跑，再加两道闸：
+				//     ① 世界已落地（MainMenu / LoadingMenu / FaderMenu 全关）——
+				//        现场：`VM is thawing` 后 1 秒脚本就回写了 2（黑幕期脚本照样在拍），
+				//        用例立刻开跑 ⇒ 静态表没建；产品刻意不在这个窗口里做引擎查询。
+				//     ② 静态表就绪（master 前缀）—— 增量跑时第一条用例可能 ^是^ 本会话第一件事，
+				//        而产品的表预建只挂在「认领已有引导」上（存档里没有引导就不跑）⇒ 主动补一次。
+				//   两道都过不了就等着（每 500 ms 复查一轮；只记一行日志，见 g_gateWaitNoted）。
+				std::string gateWhy;
+				if (!WorldSettledForHarness(gateWhy) || !EnsureMastersReady(gateWhy)) {
+					if (!g_gateWaitNoted) {
+						g_gateWaitNoted = true;
+						REX::INFO("harness：等 {} —— 就绪后再开跑（第 159 轮补：通道就绪 ≠ 世界落地/表已建）",
+							gateWhy);
+					}
+					g_channelDetail = gateWhy;
 					return;
 				}
 				g_harnessReady = true;
