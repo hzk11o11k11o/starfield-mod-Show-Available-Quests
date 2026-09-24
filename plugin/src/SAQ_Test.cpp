@@ -254,6 +254,10 @@ namespace SAQ::Test
 		bool        g_finished{};
 		bool        g_wroteResults{};
 		std::string g_planPath;                 // 计划文件路径（日志用）
+		// ★★ 第 158 轮：增量筛选值（ini [Test] Only；空 = 全量）—— 原样写进结果 JSON 的
+		//   `only` 字段，判读工具（check_results / plan_regex_audit）靠它区分「增量跑」
+		//   与「全量跑」（增量跑的日志里没有未选中用例的段，不能当成「用例没跑到」）。
+		std::string g_onlyFilter;
 		std::string g_channelDetail;
 		std::size_t g_caseIdx{};
 		std::size_t g_stepIdx{};
@@ -1099,6 +1103,102 @@ namespace SAQ::Test
 		}
 
 		// ----------------------------------------------------------------
+		//  ★★ 第 158 轮（增量测试）：ini [Test] Only 的读取与应用
+		//
+		//  背景（玩家建议）：「先只测改动的这一部分，最后再完整测试，要不然比较浪费时间」
+		//  —— 主计划 45 条全量跑一次约 10 分钟；开发中多数修改只影响少数判据。
+		//
+		//  取值 = 逗号分隔的用例 id **子串**（大小写不敏感、包含匹配）：
+		//    `Only=r47,r80`        ⇒ r47_board_marker + r80_repeatable_npc
+		//    `Only=r98`            ⇒ r98_dlc_chain + r98_dlc_chain_pass（前缀同族全命中）
+		//    空 / 缺键（或只有逗号空白）= 跑全部（默认，Nexus 玩家口径不受影响）
+		//
+		//  ★ 谁写这个键：`tools\build-saq.ps1 -Only …` —— **不带 -Only 会清空它**
+		//    （默认回到全量：不会因为忘了清上一次的增量值而漏测）。
+		//  ★ 筛选器非空但没命中任何用例 ⇒ **不跑** + WARN（列出可用 id）——
+		//    写错筛选器时「静默跑全量」要白等 10 分钟才知道，明确失败更快；
+		//    重新载入用例：把 ini Harness 拨 0 → 1（不必重启游戏，见 PollEnable）。
+		// ----------------------------------------------------------------
+		std::string OnlyFilterFromIni()
+		{
+			const auto dir = PluginDir();
+			if (dir.empty()) {
+				return {};
+			}
+			const auto iniPath = (dir / L"SAQ_ShowAvailableQuests.ini").wstring();
+			wchar_t buf[512]{};
+			if (::GetPrivateProfileStringW(L"Test", L"Only", L"", buf, 512, iniPath.c_str()) == 0) {
+				return {};
+			}
+			char utf8[2048]{};
+			if (::WideCharToMultiByte(CP_UTF8, 0, buf, -1, utf8, sizeof(utf8), nullptr, nullptr) <= 0) {
+				return {};
+			}
+			return Trim(utf8);
+		}
+
+		// 应用 Only 筛选。返回 false = 筛选器写了但一条都没命中（调用方不跑）。
+		bool ApplyOnlyFilter(const std::string& a_only)
+		{
+			if (a_only.empty()) {
+				return true;
+			}
+			// 拆 token：逗号分隔、逐个 Trim + ASCII 小写化（用例 id 全是小写）。
+			std::vector<std::string> tokens;
+			std::size_t i = 0;
+			while (i <= a_only.size()) {
+				const auto comma = a_only.find(',', i);
+				const auto seg = a_only.substr(i, comma == std::string::npos ? std::string::npos : comma - i);
+				auto tok = Trim(seg);
+				for (auto& ch : tok) {
+					ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+				}
+				if (!tok.empty()) {
+					tokens.push_back(std::move(tok));
+				}
+				if (comma == std::string::npos) {
+					break;
+				}
+				i = comma + 1;
+			}
+			if (tokens.empty()) {
+				return true;  // 值只有空白/逗号 ⇒ 视为「全量」
+			}
+			std::vector<Case> kept;
+			for (auto& c : g_cases) {
+				auto id = c.id;
+				for (auto& ch : id) {
+					ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+				}
+				for (const auto& t : tokens) {
+					if (id.find(t) != std::string::npos) {
+						kept.push_back(std::move(c));
+						break;
+					}
+				}
+			}
+			if (kept.empty()) {
+				std::string all;
+				for (const auto& c : g_cases) {
+					all += (all.empty() ? "" : ", ");
+					all += c.id;
+				}
+				REX::WARN("harness：Only 筛选「{}」没命中任何用例 —— 本次不跑（把 [Test] Only 清空 = 跑全部；"
+						  "可用用例：{}）", a_only, all);
+				return false;
+			}
+			std::string list;
+			for (const auto& c : kept) {
+				list += (list.empty() ? "" : ", ");
+				list += c.id;
+			}
+			REX::INFO("harness：Only 增量筛选「{}」⇒ 本次只跑 {}/{} 条：{}",
+				a_only, kept.size(), g_cases.size(), list);
+			g_cases = std::move(kept);
+			return true;
+		}
+
+		// ----------------------------------------------------------------
 		//  结果落盘
 		// ----------------------------------------------------------------
 		void WriteResults()
@@ -1125,6 +1225,9 @@ namespace SAQ::Test
 				st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
 			out += std::format("  \"sessionMs\": {},\n", NowMs() - g_sessionStartMs);
 			out += std::format("  \"plan\": \"{}\",\n", JsonEscape(g_planPath));
+			// ★★ 第 158 轮：增量筛选值（空 = 全量）。判读工具靠它区分「增量跑」：
+			//   增量跑的日志里没有未选中用例的段/断言 —— 不能当成「用例没跑到」。
+			out += std::format("  \"only\": \"{}\",\n", JsonEscape(g_onlyFilter));
 			out += std::format("  \"summary\": {{ \"cases\": {}, \"pass\": {}, \"fail\": {}, \"skip\": {} }},\n",
 				g_results.size(), pass, fail, skip);
 			out += "  \"results\": [\n";
@@ -2399,6 +2502,12 @@ namespace SAQ::Test
 			g_enabled = false;
 			return;
 		}
+		// ★★ 第 158 轮：增量筛选（[Test] Only）—— 空 = 全量；写错（一条没命中）⇒ 不跑并报 WARN。
+		g_onlyFilter = OnlyFilterFromIni();
+		if (!ApplyOnlyFilter(g_onlyFilter)) {
+			g_enabled = false;
+			return;
+		}
 		g_sessionStartMs = NowMs();
 		g_results.clear();
 		g_loaded = true;
@@ -2420,9 +2529,13 @@ namespace SAQ::Test
 		//   ★★★ 第 156 轮（v72）：`crew.probe` 扩展 —— ③ 直读对照（与产品 kind=2 过滤
 		//   同一套 SAQ_Crew::ReadState；「对照=不一致」+ 汇总不一致数）+ ④ 可选
 		//   `sim=<FormID>` 模拟招募往返（Papyrus op=8；A 判据正样本复核，docs/16 16.8）。
-		REX::INFO("harness：已启用（{} 个用例；驱动器 v72：`crew.probe` 扩展 —— ③ 直读对照"
-				  "（与产品 kind=2 过滤同一套 SAQ_Crew::ReadState）+ ④ 可选 `sim=<FormID>`"
-				  " 模拟招募往返（Papyrus op=8：Add→读→Remove→读；A 判据正样本复核）"
+		//   ★★★ 第 158 轮（v73）：ini [Test] Only 增量筛选（逗号分隔的用例 id 子串；空 = 全量；
+		//   写错没命中 ⇒ 不跑 + WARN）—— 「先只测改动的部分、收口再全量」的机制（玩家建议）。
+		REX::INFO("harness：已启用（{} 个用例；驱动器 v73（第 158 轮）：新增 ini [Test] Only"
+				  " 增量筛选 —— 逗号分隔的用例 id 子串（如 `r47,r80`）只跑命中的用例"
+				  "（空 = 全量；写错没命中 ⇒ 不跑 + WARN，防静默跑全量白等一轮）"
+				  "；v72 起 `crew.probe` 扩展 —— ③ 直读对照（与产品 kind=2 过滤同一套"
+				  " SAQ_Crew::ReadState）+ ④ 可选 `sim=<FormID>` 模拟招募往返（Papyrus op=8）"
 				  "；v71 新 op `crew.probe`（可招募船员只读探针 —— 24 位逐位读 Papyrus faction"
 				  " 三件套 + DLL 直读招募任务状态；引用未加载的位跳过）；沿用以来的：v70 `ui.*`"
 				  " 遇到「桥没通」在步骤超时内自动重试"

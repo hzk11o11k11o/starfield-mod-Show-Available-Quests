@@ -324,6 +324,16 @@
           本脚本检查：DLL 三条（船员直读指纹 ok / fail / vtable 取不到）+ 用例计划
           新断言（r47 结构 / r80 45 条 / r155 对照与判定行）+ 三条反向检查
           （旧 21 条 ×2 / 旧「A 位随招募往返」）。
+  第 158 轮（**增量测试：只跑相关用例** —— 玩家建议 / AGENTS.md 约定）：
+          ① 机制（产品行为零变化）：DLL 驱动器 **v73** —— ini `[Test] Only`（逗号分隔的
+             用例 id 子串）只跑命中的用例（空 = 全量；没命中 ⇒ 不跑 + WARN 列出可用 id；
+             结果 JSON +`only` 字段）；`build-saq.ps1 -Only`（**不传 = 清空 = 全量**，
+             默认安全方向）；判读工具增量感知（check_results 显示「增量筛选」行；
+             plan_regex_audit 未选中用例不再计「缺段」bad）。用法与「修改→用例映射表」
+             见 docs/09 十五节。
+          本脚本检查：DLL 三条（增量筛选命中行 / 未命中文案 / 驱动器 v73 串）+ 一条反向
+          （旧 `驱动器 v72` 串不得残留）+ ini 模板两条（Only 生效键 / 「空 = 跑全部」说明）
+          + 发布包默认值检查加「Only 必须为空」（旧包无此键 = 宽容通过）。
 
 用法：python tools/ui/verify_saq_build.py [--release|--dev]
 """
@@ -620,8 +630,14 @@ HARNESS_STRINGS = (
     #      菜单**就提前结束了延迟复查窗口 ⇒ 约 1 秒后由脚本节拍打开的星图没人管
     #      （星图 = 暂停菜单 ⇒ 脚本定时器冻结 ⇒ ping 无回执）。修法：只有**真的看到并
     #      关掉星图**才提前结束窗口；关掉星图后再留一段（kInterCaseDelayMs）才开下一条。
+    # ★★★ 第 158 轮（增量测试 · 玩家建议「先只测改动的部分，收口再全量」）：
+    #   ini [Test] Only —— 逗号分隔的用例 id 子串只跑命中的用例（空 = 全量；
+    #   写错没命中 ⇒ 不跑 + WARN，防「写错后静默跑全量」白等一轮）。三条特征钉住：
+    #   命中行 / 未命中文案 / 版本串（v73）。
+    ("harness 增量筛选命中行", "Only 增量筛选「"),
+    ("harness 增量筛选未命中文案", "没命中任何用例"),
     ("harness 驱动器版本串",
-     "驱动器 v72：`crew.probe` 扩展"),
+     "驱动器 v73（第 158 轮）：新增 ini [Test] Only"),
     # ★★★ 第 155 轮（可招募船员跟踪研究 · docs/16 16.3）：新 op `crew.probe` ——
     #   24 位可招募船员的**只读**探针（Papyrus faction 三件套 + DLL 直读招募任务状态）。
     #   逐位行 / 汇总行 / 数据表样本名都进 dev DLL ⇒ 发布构建必须一条都不见
@@ -1721,9 +1737,11 @@ def main() -> int:
                     # ★★★ 第 155 轮：v70 同理（新版串里带的是「v70 `ui.*` …」）。
                     "驱动器 v70".encode() not in blob and
                     # ★★★ 第 156 轮：v71 同理（新版串里带的是「；v71 新 op `crew.probe`…」）。
-                    "驱动器 v71".encode() not in blob)
+                    "驱动器 v71".encode() not in blob and
+                    # ★★★ 第 158 轮：v72 同理（新版串里带的是「；v72 起 `crew.probe` …」）。
+                    "驱动器 v72".encode() not in blob)
             print(("OK  " if gone else "MISS") +
-                  " DLL · 旧驱动器版本串 v57~v63/v66/v68/v70/v71 已替换(反向检查)")
+                  " DLL · 旧驱动器版本串 v57~v63/v66/v68/v70~v72 已替换(反向检查)")
             all_ok &= gone
             # ★★ 第 54 轮：用例计划本身也该被查 —— 历史判据（第 26/44~48 轮）落成用例后，
             #   最怕的是「源码改了没部署」或「用例被误删」。这里只查**开发模式**：
@@ -2858,6 +2876,11 @@ def main() -> int:
             #   起因 = 最后 1 条「需要靠近」任务（VKaiZ02）补上了 DLC world 级常驻兜底。
             all_ok &= check("ini 模板 · Mode=6 第 146 轮注记（本机 0 条）", tmpl_112,
                             "第 146 轮起为 0 条".encode())
+            #   ★★★ 第 158 轮（增量测试）：[Test] Only 生效键 + 说明必须在模板里
+            #   （玩家/开发者可发现性；发布默认空 = 跑全部；值由 build-saq.ps1 -Only 管理）。
+            all_ok &= check("ini 模板 · [Test] Only 生效键（增量测试）", tmpl_112, b"Only=")
+            all_ok &= check("ini 模板 · Only 说明（空 = 跑全部）", tmpl_112,
+                            "空 = 跑全部".encode())
             gone_tmpl = b"; MaxSizeMB" not in tmpl_112
             print(("OK  " if gone_tmpl else "MISS") +
                   " ini 模板 · 旧注释示例「; MaxSizeMB」已替换(反向检查，第 112 轮)")
@@ -4389,8 +4412,15 @@ def main() -> int:
     #   为什么放在 verify 里：脚本是「构建/打包流程的守门人」，把用户要求变成机器判据，
     #   以后谁改脏了 ini 或者往打包清单里塞了测试文件，这里立刻 MISS。
     def _ini_is_default(text: str) -> bool:
+        # ★★★ 第 158 轮（增量测试）：发布包里的 Only 必须为空（= 跑全部）——
+        #   增量筛选是开发期功能，发布包若带上它 = 玩家只看到一部分条目列表。
+        #   ★ 旧包（0.1.18 及更早）里没有这个键 = 通过（那时还没这个功能）；
+        #     有键就必须是空值（重新打包会从模板带上 `Only=` 空键）。
+        only_ok = (re.search(r"(?m)^\s*Only\s*=", text) is None
+                   or re.search(r"(?m)^\s*Only\s*=\s*$", text) is not None)
         return (re.search(r"(?m)^\s*Mode\s*=\s*0\s*$", text) is not None
-                and re.search(r"(?m)^\s*Harness\s*=\s*0\s*$", text) is not None)
+                and re.search(r"(?m)^\s*Harness\s*=\s*0\s*$", text) is not None
+                and only_ok)
 
     ini_src = ROOT / "resources/SAQ_ShowAvailableQuests.ini"
     if ini_src.exists():

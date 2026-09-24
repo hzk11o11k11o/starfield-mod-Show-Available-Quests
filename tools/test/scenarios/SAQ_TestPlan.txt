@@ -14,6 +14,17 @@
 ;        第 90 轮**没动 SWF**、第 91 轮 = 62），
 ;        与 tools\ui\verify_saq_build.py 的「构建指纹」检查同源。）
 ;
+;    ⑥ ★★★ 第 158 轮（增量测试）：「先只测改动的部分，收口再全量」——
+;       ini [Test] Only 写用例 id **子串**（逗号分隔、大小写不敏感、包含匹配）：
+;         Only=r47,r80  ⇒ 只跑 r47_board_marker + r80_repeatable_npc（≈1 分钟）
+;         Only=r98      ⇒ r98_dlc_chain + r98_dlc_chain_pass（前缀同族全命中）
+;       空 = 跑全部（45 条 ≈ 10 分钟）。★ 推荐由构建脚本管理（不带 -Only 自动清空）：
+;         & ".\tools\build-saq.ps1" -SkipTable -SkipSwf -SkipPapyrus -Harness -Only r47,r80
+;       收口 / 打包前必须**不带 -Only** 跑一次全量。判读「本次是不是增量跑」：
+;       日志 `harness：Only 增量筛选「…」` 行 + 结果 JSON 的 `only` 字段
+;       （判读工具靠它区分「未选中」与「用例没跑到」）。
+;       筛选器没命中任何用例 ⇒ 不跑并在日志报 WARN（不会静默跑全量白等一轮）。
+;
 ;  语法：`[case:名字]` 开一个用例；`desc = 说明`；`step = <操作> [参数]`。
 ;  ★ 会改任务状态（Reset/Start/SetStage/CompleteQuest）与**传送玩家**—— 先备份存档，
 ;    别在主力存档上跑。

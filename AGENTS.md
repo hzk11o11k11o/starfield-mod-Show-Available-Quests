@@ -40,3 +40,5 @@ D:\Mod Organizer 2
 - mod文件生成后帮我打包成nexus mods能接受的上传包文件，并帮我写一个介绍文案，注意打包时不要把自动化测试功能开启了，所有配置项也要还原到正常玩的默认值
 - Nexus上传时机由我自己决定：打包与介绍文案照常做，但不要提醒上传、不要把「上传Nexus」列入待办或进度记录（2026-09-24约定）
 - 日志文件位置：D:\Mod Organizer 2\starfield_mods\mods\Show Available Quests (SFSE)\SFSE\Plugins
+- harness自动化测试在修改新功能后只需要测试修改的这一部分，也就是增量测试，直到最后打nexusmods包之前，再做全量测试，这样可以节约大量时间
+  （工具 = `tools\build-saq.ps1 -Only <用例id子串>`（不传 = 清空 = 全量；如 `-Only r47,r80`）；「修改 → 相关用例」映射表与红线见 `docs/09` 第十五节）

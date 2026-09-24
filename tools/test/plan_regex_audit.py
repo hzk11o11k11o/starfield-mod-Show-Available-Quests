@@ -25,11 +25,17 @@ r"""plan_regex_audit.py —— 用例文件里的断言正则「体检」（第 
   ② 中间 / 末尾缺段 = 真的异常 ⇒ 仍计 bad。日志里一个用例段都没有 ⇒ 退出码 2
   （无从体检，不再静默假绿）。
 
-退出码：0 = 体检通过（可含「滚动清掉、无从体检」的提示）；1 = 有未命中 / 真的缺段；
-        2 = 无从体检（没有用例段 / 没解析出断言）。
+★★★ 第 158 轮（增量测试感知）：日志同目录的 `SAQ_testresults.json` 里 `only` 非空
+  = 本次是**增量跑**（只跑了 [Test] Only 命中的用例）—— 未选中的用例「没有段」是
+  正常行为，不再计 bad（只提示），它们的断言也不参与体检（check 数只算选中用例）。
+  only 为空 / 结果 JSON 不存在 ⇒ 行为与过去完全一致（全量跑）。
+
+退出码：0 = 体检通过（可含「滚动清掉、无从体检」「增量未选中」的提示）；1 = 有未命中 /
+        真的缺段；2 = 无从体检（没有用例段 / 没解析出断言）。
 """
 from __future__ import annotations
 
+import json
 import pathlib
 import re
 import sys
@@ -64,6 +70,26 @@ def split_cases(lines: list[str]) -> dict[str, list[str]]:
     return cases
 
 
+def read_scan_scope(log_path: pathlib.Path) -> tuple[set[str] | None, str]:
+    """★ 第 158 轮（增量感知）：读日志同目录的结果 JSON。
+
+    返回 (selected, only)：
+      * only 非空（增量跑）⇒ selected = 本次选中的用例 id 集合、only = 原始筛选值；
+      * only 为空 / 结果 JSON 不存在 / 读不出 ⇒ (None, "")（全量口径，行为同旧版）。
+    """
+    res = log_path.with_name("SAQ_testresults.json")
+    if not res.exists():
+        return None, ""
+    try:
+        data = json.loads(res.read_bytes().decode("utf-8-sig", errors="replace"))
+    except Exception:  # noqa: BLE001
+        return None, ""
+    only = str(data.get("only") or "").strip()
+    if not only:
+        return None, ""
+    return {str(r.get("id", "")) for r in data.get("results", [])}, only
+
+
 def main() -> int:
     try:
         sys.stdout.reconfigure(errors="replace")
@@ -81,6 +107,7 @@ def main() -> int:
 
     lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
     cases = split_cases(lines)
+    selected, only = read_scan_scope(log_path)
 
     plan = plan_path.read_text(encoding="utf-8")
     case = "?"
@@ -97,6 +124,10 @@ def main() -> int:
                 plan_order.append(case)
             continue
         if not s.lower().startswith("step = assert"):
+            continue
+        # ★ 第 158 轮（增量感知）：本次没选中的用例不体检 —— 日志里没有它们的段是
+        #   正常行为（不是「用例没跑到」），它们的断言也不计入 check 数。
+        if selected is not None and case not in selected:
             continue
         body = s[len("step = "):]
         op, _, rest = body.partition(" ")
@@ -148,6 +179,12 @@ def main() -> int:
                     "这次日志里根本没有这个用例（没跑到 / 中途中止）"))
 
     print(f"检查 {checked} 条断言（日志 {log_path.name}｜用例段 {len(cases)} 个）")
+    if selected is not None:
+        skipped = [c for c in plan_order if c not in selected]
+        print(f"（提示）本次为**增量跑**：Only={only} —— 选中 {len(selected)} 条用例、"
+              f"未选中 {len(skipped)} 条（未选中不是缺陷；收口 / 打包前请跑一次全量）。")
+        if skipped:
+            print(f"      未选中：{', '.join(skipped)}")
     if rolled:
         print(f"（提示）{len(rolled)} 个用例段不在日志里、**无从体检**："
               f"{', '.join(rolled)}")

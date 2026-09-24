@@ -70,6 +70,11 @@ def main() -> int:
     print(f"=== SAQ harness 结果 ===")
     print(f"时间     : {data.get('generatedAt', '?')}（会话时长 {data.get('sessionMs', '?')} ms）")
     print(f"用例文件 : {data.get('plan', '?')}")
+    # ★★★ 第 158 轮（增量测试）：结果 JSON 的 `only` 非空 = 本次只跑了命中的用例
+    #   （日志窗口纪律：判读时别把「没跑到的用例」当成异常）。
+    only = str(data.get("only") or "").strip()
+    if only:
+        print(f"增量筛选 : Only={only}（★ 不是全量 —— 收口 / 打包前需不带 -Only 跑全量）")
     print(f"汇总     : 用例 {s.get('cases', '?')}｜PASS {s.get('pass', 0)}"
           f"｜FAIL {s.get('fail', 0)}｜SKIP {s.get('skip', 0)}")
     print()

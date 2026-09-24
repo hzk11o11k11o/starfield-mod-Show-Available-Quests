@@ -8,6 +8,12 @@
 #     & ".\tools\build-saq.ps1" -Harness        # 开发/自测：含 harness + 部署用例 + ini Harness=1
 #     & ".\tools\build-saq.ps1" -Release        # 发布构建：DLL **不含 harness**（打包/当玩家跑）
 #
+#  ★★★ 第 158 轮（增量测试 · 玩家建议「先只测改动的部分，收口再全量」）：
+#     & ".\tools\build-saq.ps1" -Harness -Only r47,r80   # 增量：只跑命中的用例（≈1 分钟）
+#     & ".\tools\build-saq.ps1" -Harness                 # 收口：**不带 -Only = 清空 = 全量 45 条**
+#     规则：Only 值写进部署 ini [Test] Only；**每次都按 -Only 参数重写（没传 = 清空）** ——
+#     默认安全：忘记传 = 多跑点（不漏测），而不是「残留上一次的子集 ⇒ 漏测」。
+#
 #  产物与部署位置见 docs\01-构建与环境.md
 # ============================================================================
 param(
@@ -45,7 +51,17 @@ param(
     #     ③ 其余照常（DLL 含 harness + ui.research3 探针）。
     #   ★ 恢复：不带 -P2 再跑一次（例如 `-SkipTable -SkipSwf -Harness`）——
     #     SWF 拷回、*.p2off 清理、ini Plan 改回 SAQ_TestPlan.txt。
-    [switch]$P2
+    [switch]$P2,
+    # ★★★ 第 158 轮（增量测试）：harness 用例筛选 —— 「先只测改动的部分，收口再全量」
+    #   （玩家建议：全量 45 条约 10 分钟，开发中多数修改只影响少数判据）。
+    #   值 = 逗号分隔的用例 id **子串**（大小写不敏感、包含匹配）：
+    #     -Only r47,r80   ⇒ 只跑 r47_board_marker + r80_repeatable_npc
+    #     -Only r98       ⇒ r98_dlc_chain + r98_dlc_chain_pass（前缀同族全命中）
+    #   ★ **不带 -Only 会清空它**（默认回到全量 —— 不会因为忘了清上一次的增量值而漏测）；
+    #     要「明确全量」也可以写 -Only ''（同效）。
+    #   写进部署 ini 的 [Test] Only；DLL 在下一次载入用例时生效（重启游戏，或把
+    #   ini Harness 拨 0 → 1 重新载入）。筛选器没命中任何用例 ⇒ 不跑并在 DLL 日志报 WARN。
+    [string]$Only = ''
 )
 
 $ErrorActionPreference = 'Stop'
@@ -449,6 +465,12 @@ if (-not $SkipDeploy) {
             $newKeys += '; ★★ 第 62 轮：主菜单自动读档（存档名子串；空 = 关）—— 启动游戏按任意键后自动读它再跑用例'
             $newKeys += 'AutoLoad='
         }
+        # ★★★ 第 158 轮（增量测试）：Only 键 —— 值由下面的「Only 处理」按 -Only 参数重写
+        #   （不带 -Only = 清空 = 全量）。
+        if ($iniText -notmatch '(?m)^\s*Only\s*=') {
+            $newKeys += '; ★★★ 第 158 轮：增量测试筛选（逗号分隔的用例 id 子串；空 = 跑全部）—— 由 build-saq.ps1 -Only 管理'
+            $newKeys += 'Only='
+        }
         if ($newKeys.Count -gt 0) {
             # ★★ 第 62 轮补踩坑（实机症状：AutoLoad 落到文件末尾的**第二个 [Test] 段**里）：
             #   老实现用 `-split "`r`n"` 定位 [Test] 行 —— 而模板 ini 是**LF 换行**
@@ -499,6 +521,24 @@ if (-not $SkipDeploy) {
         if ($Harness) {
             $iniText = [regex]::Replace($iniText, '(?m)^\s*Harness\s*=.*$', 'Harness=1')
             $iniChanged = $true
+        }
+        # ★★★ 第 158 轮（增量测试）：Only 键由脚本管理 —— 传了 -Only ⇒ 写该值；
+        #   没传 ⇒ 写空（= 全量）。**默认清空**是安全方向：忘记传 = 多跑点（不漏测），
+        #   而不是「残留上一次的子集 ⇒ 漏测」。值真的变了才写回（不动文件时间戳）。
+        $onlyVal = $Only.Trim()
+        $onlyCur = ''
+        if ($iniText -match '(?m)^\s*Only\s*=\s*(.*)$') { $onlyCur = $Matches[1].Trim() }
+        if ($onlyCur -ne $onlyVal) {
+            # 不用 scriptblock 求值器 / 也不直接把值当替换串：值里的 `$` 先转义
+            # （替换串里 `$$` = 字面 `$`），避免被当成组引用。
+            $onlyRepl = 'Only=' + $onlyVal.Replace('$', '$$')
+            $iniText = [regex]::Replace($iniText, '(?m)^\s*Only\s*=.*$', $onlyRepl)
+            $iniChanged = $true
+        }
+        if ($onlyVal -ne '') {
+            Write-Host ("    增量测试筛选：Only=" + $onlyVal + "（只跑命中的用例 —— 收口/打包前去掉 -Only 跑全量）")
+        } elseif ($onlyCur -ne '') {
+            Write-Host '    增量测试筛选：Only 已清空（本次跑全部用例）'
         }
         # ★★★ 第 120 轮（P2）：Plan 键由脚本管理 —— `-P2` ⇒ 指向 P2 专用计划；
         #   `-Harness`（非 P2）⇒ 若当前还指着 p2 就改回主计划（跑完的恢复动作）。
