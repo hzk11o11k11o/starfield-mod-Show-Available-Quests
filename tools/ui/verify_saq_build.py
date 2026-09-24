@@ -334,6 +334,16 @@
           本脚本检查：DLL 三条（增量筛选命中行 / 未命中文案 / 驱动器 v73 串）+ 一条反向
           （旧 `驱动器 v72` 串不得残留）+ ini 模板两条（Only 生效键 / 「空 = 跑全部」说明）
           + 发布包默认值检查加「Only 必须为空」（旧包无此键 = 宽容通过）。
+  第 159 轮（**r155 假 FAIL 的窗口修正** —— 检查第 158 轮增量跑的 4 条用例：
+          smoke / r47 / r80 全 PASS，r155 的唯一 FAIL **正则没错、窗口错了** ——
+          `scope=prev` 的窗口只有下界 = 上一步开始时的打点；连着两条断言时第二条
+          的下界是「上一条断言行」⇒ 探针行全在窗口外。产品全对（汇总行明明在日志里）：
+          `对照 13 位 / 不一致 0 位` + `船员直读：槽 0x174 指纹=ok`。明细 = docs/09 十五·5）：
+          ① 用例计划：r155 三条断言的 scope 形状（汇总 = `prev` / 对照 + 模拟招募 =
+             `case`）+ 一条反向（对照不许用 `prev`）；
+          ② 判读工具 `plan_regex_audit.py`：窗口自检 + 「窗口外才命中」判据 + `--self-test`
+             窗口语义自测（离线层第 ⑤ 步跑）+ 一条反向（`window_range` 在场）；
+          本脚本检查：计划三条 + 一条反向 + 工具三条 + 一条反向。
 
 用法：python tools/ui/verify_saq_build.py [--release|--dev]
 """
@@ -1882,6 +1892,28 @@ def main() -> int:
                                 "assert.nolog 船员探针 模拟招募：.*引用未加载".encode())
                 all_ok &= check("用例计划 · r155 船员直读指纹反向断言（第 157 轮）", plan_text.encode(),
                                 "assert.nolog 船员直读：.*（不符|取不到）".encode())
+                # ★★★ 第 159 轮（窗口修正 —— 2026-09-24 23:01 会话 r155 的唯一 FAIL）：
+                #   三条断言都查 crew.probe 的输出，而 `scope=prev` 的窗口**只有下界**
+                #   （= 上一步开始时的打点）⇒ 只有紧跟探针的那条能用 `prev`；其后的
+                #   「对照」「模拟招募」必须 `case`（用 `prev` 时下界变成「上一条断言行」，
+                #   探针行全在窗口外 ⇒ 120 s 超时假 FAIL）。判读工具 plan_regex_audit
+                #   的窗口自检（第 159 轮）同源。
+                all_ok &= check("用例计划 · r155 汇总断言紧跟探针（scope=prev）",
+                                plan_text.encode(),
+                                "assert.log 船员探针 汇总：24 位 scope=prev".encode())
+                all_ok &= check("用例计划 · r155 对照断言 scope=case（第 159 轮窗口修正）",
+                                plan_text.encode(),
+                                ("assert.log 船员探针 汇总：.*对照 \\d+ 位 / 不一致 0 位"
+                                 " scope=case").encode())
+                all_ok &= check("用例计划 · r155 模拟招募断言 scope=case（第 159 轮窗口修正）",
+                                plan_text.encode(),
+                                "assert.log 船员探针 模拟招募：.*判定： scope=case".encode())
+                bad_r155_win = bool(re.search(
+                    r"assert\.log 船员探针 汇总：\.\*对照 \\d\+ 位 / 不一致 0 位 scope=prev",
+                    plan_text))
+                print(("MISS " if bad_r155_win else "OK  ") +
+                      " 用例计划 · r155 对照断言不再用 scope=prev（反向检查，第 159 轮）")
+                all_ok &= not bad_r155_win
                 # ★★★ 第 98 轮：两条 DLC 链式用例的断言形状（防被改回「点名一条」
                 #   或写死运行期 FormID —— 六条里任意一条命中即可；ID 用 `[0x` 通配）。
                 #   ★ 第 99 轮：名字修正（「狂热逾界」「发掘过去」—— 旧版手打成了
@@ -2911,6 +2943,26 @@ def main() -> int:
                             tool_src.read_bytes(), b'errors="replace"')
         else:
             print(f"MISS 缺少 {tool_src}")
+            all_ok = False
+        # ★★★ 第 159 轮（r155 假 FAIL = 正则没错、**窗口**错了）：断言体检工具要能
+        #   重建驱动器窗口语义（prev 只有下界）、当场报「窗口外才命中」，并带一个
+        #   用合成日志钉住语义的自测（离线层第 ⑤ 步跑它）。三条特征 + 一条反向
+        #   （旧版没有窗口自检 —— 防止把工具回退成「整段匹配」就以为没事了）。
+        audit_src = ROOT / "tools/test/plan_regex_audit.py"
+        if audit_src.exists():
+            audit_bytes = audit_src.read_bytes()
+            all_ok &= check("判读工具 · 窗口自检在场（第 159 轮）", audit_bytes,
+                            "窗口自检".encode())
+            all_ok &= check("判读工具 · 「窗口外才命中」判据（第 159 轮）", audit_bytes,
+                            "窗口外才命中".encode())
+            all_ok &= check("判读工具 · 窗口语义自测入口（--self-test）", audit_bytes,
+                            b"--self-test")
+            old_audit = b"def window_range" not in audit_bytes
+            print(("MISS" if old_audit else "OK  ") +
+                  " 判读工具 · 窗口语义重建在场（反向检查，第 159 轮）")
+            all_ok &= not old_audit
+        else:
+            print(f"MISS 缺少 {audit_src}")
             all_ok = False
         tests_src = ROOT / "plugin/tests/SAQ_DecisionTests.cpp"
         if tests_src.exists():

@@ -12,10 +12,14 @@
 #         ① 表内出现「折叠已覆盖」形态（应已被收进门槛）⇒ 扫描没重跑 / 折叠退化；
 #         ② 表内出现「折叠管不到」形态（flags 非 OR / cmp∉{0,1}）⇒ 后续阶段对象。
 #       ★ 只读、不写报告（完整报告用 `--record-scan` 手动跑）。
-#    ⑤ P2 计划 `assert.log` 正则自检（tools/test/p2_plan_regex_check.py）——
+#    ⑤ 计划断言正则自检（三步）——
 #       ★ 第 130 轮：p2 计划的断言正则在**解析期**由 DLL 编译（非法 ⇒ 用例 FAIL，
 #       第 68 轮）；这一步在离线阶段就把「正则合法 + 能匹配预期产品行」验一遍
-#       （补 verify 只查存在性、不查正则语义的缺口）。
+#       （补 verify 只查存在性、不查正则语义的缺口）；
+#       ★★★ 第 159 轮（r155 假 FAIL 的教训 = 正则没错、窗口错了）：再加两步 ——
+#       `plan_regex_audit.py --self-test`（合成日志钉住驱动器窗口语义：prev 只有下界 /
+#       连着两条 prev 的第二条必然等不到产品行）与 `--plan-only`（主计划的静态窗口
+#       体检：列出「scope=prev 的紧邻上一步是 note/assert」的写法供人工过一眼）。
 #  退出码 = 0 全过。
 #
 #  引擎内 harness（要开游戏、覆盖「引擎时序」）不在这里 —— 见 docs\09。
@@ -49,9 +53,13 @@ Write-Host '=== (4/5) 门槛覆盖盘点 tripwire（大项 B / operator 二期�
 if ($LASTEXITCODE -ne 0) { $failed += '门槛覆盖 tripwire' }
 
 Write-Host ''
-Write-Host '=== (5/5) P2 计划断言正则自检（第 130 轮） ===' -ForegroundColor Cyan
+Write-Host '=== (5/5) 计划断言正则自检（第 130 轮；★ 第 159 轮加窗口语义自测 + 静态窗口体检） ===' -ForegroundColor Cyan
 & python (Join-Path $here 'p2_plan_regex_check.py')
 if ($LASTEXITCODE -ne 0) { $failed += 'P2 计划正则自检' }
+& python (Join-Path $here 'plan_regex_audit.py') --self-test
+if ($LASTEXITCODE -ne 0) { $failed += '窗口语义自测' }
+& python (Join-Path $here 'plan_regex_audit.py') --plan-only
+if ($LASTEXITCODE -ne 0) { $failed += '静态窗口体检' }
 
 Write-Host ''
 if ($failed.Count -eq 0) {

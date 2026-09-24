@@ -1802,19 +1802,25 @@ step = note === 传送到玛丽卡·波罗斯身边（走她的引导候选链 �
 step = teleport.entry 0x00015062
 step = note === 只读探针：24 位逐位读（Papyrus + 直读对照；任务状态 24/24 都有）===
 step = crew.probe sim=0x00015062 timeout=120000
+; ★★★ 第 159 轮（窗口修正 · docs/09 十五·5）：下面三条断言都查 **crew.probe 的输出**，
+;   而 `scope=prev` 的窗口**只有下界** = 「上一步开始时的打点」——
+;   ① 紧跟 crew.probe 的那条 = `prev`（窗口 = 探针跑的这几秒）✓；
+;   ② 再往后的断言若还用 `prev`，下界就变成「上一条断言行」⇒ 探针行全在窗口外
+;       ⇒ 120 s 超时**假 FAIL**（2026-09-24 23:01 会话实测：r155 唯一 FAIL 就是这么来的，
+;       产品全对 —— 汇总行明明在日志里）。所以第 ② ③ 条改用 `scope=case`（本用例开头起）。
 step = assert.log 船员探针 汇总：24 位 scope=prev timeout=120000
 ; ★★★ 第 157 轮（检查收口）：**核心判据换位** —— 直读槽位修正后（SAQ_Crew 显式调用
 ;   vtable 槽 0x174 = 真正的 Actor::IsInFaction；commonlibsf 的 Actor.h 把它标在
 ;   0x175 = 差 1 槽，第 156 轮实机代价 = 12 位里 4 位「Papyrus P=1 / 直读 0」不一致、
 ;   4 位真「可招募解锁」被错误隐藏），「Papyrus vs 直读」对照应当**全一致**
 ;   （对照 = 两边都读到的位）。这一条 = 修复正确性的直接证据（判读见 docs/16 16.9）。
-step = assert.log 船员探针 汇总：.*对照 \d+ 位 / 不一致 0 位 scope=prev timeout=120000
+step = assert.log 船员探针 汇总：.*对照 \d+ 位 / 不一致 0 位 scope=case timeout=120000
 ; ★★★ 第 157 轮：模拟招募（`sim=`）改为**机制记录** —— 第 156 轮实机证明
 ;   `Game.AddToAvailableCrew` 并不改变 AvailableCrewFaction 的成员关系（本存档
 ;   也无「已招募」正样本）⇒ 不再断言「A 位随招募往返 0→1→0」（该判据已证实不成立）；
 ;   只钉「判定行必须出现」（往返链路跑完 + 结论进日志，供每次会话复核）。
 step = note === 模拟招募（机制记录）：判定行必须出现（A 判据结论见 docs/16 16.9 —— 本存档无正样本）===
-step = assert.log 船员探针 模拟招募：.*判定： scope=prev timeout=120000
+step = assert.log 船员探针 模拟招募：.*判定： scope=case timeout=120000
 step = note === 反向检查：探针链路必须健康（不许失败码 / 超时 / 任务表单缺失 / 直读不一致 / 指纹停用 / 跳过）===
 step = assert.nolog 船员探针 .*失败（结果码 scope=case timeout=1000
 step = assert.nolog 船员探针 .*等回执超时 scope=case timeout=1000
