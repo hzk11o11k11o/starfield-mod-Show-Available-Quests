@@ -38,4 +38,5 @@ D:\Mod Organizer 2
 - 每次任务完成后，需要提交本地git，同时.gitignore也要添加必要忽略项
 - mod文件生成后要部署到Mod Organizer并配置启用
 - mod文件生成后帮我打包成nexus mods能接受的上传包文件，并帮我写一个介绍文案，注意打包时不要把自动化测试功能开启了，所有配置项也要还原到正常玩的默认值
+- Nexus上传时机由我自己决定：打包与介绍文案照常做，但不要提醒上传、不要把「上传Nexus」列入待办或进度记录（2026-09-24约定）
 - 日志文件位置：D:\Mod Organizer 2\starfield_mods\mods\Show Available Quests (SFSE)\SFSE\Plugins
