@@ -59,9 +59,15 @@ param(
     #     -Only r98       ⇒ r98_dlc_chain + r98_dlc_chain_pass（前缀同族全命中）
     #   ★ **不带 -Only 会清空它**（默认回到全量 —— 不会因为忘了清上一次的增量值而漏测）；
     #     要「明确全量」也可以写 -Only ''（同效）。
+    #   ★ 类型是 string[]（不是 string）—— PowerShell 会把 `-Only a,b` 的逗号值解析成
+    #     **数组**（比 string 更常见的写法），这里 join 回逗号串再写 ini；两种写法都支持：
+    #       -Only smoke,r47,r80      （PS 数组，最常见）
+    #       -Only 'smoke,r47,r80'    （单字符串）
+    #     （踩过一次：声明成 [string] 时数组会被 PS 用**空格**连接成 `smoke r47 r80`
+    #     ⇒ 写进 ini 是空格分隔、DLL 按逗号拆 ⇒ 一条都不命中。）
     #   写进部署 ini 的 [Test] Only；DLL 在下一次载入用例时生效（重启游戏，或把
     #   ini Harness 拨 0 → 1 重新载入）。筛选器没命中任何用例 ⇒ 不跑并在 DLL 日志报 WARN。
-    [string]$Only = ''
+    [string[]]$Only = @()
 )
 
 $ErrorActionPreference = 'Stop'
@@ -525,7 +531,8 @@ if (-not $SkipDeploy) {
         # ★★★ 第 158 轮（增量测试）：Only 键由脚本管理 —— 传了 -Only ⇒ 写该值；
         #   没传 ⇒ 写空（= 全量）。**默认清空**是安全方向：忘记传 = 多跑点（不漏测），
         #   而不是「残留上一次的子集 ⇒ 漏测」。值真的变了才写回（不动文件时间戳）。
-        $onlyVal = $Only.Trim()
+        #   ★ `-Only a,b` 在 PS 里是数组 ⇒ join 回逗号串（见 param 注释的踩坑记录）。
+        $onlyVal = ($Only -join ',').Trim()
         $onlyCur = ''
         if ($iniText -match '(?m)^\s*Only\s*=\s*(.*)$') { $onlyCur = $Matches[1].Trim() }
         if ($onlyCur -ne $onlyVal) {

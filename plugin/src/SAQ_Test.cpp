@@ -1143,18 +1143,23 @@ namespace SAQ::Test
 			if (a_only.empty()) {
 				return true;
 			}
-			// 拆 token：逗号分隔、逐个 Trim + ASCII 小写化（用例 id 全是小写）。
+			// 拆 token：逗号分隔 → 每段再按空白拆 → 逐个 Trim + ASCII 小写化（用例 id 全是
+			//   小写、不含空白/逗号 ⇒ 两种分隔都安全）。
+			//   ★ 为什么要兼容空白：构建脚本的 `-Only a,b` 在 PowerShell 里是**数组**，若参数
+			//     类型没接对会被 PS 用空格连成 `a b`（第 158 轮踩过）—— 即使那种坏值落到 ini，
+			//     这里也照样能解析（真·防御）。
 			std::vector<std::string> tokens;
 			std::size_t i = 0;
 			while (i <= a_only.size()) {
 				const auto comma = a_only.find(',', i);
 				const auto seg = a_only.substr(i, comma == std::string::npos ? std::string::npos : comma - i);
-				auto tok = Trim(seg);
-				for (auto& ch : tok) {
-					ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-				}
-				if (!tok.empty()) {
-					tokens.push_back(std::move(tok));
+				for (auto tok : SplitWs(seg)) {
+					for (auto& ch : tok) {
+						ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+					}
+					if (!tok.empty()) {
+						tokens.push_back(std::move(tok));
+					}
 				}
 				if (comma == std::string::npos) {
 					break;

@@ -1168,6 +1168,9 @@ if (line.find("harness：") != std::string::npos) { continue; }
 行 + 结果 JSON 的 `only` 字段（判读工具据此区分「未选中」与「用例没跑到」）。
 ★ 重新载入用例：重启游戏（构建后的正常流程），或把 ini Harness 拨 0 → 1（不必重启）。
 ★ 手改 ini 的 Only 也可用；但推荐走构建脚本 —— 见上「默认清空」的设计。
+★ `-Only a,b` 里的逗号是 **PowerShell 数组语法**（实现时踩过：参数声明成 `[string]` 会被
+  PS 用空格连接成 `a b` 写进 ini ⇒ 一条都不命中）。现在参数按 `string[]` 接收后 join 回
+  逗号串（`-Only a,b` / `-Only 'a,b'` 两种写法都行），DLL 侧也兼容空白分隔（双保险）。
 
 ### 2. 用法
 
