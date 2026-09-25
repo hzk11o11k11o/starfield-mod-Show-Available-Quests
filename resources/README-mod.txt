@@ -12,6 +12,8 @@
   · 已经完成的、以及已在任务日志里的任务会自动隐藏（可重复任务例外：做完一次后
     仍会显示，描述里写明怎么再接）
   · 汇总「无限任务」的接取入口（13 处任务板 + 8 位提供可重复任务的 NPC），点一下就能导航过去
+  · 收录 24 位可招募船员（精英 NPC）：条目名带「（可招募）」标记，点一下直接导航到他本人；
+    还没到可招募时机（剧情 / 进度未到）的不会显示，已招募入队的也不再出现
   · 没有导航目标的任务会明确提示：条目名前面标注「（不可导航）」，按钮置灰，不会误导
   · 中文 / 英文游戏都支持；自动适配官方内容（追踪者联盟 / DLC —— 未安装的模块不会显示其任务）
 
@@ -42,8 +44,9 @@
   同一条再按一次 R = 保持引导并把星图**再打开一次**（与原版一致：R 只负责「显示目标
   位置」，不会取消追踪）；要**取消**引导，展开条目后选中子项「前往接取地点」再按 Enter。
   被引导的任务一旦接取，引导会自动取消。
-  列表末尾集中排列「（可重复）…」条目：任务板入口（无限任务 / 悬赏的接取点）
-  与做完一次还能再接的任务本身，名字前都带「（可重复）」标记，用法相同。
+  各类接取入口集中排列在同一片区：任务板（无限任务 / 悬赏的接取点）→ 8 位可重复
+  任务 NPC → 「（可招募）」船员条目，名字前都带对应标记，用法相同；其后的
+  「（可重复）…」组 = 做完一次还能再接的任务本身。
   提示：引导在关闭任务菜单后生效（与原版一致，HUD 蓝点要关菜单才可见）。
 
 五、可选设置（一般无需改动）
@@ -55,7 +58,8 @@
 六、已知限制
   · 少量任务（280 条中的 55 条）暂时没有可用的导航目标：条目名会标注
     「（不可导航）」，界面如实提示，不会假装能引导。
-  · 无限生成任务本身不显示，但其接取入口（13 处任务板 + 8 位可重复任务 NPC）会作为独立条目列出；
+  · 无限生成任务本身不显示，但其接取入口（13 处任务板 + 8 位可重复任务 NPC + 24 位
+    可招募船员）会作为独立条目列出；
     无论你在哪都能一键导航过去——远处先给大致方位，走到那块板所在的区域后
     蓝点会自动落到板上（读档/重启后也会自动校正）。
   · 导航兜底已**全部**补全（v0.1.17）：所有任务的引导在任意距离点一下都会直接
@@ -94,6 +98,9 @@
     them, and their description tells you how to take them again)
   · Pickup points of radiant quests are included: 13 mission boards plus
     8 repeatable-job NPCs, one click to navigate
+  · Recruitable crew (24 elite NPCs) are tagged "(Recruitable)": one
+    click navigates straight to them; they only appear once they are
+    actually recruitable, and disappear once you have hired them
   · Quests without a navigation target are clearly flagged (button greyed
     out) instead of silently failing
   · Works with Chinese and English games; official content aware (Trackers
@@ -133,9 +140,10 @@
   never cancels tracking). To CANCEL the guidance, expand the entry,
   select the "Go to the pickup location" sub-entry and press Enter.
   Guidance is cancelled automatically once you accept the quest.
-  The list ends with a "(Repeatable)" group: the "Mission Board - XX"
-  entries (pickup points of radiant quests) plus the repeatable quests
-  themselves - same usage.
+  The pickup entries are grouped together: the "Mission Board - XX"
+  entries, then the 8 repeatable-job NPCs, then the "(Recruitable)" crew
+  entries - same usage; the repeatable quests themselves follow as their
+  own "(Repeatable)" group.
   Note: guidance applies after you close the mission menu (same as
   vanilla; the HUD marker only appears outside menus).
 
@@ -150,8 +158,9 @@
   · 55 of 280 quests currently have no usable navigation target; the UI
     says so honestly instead of pretending.
   · Radiant (infinite) quests themselves are not listed, but their pickup
-    points (13 mission boards + 8 repeatable-job NPCs) are listed as
-    entries; every entry can be navigated to from anywhere - far away you
+    points (13 mission boards + 8 repeatable-job NPCs) and the 24
+    recruitable crew members are listed as entries; every radiant pickup
+    entry can be navigated to from anywhere - far away you
     get the approximate direction, and once you reach the board's area the
     marker snaps onto the board itself (it also self-corrects after a save
     reload or restart).
