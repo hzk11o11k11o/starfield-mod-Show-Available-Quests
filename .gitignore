@@ -1,54 +1,55 @@
-# --- 构建产物 ---
+# --- Build artifacts ---
 plugin/build/
 plugin/.xmake/
 ui/missionmenu/build/
 ui/missionmenu_lrg/build/
 scripts/build/
-# patch/ 是 build-saq.ps1 由 src + 生成的内嵌任务数据拼出来的中间产物
+# patch/ is an intermediate produced by build-saq.ps1 (src + generated embedded quest data)
 ui/missionmenu/patch/
 ui/missionmenu_lrg/patch/
 
-# --- 第三方依赖（体积大，按 docs/01 说明自行获取） ---
+# --- Third-party dependencies (large; fetch them yourself, see docs/01) ---
 tools/commonlibsf-main/
 tools/ffdec/
 tools/ffdec.zip
 tools/vendor/
 Interface-main.zip
-# 第 98 轮：DLC .pex 反编译用（Champollion · Orvid 分支 v1.3.2）
-#   下载：https://github.com/Orvid/Champollion/releases → tools/champollion/Champollion.exe
-#   （第三方二进制不入库；tools/esm/gen_dlc_chain.py 会提示并给出地址）
+# Round 98: used to decompile DLC .pex files (Champollion, Orvid fork v1.3.2)
+#   Download: https://github.com/Orvid/Champollion/releases -> tools/champollion/Champollion.exe
+#   (third-party binaries are never committed; tools/esm/gen_dlc_chain.py prints the URL)
 tools/champollion/
 
-# --- 逆向 / 分析中间产物（都可由 tools 重新生成） ---
-# ★ 第 106 轮例外：ref/extra_quests.json 是**手写源数据**（覆盖面复盘的补收名单，
-#   生成器无法重建 —— 见 docs/12）⇒ 必须入库；其余 ref/ 内容照旧不入库。
-#   （用 ref/* 而不是 ref/ —— 否则「父目录被排除 ⇒ 无法 re-include」）
+# --- Reverse-engineering / analysis intermediates (all regenerable by the tools) ---
+# Exception (round 106): ref/extra_quests.json is hand-written source data
+#   (the add-on list from the coverage review; the generators cannot rebuild it)
+#   => must be committed; the rest of ref/ stays ignored.
+#   (pattern ref/* instead of ref/ - otherwise the excluded parent directory blocks re-include)
 ref/*
 !ref/extra_quests.json
 
-# --- 打包产物（tools/package-saq.ps1 生成，可随时重打） ---
+# --- Packaging output (produced by tools/package-saq.ps1; can be rebuilt any time) ---
 dist/
 
-# --- Python 缓存 ---
+# --- Python cache ---
 __pycache__/
 *.pyc
 
-# --- 其他 ---
+# --- Misc ---
 *.log
 *.pdb
 *.user
 .vs/
 
-# --- 临时脚本 / 临时文件（一次性工具，勿入库） ---
+# --- Throwaway scripts / temp files (one-shot tools, never commit) ---
 .tmp_*
-# 第 60 轮：下划线前缀的一次性脚本 / 临时文件（提交信息文件等）—— 曾误入库一次
+# Round 60: underscore-prefixed one-shot scripts / temp files (commit-message files etc.) - was committed by mistake once
 _tmp_*
-# 第 147 轮：`git commit -F` 用的提交说明临时文件 —— 又误入库一次（同第 60 轮类别），这次加前缀通配
+# Round 147: temp commit-message files for `git commit -F` - committed by mistake again (same class as round 60), hence the prefixed wildcard
 _commit_*.tmp
-# 排查用的一次性脚本（下划线前缀）与临时输出（tmp_*.txt）—— 第 47 轮起明确忽略
+# Throwaway diagnostic scripts (underscore prefix) and temp output (tmp_*.txt) - ignored since round 47
 tools/esm/_tmp_*.py
 tmp_*.txt
-# 临时排查目录（FFDec 导出 / 一次性检查脚本等）—— 第 50 轮起忽略
+# Temp diagnostic directories (FFDec exports / one-shot check scripts etc.) - ignored since round 50
 tmp/
-# 第 51 轮：临时导出目录的另一种写法（FFDec 反编译导出用过，曾被 git 看到）
+# Round 51: the other spelling of the temp export directory (used by FFDec decompile exports, once seen by git)
 .tmp/
